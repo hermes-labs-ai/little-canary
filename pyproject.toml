@@ -43,9 +43,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/roli-lpci/little-canary"
+Homepage = "https://littlecanary.ai"
 Repository = "https://github.com/roli-lpci/little-canary"
 Issues = "https://github.com/roli-lpci/little-canary/issues"
+Documentation = "https://github.com/roli-lpci/little-canary#readme"
 
 [tool.setuptools.packages.find]
 include = ["little_canary*"]
