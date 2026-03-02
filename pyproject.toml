@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "little-canary"
-version = "0.2.0"
+version = "0.2.1"
 description = "Sacrificial LLM instances as behavioral probes for prompt injection detection"
 readme = "README.md"
 license = {text = "Apache-2.0"}
