@@ -37,6 +37,7 @@
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Cloud Providers](#cloud-providers-no-ollama-required)
 - [Agent Systems Quick Start](#agent-systems-quick-start)
 - [How It Works](#how-it-works)
 - [Deployment Modes](#deployment-modes)
@@ -80,6 +81,55 @@ response = your_llm(system=system, messages=[{"role": "user", "content": user_in
 ```
 
 That's it. Your LLM, your app, your logic. The canary adds a security layer in front.
+
+### Cloud Providers (no Ollama required)
+
+Little Canary also supports any OpenAI-compatible API as a backend, so you can use cloud LLM providers instead of running Ollama locally.
+
+```python
+from little_canary import SecurityPipeline
+
+# MiniMax
+pipeline = SecurityPipeline(
+    canary_model="MiniMax-M2.5",
+    provider="openai",
+    api_key="your-minimax-key",
+    base_url="https://api.minimax.io/v1",
+    mode="full",
+    temperature=0.01,  # MiniMax requires temperature > 0
+)
+
+# OpenAI
+pipeline = SecurityPipeline(
+    canary_model="gpt-4o-mini",
+    provider="openai",
+    api_key="your-openai-key",
+    base_url="https://api.openai.com/v1",
+    mode="full",
+)
+
+# Together, Groq, or any OpenAI-compatible endpoint
+pipeline = SecurityPipeline(
+    canary_model="meta-llama/Llama-3-8b-chat-hf",
+    provider="openai",
+    api_key="your-api-key",
+    base_url="https://api.together.xyz/v1",
+    mode="full",
+)
+```
+
+You can also use the provider classes directly:
+
+```python
+from little_canary import OpenAICanaryProbe, OpenAILLMJudge
+
+probe = OpenAICanaryProbe(
+    model="MiniMax-M2.5",
+    api_key="your-key",
+    base_url="https://api.minimax.io/v1",
+)
+result = probe.test(user_input)
+```
 
 ## Agent Systems Quick Start
 
@@ -223,12 +273,21 @@ See `examples/` for complete integration code.
 ```python
 from little_canary import SecurityPipeline
 
-# Initialize
+# Initialize (Ollama — default)
 pipeline = SecurityPipeline(
     canary_model="qwen2.5:1.5b",   # any Ollama model
     mode="full",                     # "block", "advisory", or "full"
     ollama_url="http://localhost:11434",
     canary_timeout=10.0,
+)
+
+# Initialize (OpenAI-compatible — cloud providers)
+pipeline = SecurityPipeline(
+    canary_model="MiniMax-M2.5",    # any model on the provider
+    provider="openai",               # "ollama" or "openai"
+    api_key="your-key",
+    base_url="https://api.minimax.io/v1",
+    mode="full",
 )
 
 # Check input
@@ -271,6 +330,7 @@ little-canary/
 │   ├── canary.py                  # Layer 2: sacrificial LLM probe
 │   ├── analyzer.py                # Behavioral analysis (regex-based)
 │   ├── judge.py                   # LLM judge (experimental, replaces regex)
+│   ├── openai_provider.py         # OpenAI-compatible canary + judge (cloud providers)
 │   └── pipeline.py                # Orchestration + three deployment modes
 ├── tests/                         # Unit tests (pytest, 98%+ coverage)
 ├── examples/                      # Integration examples
@@ -305,13 +365,13 @@ little-canary/
 - **Multi-model tested (v0.2.0).** Performance varies by model — see [littlecanary.ai](https://littlecanary.ai) for comparison.
 - **Regex-based behavioral analysis.** The experimental `LLMJudge` is included for higher accuracy.
 - **No production deployment data.** All results are from controlled testing.
-- **Ollama-only.** No abstraction layer for other backends yet.
+- **Ollama + OpenAI-compatible APIs.** Cloud providers (MiniMax, OpenAI, Together, Groq) are supported via the `provider="openai"` option.
 
 ## Roadmap
 
 - [x] Benchmark against TensorTrust (99.0% detection, 400 attacks) — Garak and HarmBench still TODO
 - [ ] LLM judge to replace regex analyzer (higher accuracy)
-- [ ] Backend abstraction layer (vLLM, llama.cpp, OpenAI-compatible APIs)
+- [x] OpenAI-compatible API support (MiniMax, OpenAI, Together, Groq, vLLM)
 - [ ] Fine-tuned canary model (increased susceptibility = stronger signal)
 - [ ] Multi-canary ensemble for higher detection rates
 - [ ] Agent integration SDK (MCP, LangChain, CrewAI)

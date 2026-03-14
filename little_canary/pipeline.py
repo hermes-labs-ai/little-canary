@@ -25,6 +25,7 @@ from .analyzer import BehavioralAnalyzer
 from .audit_logger import AuditLogger
 from .canary import CanaryProbe
 from .judge import LLMJudge
+from .openai_provider import OpenAICanaryProbe, OpenAILLMJudge
 from .structural_filter import StructuralFilter
 
 logger = logging.getLogger(__name__)
@@ -112,8 +113,12 @@ class SecurityPipeline:
         "advisory" — Never block. Generate advisory for production LLM.
         "full"     — Block high-confidence attacks, advisory for ambiguous.
 
+    Providers:
+        "ollama"  — (default) Local Ollama instance.
+        "openai"  — Any OpenAI-compatible API (OpenAI, MiniMax, Together, Groq).
+
     Usage:
-        # Block mode (default)
+        # Block mode (default — Ollama)
         pipeline = SecurityPipeline(canary_model="qwen2.5:1.5b", mode="block")
         verdict = pipeline.check(user_input)
         if verdict.safe:
@@ -133,9 +138,19 @@ class SecurityPipeline:
         else:
             prefix = verdict.advisory.to_system_prefix()
             response = call_production_llm(user_input, system_prefix=prefix)
+
+        # OpenAI-compatible provider (e.g. MiniMax)
+        pipeline = SecurityPipeline(
+            canary_model="MiniMax-M2.5",
+            provider="openai",
+            api_key="your-minimax-key",
+            base_url="https://api.minimax.io/v1",
+            mode="block",
+        )
     """
 
     VALID_MODES = {"block", "advisory", "full"}
+    VALID_PROVIDERS = {"ollama", "openai"}
 
     def __init__(
         self,
@@ -158,11 +173,19 @@ class SecurityPipeline:
         on_block: Optional[Callable[["PipelineVerdict"], None]] = None,
         on_flag: Optional[Callable[["PipelineVerdict"], None]] = None,
         on_pass: Optional[Callable[["PipelineVerdict"], None]] = None,
+        provider: str = "ollama",
+        api_key: str = "",
+        base_url: str = "",
     ):
         if mode not in self.VALID_MODES:
             raise ValueError(f"mode must be one of {self.VALID_MODES}, got '{mode}'")
+        if provider not in self.VALID_PROVIDERS:
+            raise ValueError(
+                f"provider must be one of {self.VALID_PROVIDERS}, got '{provider}'"
+            )
 
         self.mode = mode
+        self.provider = provider
         self.skip_canary_if_structural_blocks = skip_canary_if_structural_blocks
         self.enable_structural_filter = enable_structural_filter
         self.enable_canary = enable_canary
@@ -175,37 +198,62 @@ class SecurityPipeline:
         self._on_pass = on_pass
 
         # Audit logger (optional; no-op if audit_log_dir is None)
-        self._audit_logger: Optional[AuditLogger] = (
+        self._audit_logger = (
             AuditLogger(audit_log_dir) if audit_log_dir else None
-        )
+        )  # type: Optional[AuditLogger]
 
         # Layer 1: Structural filter
         self.structural_filter = StructuralFilter(max_input_length=max_input_length)
 
-        # Layer 2: Canary probe (temperature=0 for deterministic output)
-        canary_kwargs = {
-            "model": canary_model,
-            "ollama_url": ollama_url,
-            "timeout": canary_timeout,
-            "max_tokens": canary_max_tokens,
-            "temperature": temperature,
-            "seed": seed,
-        }
-        if canary_system_prompt:
-            canary_kwargs["system_prompt"] = canary_system_prompt
-
-        self.canary_probe = CanaryProbe(**canary_kwargs)
+        # Layer 2: Canary probe
+        if provider == "openai":
+            openai_base = base_url or "https://api.openai.com/v1"
+            canary_kwargs = {
+                "model": canary_model,
+                "api_key": api_key,
+                "base_url": openai_base,
+                "timeout": canary_timeout,
+                "max_tokens": canary_max_tokens,
+                "temperature": temperature,
+                "seed": seed,
+            }
+            if canary_system_prompt:
+                canary_kwargs["system_prompt"] = canary_system_prompt
+            self.canary_probe = OpenAICanaryProbe(**canary_kwargs)
+        else:
+            canary_kwargs = {
+                "model": canary_model,
+                "ollama_url": ollama_url,
+                "timeout": canary_timeout,
+                "max_tokens": canary_max_tokens,
+                "temperature": temperature,
+                "seed": seed,
+            }
+            if canary_system_prompt:
+                canary_kwargs["system_prompt"] = canary_system_prompt
+            self.canary_probe = CanaryProbe(**canary_kwargs)
 
         # Analysis: LLM judge (if specified) or regex analyzer (fallback)
         if judge_model:
-            self.analyzer = LLMJudge(
-                model=judge_model,
-                ollama_url=ollama_url,
-                timeout=judge_timeout,
-                temperature=temperature,
-                seed=seed,
-            )
-            logger.info(f"Using LLM judge: {judge_model}")
+            if provider == "openai":
+                openai_base = base_url or "https://api.openai.com/v1"
+                self.analyzer = OpenAILLMJudge(
+                    model=judge_model,
+                    api_key=api_key,
+                    base_url=openai_base,
+                    timeout=judge_timeout,
+                    temperature=temperature,
+                    seed=seed,
+                )
+            else:
+                self.analyzer = LLMJudge(
+                    model=judge_model,
+                    ollama_url=ollama_url,
+                    timeout=judge_timeout,
+                    temperature=temperature,
+                    seed=seed,
+                )
+            logger.info(f"Using LLM judge: {judge_model} (provider: {provider})")
         else:
             self.analyzer = BehavioralAnalyzer(block_threshold=block_threshold)
             logger.info("Using regex-based BehavioralAnalyzer (no judge_model specified)")
@@ -364,13 +412,17 @@ class SecurityPipeline:
             "structural_filter": self.enable_structural_filter,
             "canary_enabled": self.enable_canary,
             "mode": self.mode,
+            "provider": self.provider,
             "analyzer": "llm_judge" if self.use_judge else "regex",
         }
         if self.enable_canary:
             status["canary_model"] = self.canary_probe.model
             status["canary_available"] = self.canary_probe.is_available()
-            status["ollama_url"] = self.canary_probe.ollama_url
             status["temperature"] = self.canary_probe.temperature
+            if self.provider == "openai":
+                status["base_url"] = self.canary_probe.base_url
+            else:
+                status["ollama_url"] = self.canary_probe.ollama_url
         if self.use_judge:
             status["judge_model"] = self.analyzer.model
             status["judge_available"] = self.analyzer.is_available()

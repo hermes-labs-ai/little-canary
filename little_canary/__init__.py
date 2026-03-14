@@ -18,6 +18,7 @@ from .audit_logger import AuditLogger
 from .canary import CanaryProbe, CanaryResult
 from .canary_guard import CanaryGuard, GuardResult
 from .judge import LLMJudge
+from .openai_provider import OpenAICanaryProbe, OpenAILLMJudge
 from .pipeline import SecurityAdvisory, SecurityPipeline
 from .structural_filter import StructuralFilter
 
@@ -31,6 +32,8 @@ __all__ = [
     "BehavioralAnalyzer",
     "GuardResult",
     "LLMJudge",
+    "OpenAICanaryProbe",
+    "OpenAILLMJudge",
     "SecurityPipeline",
     "SecurityAdvisory",
     "StructuralFilter",
