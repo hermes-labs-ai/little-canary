@@ -29,7 +29,6 @@ Usage:
 import logging
 import re
 import time
-from typing import List, Optional
 
 import requests
 
@@ -89,7 +88,7 @@ class OpenAICanaryProbe:
         try:
             headers = {"Content-Type": "application/json"}
             if self.api_key:
-                headers["Authorization"] = "Bearer %s" % self.api_key
+                headers["Authorization"] = f"Bearer {self.api_key}"
 
             payload = {
                 "model": self.model,
@@ -106,7 +105,7 @@ class OpenAICanaryProbe:
             if self.seed is not None:
                 payload["seed"] = self.seed
 
-            url = "%s/chat/completions" % self.base_url
+            url = f"{self.base_url}/chat/completions"
             response = requests.post(
                 url,
                 json=payload,
@@ -124,9 +123,7 @@ class OpenAICanaryProbe:
                     system_prompt=self.system_prompt,
                     user_input=user_input,
                     success=False,
-                    error="API returned status %d: %s" % (
-                        response.status_code, response.text[:200]
-                    ),
+                    error=f"API returned status {response.status_code}: {response.text[:200]}",
                 )
 
             data = response.json()
@@ -160,7 +157,7 @@ class OpenAICanaryProbe:
                 system_prompt=self.system_prompt,
                 user_input=user_input,
                 success=False,
-                error="Canary timed out after %ss" % self.timeout,
+                error=f"Canary timed out after {self.timeout}s",
             )
 
         except requests.ConnectionError:
@@ -172,7 +169,7 @@ class OpenAICanaryProbe:
                 system_prompt=self.system_prompt,
                 user_input=user_input,
                 success=False,
-                error="Cannot connect to API at %s" % self.base_url,
+                error=f"Cannot connect to API at {self.base_url}",
             )
 
         except Exception as e:
@@ -194,10 +191,10 @@ class OpenAICanaryProbe:
         try:
             headers = {"Content-Type": "application/json"}
             if self.api_key:
-                headers["Authorization"] = "Bearer %s" % self.api_key
+                headers["Authorization"] = f"Bearer {self.api_key}"
 
             resp = requests.get(
-                "%s/models" % self.base_url,
+                f"{self.base_url}/models",
                 headers=headers,
                 timeout=5,
             )
@@ -255,12 +252,11 @@ class OpenAILLMJudge:
                 risk_score=0.0,
                 should_block=False,
                 canary_result=canary_result,
-                summary="Canary failed: %s. Passing by default." % canary_result.error,
+                summary=f"Canary failed: {canary_result.error}. Passing by default.",
             )
 
         judge_input = (
-            "User message:\n%s\n\nAssistant response:\n%s"
-            % (canary_result.user_input, canary_result.response)
+            f"User message:\n{canary_result.user_input}\n\nAssistant response:\n{canary_result.response}"
         )
 
         try:
@@ -268,7 +264,7 @@ class OpenAILLMJudge:
 
             headers = {"Content-Type": "application/json"}
             if self.api_key:
-                headers["Authorization"] = "Bearer %s" % self.api_key
+                headers["Authorization"] = f"Bearer {self.api_key}"
 
             payload = {
                 "model": self.model,
@@ -283,7 +279,7 @@ class OpenAILLMJudge:
             if self.seed is not None:
                 payload["seed"] = self.seed
 
-            url = "%s/chat/completions" % self.base_url
+            url = f"{self.base_url}/chat/completions"
             response = requests.post(
                 url,
                 json=payload,
@@ -302,8 +298,7 @@ class OpenAILLMJudge:
                     risk_score=0.0,
                     should_block=False,
                     canary_result=canary_result,
-                    summary="Judge error (status %d). Passing by default."
-                    % response.status_code,
+                    summary=f"Judge error (status {response.status_code}). Passing by default.",
                 )
 
             data = response.json()
@@ -325,8 +320,7 @@ class OpenAILLMJudge:
                         evidence=canary_result.response[:150],
                     )],
                     canary_result=canary_result,
-                    summary="BLOCKED by LLM judge (%0.2fs). Canary response classified as compromised."
-                    % elapsed,
+                    summary=f"BLOCKED by LLM judge ({elapsed:0.2f}s). Canary response classified as compromised.",
                     hard_blocked=True,
                 )
             else:
@@ -334,7 +328,7 @@ class OpenAILLMJudge:
                     risk_score=0.0,
                     should_block=False,
                     canary_result=canary_result,
-                    summary="LLM judge: SAFE (%0.2fs)." % elapsed,
+                    summary=f"LLM judge: SAFE ({elapsed:0.2f}s).",
                 )
 
         except requests.Timeout:
@@ -359,7 +353,7 @@ class OpenAILLMJudge:
                 risk_score=0.0,
                 should_block=False,
                 canary_result=canary_result,
-                summary="Judge error: %s. Passing by default." % e,
+                summary=f"Judge error: {e}. Passing by default.",
             )
 
     def _parse_verdict(self, raw_output):
@@ -387,10 +381,10 @@ class OpenAILLMJudge:
         try:
             headers = {"Content-Type": "application/json"}
             if self.api_key:
-                headers["Authorization"] = "Bearer %s" % self.api_key
+                headers["Authorization"] = f"Bearer {self.api_key}"
 
             resp = requests.get(
-                "%s/models" % self.base_url,
+                f"{self.base_url}/models",
                 headers=headers,
                 timeout=5,
             )

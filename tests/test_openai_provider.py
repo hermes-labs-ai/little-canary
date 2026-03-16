@@ -7,7 +7,6 @@ import requests
 from little_canary.canary import DEFAULT_CANARY_SYSTEM_PROMPT, CanaryResult
 from little_canary.openai_provider import OpenAICanaryProbe, OpenAILLMJudge
 
-
 # ── OpenAICanaryProbe __init__ ──
 
 
