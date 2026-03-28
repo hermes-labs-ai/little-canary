@@ -384,6 +384,21 @@ little-canary/
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and contribution guidelines.
 
+## Hermes Labs Ecosystem
+
+Little Canary is part of the [Hermes Labs](https://hermes-labs.ai) open-source suite:
+
+- [**zer0dex**](https://github.com/roli-lpci/zer0dex) — Dual-layer memory for AI agents
+- [**forgetted**](https://github.com/roli-lpci/forgetted) — Selective memory governance
+- [**zer0lint**](https://github.com/roli-lpci/zer0lint) — mem0 extraction diagnostics
+- [**lintlang**](https://github.com/roli-lpci/lintlang) — Static linter for AI agent configs
+- [**suy-sideguy**](https://github.com/roli-lpci/suy-sideguy) — Autonomous agent watchdog
+- [**quickthink**](https://github.com/roli-lpci/quickthink) — Planning scaffolding for local LLMs
+
+---
+
+If Little Canary saves you time, please [star the repo](https://github.com/roli-lpci/little-canary) — it helps others find it.
+
 ## Citation
 
 ```bibtex
