@@ -35,7 +35,7 @@ benchmark = [
     "anthropic>=0.94.0",
 ]
 dev = [
-    "pytest>=7.0",
+    "pytest>=8.4.2",
     "pytest-cov>=7.1.0",
     "mypy>=1.0",
     "ruff>=0.15.10",
