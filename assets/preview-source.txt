@@ -1,0 +1,13 @@
+$ little-canary serve --help
+
+usage: little-canary serve [-h] [--port PORT] [--mode {block,advisory,full}]
+                           [--canary-model CANARY_MODEL]
+
+options:
+  -h, --help            show this help message and exit
+  --port PORT           TCP port to bind on localhost (default: 18421)
+  --mode {block,advisory,full}
+                        Pipeline mode (default: advisory)
+  --canary-model CANARY_MODEL
+                        Ollama model tag for the canary probe (default:
+                        qwen2.5:1.5b)

@@ -1,114 +1,49 @@
 # AGENTS.md
 
-## Commands
+Little Canary is a prompt-injection detection library that uses a sacrificial canary model as an inbound risk sensor.
 
-- `pip install -e ".[dev]"` -- Install with dev dependencies
-- `pytest` -- Run all 157 tests (no network required)
-- `pytest tests/test_pipeline.py -v` -- Run single test module
-- `pytest --cov=little_canary --cov-report=term-missing` -- Run with coverage (80% threshold)
-- `ruff check little_canary/` -- Lint
-- `ruff check little_canary/ --fix` -- Lint with auto-fix
-- `mypy little_canary/` -- Type check
-- `python -m build` -- Build wheel and sdist
+## Use it for
 
-## Testing
+- screening untrusted text before it reaches a main model or agent
+- combining structural pattern checks with behavioral compromise checks
+- returning `block`, `flag`, or `pass` decisions plus advisory text
 
-- Framework: `pytest` with `pytest-cov`
-- Config: `pyproject.toml` under `[tool.pytest.ini_options]`
-- Test location: `tests/` directory, one file per source module
-- All tests run offline -- no Ollama or network required
-- Tests mock HTTP calls via monkeypatching `requests.post`
-- Marker `@pytest.mark.slow` for tests needing network mocks
-- Coverage floor: 80% (`fail_under = 80` in pyproject.toml)
+## Do not use it for
 
-Run benchmarks (requires Ollama running locally):
+- formal security guarantees
+- audited benchmark comparisons
+- replacing runtime containment or outbound tool controls
+
+## Minimal commands
+
 ```bash
-cd benchmarks && python3 run_fp_test.py                                    # false positive test
-cd benchmarks && python3 red_team_runner.py --canary qwen2.5:1.5b         # adversarial dashboard
-cd benchmarks && python3 full_pipeline_test.py --canary qwen2.5:1.5b      # end-to-end
+pip install -e ".[dev]"
+little-canary serve --help
+pytest -q
+ruff check little_canary tests
+mypy little_canary
 ```
 
-## Project Structure
+## Output shape
 
-```
-little_canary/               # Installable package
-  __init__.py                # Public exports: SecurityPipeline, CanaryProbe, etc.
-  structural_filter.py       # Layer 1: regex + decode-then-recheck (base64, hex, ROT13)
-  canary.py                  # Layer 2: sacrificial LLM probe via Ollama /api/chat
-  analyzer.py                # Behavioral analysis of canary response (regex strategies)
-  judge.py                   # Experimental LLM-based judge (replaces analyzer)
-  pipeline.py                # Orchestrator: wires layers, mode logic (block/advisory/full)
-tests/                       # Unit tests (157 tests, all offline)
-examples/                    # Integration examples
-benchmarks/                  # TensorTrust red team, false positive tests, dashboard
-```
+- Python API returns a verdict object with safety, action, summary, and advisory fields
+- CLI currently exposes the local HTTP server entry point: `little-canary serve`
+- benchmark scripts live under `benchmarks/` and are not part of the default CLI flow
 
-Pipeline flow: `SecurityPipeline.check(input)` -> structural filter (regex, ~1ms) -> canary probe (Ollama, ~250ms) -> behavioral analysis -> verdict.
+## Success means
 
-## Code Style
+- the pipeline can evaluate text and produce a deterministic verdict for mocked tests
+- structural and behavioral layers agree with the documented modes
+- the repo remains usable with local Ollama or OpenAI-compatible backends
 
-- Python 3.8+ compatibility required (no walrus `:=`, no `match`, no `X | Y` unions)
-- Dataclasses for all structured data (no Pydantic, no TypedDict)
-- Type hints on all public method signatures
-- `logging.getLogger(__name__)` in every module
-- Private methods prefixed with `_`
-- Line length: 120 (ruff config)
-- Linter: ruff with `E, F, W, I, UP, B, SIM` rules
+## Common failure cases
 
-Good:
-```python
-@dataclass
-class CanaryResult:
-    response: str
-    latency_ms: float
-    model: str
-    blocked: bool = False
-    reason: str = ""
-```
+- the canary backend is unavailable and the repo passes through by design
+- users expect this tool to replace broader agent runtime controls
+- benchmark claims are quoted without the methodology caveats in the README
 
-Bad:
-```python
-# No raw dicts for structured data
-result = {"response": resp, "latency": t, "model": m}
+## Maintainer notes
 
-# No Python 3.10+ syntax
-def check(self, text: str | None = None) -> bool:  # use Optional[str]
-```
-
-Detection patterns are tuples of `(regex_pattern, description_string)`:
-```python
-# Good: add to _build_patterns() in structural_filter.py
-raw_patterns = [
-    (r"\bignore\s+(all\s+)?(previous|prior|above)\b", "instruction override attempt"),
-]
-```
-
-## Git Workflow
-
-- Branch from `main`
-- Conventional commits: `feat:`, `fix:`, `test:`, `docs:`, `chore:`
-- Run `pytest` and `ruff check` before pushing
-- Do not modify `benchmarks/prompts.json` or `benchmarks/prompts_fp_realistic.json` without re-running benchmarks
-
-## Boundaries
-
-**Always:**
-- Run `pytest` after modifying source files
-- Keep `requests` as the only runtime dependency
-- Maintain Python 3.8 compatibility
-- Use dataclasses for new data structures
-- Preserve fail-open behavior (errors return `should_block=False`)
-
-**Ask first:**
-- Adding new runtime dependencies
-- Changing the Ollama API contract (`/api/chat` format)
-- Modifying benchmark prompt datasets
-- Changing the mode logic in `pipeline.py`
-- Altering the public API surface (`__all__` in `__init__.py`)
-
-**Never:**
-- Break Python 3.8 compatibility
-- Add blocking behavior to error paths (fail-open is deliberate)
-- Include raw user input in `PipelineVerdict.to_dict()` output
-- Commit API keys or model credentials
-- Delete or skip failing tests without understanding root cause
+- preserve fail-open behavior unless there is an explicit versioned policy change
+- keep benchmark caveats aligned with README claims
+- keep tests offline and mock network calls

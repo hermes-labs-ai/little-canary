@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "little-canary"
 version = "0.3.0"
-description = "Sacrificial LLM instances as behavioral probes for prompt injection detection. By Hermes Labs."
+description = "Prompt injection detection for LLM apps using sacrificial canary-model probes and structural preflight checks"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.8"
 authors = [
     {name = "Hermes Labs", email = "roli@hermes-labs.ai"},
 ]
-keywords = ["llm", "security", "prompt-injection", "ai-safety", "canary"]
+keywords = ["llm", "security", "prompt-injection", "prompt-injection-detection", "ai-safety", "canary", "agent-security"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

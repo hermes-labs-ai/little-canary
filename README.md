@@ -1,6 +1,39 @@
 # Little Canary
 
-**Sacrificial LLM instances as behavioral probes for prompt injection detection**
+Prompt injection is hard to catch with string rules alone, and by the time your main model is compromised the damage is already downstream.
+
+`little-canary` puts a sacrificial canary model in front of your app, watches whether the input compromises that smaller model, and returns `block`, `flag`, or `pass` before your primary system acts on it.
+
+- "We keep finding prompt injections only after the agent already touched tools."
+- "Regex catches the obvious stuff, but the weird jailbreak phrasing still slips through."
+- "I want a lightweight preflight check before untrusted text reaches my main model."
+- "I need a prompt injection detector that works with my existing stack instead of replacing it."
+
+```bash
+pip install little-canary
+```
+
+```python
+from little_canary import SecurityPipeline
+
+pipeline = SecurityPipeline(canary_model="qwen2.5:1.5b", mode="full")
+verdict = pipeline.check(user_input)
+print(verdict.safe, verdict.action, verdict.summary)
+```
+
+```text
+False block Prompt injection signals detected from structural and behavioral checks.
+```
+
+**When To Use It**
+
+Use Little Canary when you run an LLM app or agent, can afford a small preflight latency hit, and want inbound prompt-injection detection without changing the rest of your application architecture.
+
+**When Not To Use It**
+
+Do not use Little Canary as a formal security guarantee, a benchmark replacement, or the only control plane for autonomous agents. It is an inbound risk sensor, and it intentionally fails open if the canary is unavailable.
+
+![little-canary preview](assets/preview.png)
 
 [![PyPI version](https://img.shields.io/pypi/v/little-canary)](https://pypi.org/project/little-canary/)
 [![PyPI downloads](https://img.shields.io/pypi/dm/little-canary)](https://pypi.org/project/little-canary/)
@@ -10,23 +43,6 @@
 [![CI](https://github.com/roli-lpci/little-canary/actions/workflows/ci.yml/badge.svg)](https://github.com/roli-lpci/little-canary/actions)
 [![Paper](https://img.shields.io/badge/paper-Hermes_Labs-blue)](https://hermes-labs.ai)
 [![Hermes Labs](https://img.shields.io/badge/by-Hermes_Labs-purple)](https://hermes-labs.ai)
-
-### What it does
-
-- Runs a fast structural filter (regex + decode/recheck for base64, hex, ROT13, reverse encodings)
-- Probes raw input with a small sacrificial "canary" model and checks for behavioral compromise
-- Returns either **block**, **flag + advisory**, or **pass** depending on mode
-
-### When to use
-
-- You run an LLM app or agent and want a lightweight pre-check for prompt injection
-- You can tolerate ~250ms additional latency per input
-- You want a model-agnostic layer that works with your existing stack
-
-### When not to use
-
-- You need formal security guarantees or audited benchmark comparability
-- You cannot accept pass-through behavior when the canary is unavailable (see [Fail-open design](#fail-open-design))
 
 ### Results snapshot
 

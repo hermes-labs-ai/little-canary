@@ -1,28 +1,23 @@
-# Little Canary
+# little-canary
 
-> Prompt injection detection library for Python. Uses sacrificial LLM instances as behavioral probes — runs input against a sandboxed canary model and analyzes its response for signs of compromise. 99% detection on TensorTrust (400 attacks). Single dependency (requests). Apache 2.0.
+Prompt injection detection library for LLM apps and agents.
 
-## Docs
+Use this repo when you need to:
+- screen inbound untrusted text before it reaches a main model
+- combine structural pattern checks with sacrificial-canary behavior checks
+- return a simple decision: block, flag, or pass
 
-- [README](https://github.com/roli-lpci/little-canary/blob/main/README.md): Full documentation — quick start, API reference, deployment modes, benchmark results, integration examples, troubleshooting
-- [CHANGELOG](https://github.com/roli-lpci/little-canary/blob/main/CHANGELOG.md): Version history and release notes
-- [CONTRIBUTING](https://github.com/roli-lpci/little-canary/blob/main/CONTRIBUTING.md): How to contribute, development setup, PR guidelines
+Primary entry points:
+- Python API via `SecurityPipeline`
+- local server via `little-canary serve`
 
-## API
+Expected output:
+- verdict object with safety, action, summary, and optional advisory text
 
-- [Pipeline](https://github.com/roli-lpci/little-canary/blob/main/little_canary/pipeline.py): `SecurityPipeline` — main entry point. Three modes: block, advisory, full
-- [Structural Filter](https://github.com/roli-lpci/little-canary/blob/main/little_canary/structural_filter.py): `StructuralFilter` — fast regex + encoded payload detection (base64, hex, ROT13, reverse)
-- [Canary Probe](https://github.com/roli-lpci/little-canary/blob/main/little_canary/canary.py): `CanaryProbe` — sacrificial LLM instance that executes input in a sandbox
-- [Analyzer](https://github.com/roli-lpci/little-canary/blob/main/little_canary/analyzer.py): `BehavioralAnalyzer` — analyzes canary response for behavioral anomalies
-- [Judge](https://github.com/roli-lpci/little-canary/blob/main/little_canary/judge.py): `LLMJudge` — optional LLM-based verdict for ambiguous cases
+Do not use this repo as:
+- a guarantee that prompt injection is impossible
+- a replacement for runtime containment controls
+- a benchmark suite
 
-## Examples
-
-- [Chatbot Example](https://github.com/roli-lpci/little-canary/blob/main/examples/chatbot_example.py): Basic chatbot integration with advisory mode
-- [Generic Example](https://github.com/roli-lpci/little-canary/blob/main/examples/generic_example.py): Minimal usage with custom Ollama endpoint
-
-## Optional
-
-- [Security Policy](https://github.com/roli-lpci/little-canary/blob/main/SECURITY.md): Vulnerability reporting process
-- [Citation](https://github.com/roli-lpci/little-canary/blob/main/CITATION.cff): Academic citation metadata
-- [Benchmarks](https://github.com/roli-lpci/little-canary/tree/main/benchmarks): TensorTrust red team runner, false positive tests, dashboard
+Key success condition:
+- the same configured pipeline and mocked backend produce the same verdict behavior across runs
