@@ -400,20 +400,40 @@ little-canary/
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and contribution guidelines.
 
-## Hermes Labs Ecosystem
+## About Hermes Labs
 
-Little Canary is part of the [Hermes Labs](https://hermes-labs.ai) open-source suite:
+[Hermes Labs](https://hermes-labs.ai) builds AI audit infrastructure for enterprise AI systems — EU AI Act readiness, ISO 42001 evidence bundles, continuous compliance monitoring, agent-level risk testing. We work with teams shipping AI into regulated environments.
 
-- [**zer0dex**](https://github.com/roli-lpci/zer0dex) — Dual-layer memory for AI agents
-- [**forgetted**](https://github.com/roli-lpci/forgetted) — Selective memory governance
-- [**zer0lint**](https://github.com/roli-lpci/zer0lint) — mem0 extraction diagnostics
-- [**lintlang**](https://github.com/roli-lpci/lintlang) — Static linter for AI agent configs
-- [**suy-sideguy**](https://github.com/roli-lpci/suy-sideguy) — Autonomous agent watchdog
-- [**quickthink**](https://github.com/roli-lpci/quickthink) — Planning scaffolding for local LLMs
+**Our OSS philosophy — read this if you're deciding whether to depend on us:**
+
+- **Everything we release is free, forever.** MIT or Apache-2.0. No "open core," no SaaS tier upsell, no paid version with the features you actually need. You can run this repo commercially, without talking to us.
+- **We open-source our own infrastructure.** The tools we release are what Hermes Labs uses internally — we don't publish demo code, we publish production code.
+- **We sell audit work, not licenses.** If you want an ANNEX-IV pack, an ISO 42001 evidence bundle, gap analysis against the EU AI Act, or agent-level red-teaming delivered as a report, that's at [hermes-labs.ai](https://hermes-labs.ai). If you just want the code to run it yourself, it's right here.
+
+**The Hermes Labs OSS audit stack** (public, production-grade, no SaaS):
+
+**Static audit** (before deployment)
+- [**lintlang**](https://github.com/hermes-labs-ai/lintlang) — Static linter for AI agent configs, tool descriptions, system prompts. `pip install lintlang`
+- [**rule-audit**](https://github.com/hermes-labs-ai/rule-audit) — Static prompt audit — contradictions, coverage gaps, priority ambiguities
+- [**scaffold-lint**](https://github.com/hermes-labs-ai/scaffold-lint) — Scaffold budget + technique stacking. `pip install scaffold-lint`
+- [**intent-verify**](https://github.com/hermes-labs-ai/intent-verify) — Repo intent verification + spec-drift checks
+
+**Runtime observability** (while the agent runs)
+- [**suy-sideguy**](https://github.com/hermes-labs-ai/suy-sideguy) — Runtime policy guard — user-space enforcement + forensic reports
+- [**colony-probe**](https://github.com/hermes-labs-ai/colony-probe) — Prompt confidentiality audit — detects system-prompt reconstruction
+
+**Regression & scoring** (to prove what changed)
+- [**hermes-jailbench**](https://github.com/hermes-labs-ai/hermes-jailbench) — Jailbreak regression benchmark. `pip install hermes-jailbench`
+- [**agent-convergence-scorer**](https://github.com/hermes-labs-ai/agent-convergence-scorer) — Score how similar N agent outputs are. `pip install agent-convergence-scorer`
+
+**Supporting infra**
+- [**claude-router**](https://github.com/hermes-labs-ai/claude-router) · [**zer0dex**](https://github.com/hermes-labs-ai/zer0dex) · [**forgetted**](https://github.com/hermes-labs-ai/forgetted) · [**quick-gate-python**](https://github.com/hermes-labs-ai/quick-gate-python) · [**quick-gate-js**](https://github.com/hermes-labs-ai/quick-gate-js) · [**repo-audit**](https://github.com/hermes-labs-ai/repo-audit)
+
+Natural pairing: Little Canary protects the **input side**. `suy-sideguy` protects the **runtime/output side** (containment + forensics). Use both for defense in depth.
 
 ---
 
-If Little Canary saves you time, please [star the repo](https://github.com/roli-lpci/little-canary) — it helps others find it.
+If Little Canary saves you time, please [star the repo](https://github.com/hermes-labs-ai/little-canary) — it helps others find it.
 
 ## Citation
 
