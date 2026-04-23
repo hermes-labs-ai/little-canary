@@ -352,7 +352,7 @@ little-canary/
 │   ├── judge.py                   # LLM judge (experimental, replaces regex)
 │   ├── openai_provider.py         # OpenAI-compatible canary + judge (cloud providers)
 │   └── pipeline.py                # Orchestration + three deployment modes
-├── tests/                         # Unit tests (pytest, 98%+ coverage)
+├── tests/                         # Unit tests (pytest, 92.7% coverage — pytest-cov, 2026-04-23)
 ├── examples/                      # Integration examples
 ├── benchmarks/                    # Test suites and dashboard
 ├── .github/                       # CI, issue templates, dependabot
