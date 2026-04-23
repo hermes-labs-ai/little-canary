@@ -39,8 +39,8 @@ Do not use Little Canary as a formal security guarantee, a benchmark replacement
 [![PyPI downloads](https://img.shields.io/pypi/dm/little-canary)](https://pypi.org/project/little-canary/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![GitHub stars](https://img.shields.io/github/stars/roli-lpci/little-canary)](https://github.com/roli-lpci/little-canary)
-[![CI](https://github.com/roli-lpci/little-canary/actions/workflows/ci.yml/badge.svg)](https://github.com/roli-lpci/little-canary/actions)
+[![GitHub stars](https://img.shields.io/github/stars/hermes-labs-ai/little-canary)](https://github.com/hermes-labs-ai/little-canary)
+[![CI](https://github.com/hermes-labs-ai/little-canary/actions/workflows/ci.yml/badge.svg)](https://github.com/hermes-labs-ai/little-canary/actions)
 [![Paper](https://img.shields.io/badge/paper-Hermes_Labs-blue)](https://hermes-labs.ai)
 [![Hermes Labs](https://img.shields.io/badge/by-Hermes_Labs-purple)](https://hermes-labs.ai)
 
@@ -442,7 +442,7 @@ If Little Canary saves you time, please [star the repo](https://github.com/herme
   author = {Bosch, Rolando},
   title = {Little Canary: Sacrificial LLM Instances as Behavioral Probes for Prompt Injection Detection},
   year = {2026},
-  url = {https://github.com/roli-lpci/little-canary},
+  url = {https://github.com/hermes-labs-ai/little-canary},
   license = {Apache-2.0}
 }
 ```

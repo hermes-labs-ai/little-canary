@@ -48,10 +48,10 @@ little-canary = "little_canary.cli:main"
 
 [project.urls]
 Homepage = "https://hermes-labs.ai"
-Repository = "https://github.com/roli-lpci/little-canary"
-Issues = "https://github.com/roli-lpci/little-canary/issues"
-Documentation = "https://github.com/roli-lpci/little-canary#readme"
-Changelog = "https://github.com/roli-lpci/little-canary/blob/main/CHANGELOG.md"
+Repository = "https://github.com/hermes-labs-ai/little-canary"
+Issues = "https://github.com/hermes-labs-ai/little-canary/issues"
+Documentation = "https://github.com/hermes-labs-ai/little-canary#readme"
+Changelog = "https://github.com/hermes-labs-ai/little-canary/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["little_canary*"]

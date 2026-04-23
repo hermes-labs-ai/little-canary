@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security Vulnerability
-    url: https://github.com/roli-lpci/little-canary/security/advisories/new
+    url: https://github.com/hermes-labs-ai/little-canary/security/advisories/new
     about: Please report security vulnerabilities through GitHub's private reporting.
   - name: Questions
-    url: https://github.com/roli-lpci/little-canary/issues
+    url: https://github.com/hermes-labs-ai/little-canary/issues
     about: For general questions, open an issue with the [Question] prefix.

@@ -6,7 +6,7 @@ Thank you for considering contributing to Little Canary. This document explains 
 
 ```bash
 # Clone the repository
-git clone https://github.com/roli-lpci/little-canary.git
+git clone https://github.com/hermes-labs-ai/little-canary.git
 cd little-canary
 
 # Install in development mode with dev dependencies
@@ -21,14 +21,14 @@ ollama pull qwen2.5:1.5b
 
 ### Reporting Bugs
 
-Open a [bug report](https://github.com/roli-lpci/little-canary/issues/new?template=bug_report.md) with:
+Open a [bug report](https://github.com/hermes-labs-ai/little-canary/issues/new?template=bug_report.md) with:
 - Steps to reproduce
 - Expected vs actual behavior
 - Your environment (OS, Python version, Ollama version, canary model)
 
 ### Suggesting Features
 
-Open a [feature request](https://github.com/roli-lpci/little-canary/issues/new?template=feature_request.md) describing the use case and proposed solution.
+Open a [feature request](https://github.com/hermes-labs-ai/little-canary/issues/new?template=feature_request.md) describing the use case and proposed solution.
 
 ### Submitting Changes
 

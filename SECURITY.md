@@ -13,7 +13,7 @@
 
 To report a vulnerability, please use one of the following methods:
 
-1. **GitHub Private Vulnerability Reporting:** Use the "Report a vulnerability" button on the [Security tab](https://github.com/roli-lpci/little-canary/security/advisories/new) of this repository.
+1. **GitHub Private Vulnerability Reporting:** Use the "Report a vulnerability" button on the [Security tab](https://github.com/hermes-labs-ai/little-canary/security/advisories/new) of this repository.
 
 2. **Email:** Send details to `lpcisystems@gmail.com`.
 
