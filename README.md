@@ -18,7 +18,7 @@ from little_canary import SecurityPipeline
 
 pipeline = SecurityPipeline(canary_model="qwen2.5:1.5b", mode="full")
 verdict = pipeline.check(user_input)
-print(verdict.safe, verdict.action, verdict.summary)
+print(verdict.safe, verdict.blocked_by, verdict.summary)
 ```
 
 ```text
