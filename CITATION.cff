@@ -10,8 +10,8 @@ authors:
 version: 0.2.2
 date-released: 2026-03-02
 license: Apache-2.0
-url: https://github.com/roli-lpci/little-canary
-repository-code: https://github.com/roli-lpci/little-canary
+url: https://github.com/hermes-labs-ai/little-canary
+repository-code: https://github.com/hermes-labs-ai/little-canary
 keywords:
   - llm
   - security
