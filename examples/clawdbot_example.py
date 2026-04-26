@@ -78,11 +78,7 @@ def review_quarantine(quarantined_item: dict) -> bool:
     """
     # Example: auto-approve known senders
     trusted_senders = ["security@company.com", "newsletter@snyk.io"]
-    if quarantined_item["sender"] in trusted_senders:
-        return True
-
-    # Otherwise, flag for human review
-    return False
+    return quarantined_item["sender"] in trusted_senders
 
 
 # ── Usage ──

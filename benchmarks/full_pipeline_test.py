@@ -13,17 +13,17 @@ Usage:
     python3 full_pipeline_test.py --canary qwen2.5:1.5b --production gemma3:27b --limit 20
 """
 
-import json
-import csv
-import time
 import argparse
-import requests
+import csv
+import json
 import sys
+import time
 from pathlib import Path
+
+import requests
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from little_canary import SecurityPipeline
-
 
 PRODUCTION_SYSTEM_PROMPT = (
     "You are a helpful AI assistant. Answer the user's questions clearly and helpfully. "
@@ -140,11 +140,11 @@ def main():
         mode="full",
     )
 
-    print(f"\n🔬 Full Pipeline Integration Test")
+    print("\n🔬 Full Pipeline Integration Test")
     print(f"   Canary: {args.canary}")
     print(f"   Production LLM: {args.production}")
     print(f"   Prompts: {len(prompts)}")
-    print(f"   Mode: full (block + advisory)")
+    print("   Mode: full (block + advisory)")
     print()
 
     # Stats
@@ -163,7 +163,7 @@ def main():
 
         start = time.monotonic()
         verdict = pipeline.check(p["prompt"])
-        canary_time = time.monotonic() - start
+        _ = time.monotonic() - start  # canary_time (unused; kept for future perf logging)
 
         if not verdict.safe:
             # BLOCKED by canary pipeline
@@ -180,7 +180,7 @@ def main():
 
             start = time.monotonic()
             llm_response = query_production_llm(args.production, p["prompt"], advisory_prefix)
-            llm_time = time.monotonic() - start
+            _ = time.monotonic() - start  # llm_time (unused; kept for future perf logging)
 
             # Check if production LLM complied
             compliance = check_compliance(p["prompt"], llm_response)
@@ -221,20 +221,20 @@ def main():
     total_bypassed = flagged_complied + clean_complied
 
     print(f"\n{'='*60}")
-    print(f"FULL PIPELINE RESULTS")
+    print("FULL PIPELINE RESULTS")
     print(f"{'='*60}")
     print(f"Total attacks tested:        {total_attacks}")
-    print(f"")
+    print("")
     print(f"🛑 Blocked by canary:         {blocked:>3} ({100*blocked/total_attacks:.1f}%)")
     print(f"🟡 Flagged → LLM refused:     {flagged_refused:>3} ({100*flagged_refused/total_attacks:.1f}%)")
     print(f"🟡 Flagged → LLM complied:    {flagged_complied:>3} ({100*flagged_complied/total_attacks:.1f}%)")
     print(f"⬜ Clean → LLM refused:       {clean_refused:>3} ({100*clean_refused/total_attacks:.1f}%)")
     print(f"⬜ Clean → LLM complied:      {clean_complied:>3} ({100*clean_complied/total_attacks:.1f}%)")
-    print(f"")
+    print("")
     print(f"✅ EFFECTIVE DETECTION:        {total_caught}/{total_attacks} ({100*total_caught/total_attacks:.1f}%)")
     print(f"❌ FULL BYPASS (attack worked): {total_bypassed}/{total_attacks} ({100*total_bypassed/total_attacks:.1f}%)")
-    print(f"")
-    print(f"Breakdown:")
+    print("")
+    print("Breakdown:")
     print(f"  Canary contribution:        {blocked} blocks + {flagged_refused} advisory saves = {blocked+flagged_refused}")
     print(f"  LLM natural resistance:     {clean_refused} (would refuse anyway)")
     print(f"  Canary added value:         {blocked+flagged_refused} attacks stopped that LLM might not catch alone")
