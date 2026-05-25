@@ -32,7 +32,7 @@ dependencies = [
 
 [project.optional-dependencies]
 benchmark = [
-    "anthropic>=0.102.0",
+    "anthropic>=0.104.1",
 ]
 dev = [
     "pytest>=8.4.2",
@@ -40,7 +40,7 @@ dev = [
     "mypy>=1.19.1",
     "ruff>=0.15.13",
     "pip-audit>=2.9.0",
-    "anthropic>=0.102.0",
+    "anthropic>=0.104.1",
 ]
 
 [project.scripts]
