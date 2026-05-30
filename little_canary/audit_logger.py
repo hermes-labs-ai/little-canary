@@ -14,12 +14,14 @@ Log format (compatible with forensic_report.py):
   latency_ms — float
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ class AuditLogger:
         if entry["verdict"] in ("blocked", "flagged"):
             self._write(self.alerts_path, entry)
 
-    def _build_entry(self, verdict: Any) -> Dict[str, Any]:
+    def _build_entry(self, verdict: Any) -> dict[str, Any]:
         if not verdict.safe:
             verdict_str = "blocked"
         elif verdict.advisory is not None and verdict.advisory.flagged:
@@ -54,7 +56,7 @@ class AuditLogger:
         else:
             verdict_str = "safe"
 
-        signals: List[str] = []
+        signals: list[str] = []
         if verdict.advisory is not None and verdict.advisory.signals:
             signals = list(verdict.advisory.signals)
 
@@ -70,7 +72,7 @@ class AuditLogger:
             "latency_ms": round(verdict.total_latency * 1000, 2),
         }
 
-    def _write(self, path: str, entry: Dict[str, Any]) -> None:
+    def _write(self, path: str, entry: dict[str, Any]) -> None:
         try:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")

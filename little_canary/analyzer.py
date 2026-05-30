@@ -16,10 +16,11 @@ RESIDUE of compromise — what a hijacked canary actually says — rather than
 trying to match the infinite variety of attack inputs.
 """
 
+from __future__ import annotations
+
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 from .canary import CanaryResult
 
@@ -40,7 +41,7 @@ class AnalysisResult:
     """Complete analysis of a canary probe result."""
     risk_score: float
     should_block: bool
-    signals: List[Signal] = field(default_factory=list)
+    signals: list[Signal] = field(default_factory=list)
     canary_result: Optional[CanaryResult] = None
     summary: str = ""
     hard_blocked: bool = False
@@ -59,7 +60,7 @@ HARD_BLOCK_CATEGORIES = {
     "canary_compromise",
 }
 
-CATEGORY_WEIGHTS: Dict[str, float] = {
+CATEGORY_WEIGHTS: dict[str, float] = {
     # Output-side patterns (Strategy 2)
     "canary_compromise": 1.0,
     "refusal_collapse": 1.0,
@@ -93,7 +94,7 @@ class BehavioralAnalyzer:
             )
 
         response = canary_result.response
-        signals: List[Signal] = []
+        signals: list[Signal] = []
 
         # ══════════════════════════════════════════════
         # STRATEGY 1: REACTION PATTERNS
@@ -167,7 +168,7 @@ class BehavioralAnalyzer:
     # STRATEGY 1: REACTION PATTERNS (from v3, broad matching)
     # ══════════════════════════════════════════════════════════
 
-    def _check_persona_shift(self, response: str) -> List[Signal]:
+    def _check_persona_shift(self, response: str) -> list[Signal]:
         """Detect persona adoption in canary response."""
         signals = []
         resp_lower = response.lower()
@@ -198,7 +199,7 @@ class BehavioralAnalyzer:
                 ))
         return signals
 
-    def _check_instruction_echo(self, response: str) -> List[Signal]:
+    def _check_instruction_echo(self, response: str) -> list[Signal]:
         """Detect canary echoing/following injected instructions."""
         signals = []
         resp_lower = response.lower()
@@ -227,7 +228,7 @@ class BehavioralAnalyzer:
                 ))
         return signals
 
-    def _check_system_prompt_leak(self, response: str) -> List[Signal]:
+    def _check_system_prompt_leak(self, response: str) -> list[Signal]:
         """Detect system prompt content in canary response."""
         signals = []
         resp_lower = response.lower()
@@ -249,7 +250,7 @@ class BehavioralAnalyzer:
                 ))
         return signals
 
-    def _check_refusal_collapse(self, response: str) -> List[Signal]:
+    def _check_refusal_collapse(self, response: str) -> list[Signal]:
         """Detect when canary starts refusing then reverses."""
         signals = []
         resp_lower = response.lower()
@@ -274,7 +275,7 @@ class BehavioralAnalyzer:
             ))
         return signals
 
-    def _check_tool_hallucination(self, response: str) -> List[Signal]:
+    def _check_tool_hallucination(self, response: str) -> list[Signal]:
         """Detect canary hallucinating tool use."""
         signals = []
         resp_lower = response.lower()
@@ -294,7 +295,7 @@ class BehavioralAnalyzer:
                 ))
         return signals
 
-    def _check_format_anomaly(self, response: str) -> List[Signal]:
+    def _check_format_anomaly(self, response: str) -> list[Signal]:
         """Detect unusual formatting."""
         signals = []
 
@@ -308,7 +309,7 @@ class BehavioralAnalyzer:
                 ))
         return signals
 
-    def _check_semantic_discontinuity(self, response: str, user_input: str) -> List[Signal]:
+    def _check_semantic_discontinuity(self, response: str, user_input: str) -> list[Signal]:
         """Check for zero content word overlap between input and response."""
         signals = []
 
@@ -345,7 +346,7 @@ class BehavioralAnalyzer:
 
         return signals
 
-    def _check_attack_compliance(self, response: str, user_input: str) -> List[Signal]:
+    def _check_attack_compliance(self, response: str, user_input: str) -> list[Signal]:
         """
         Cross-reference input intent against canary behavior.
         Detects when the canary does what the attack asked.
@@ -426,7 +427,7 @@ class BehavioralAnalyzer:
     # Deterministic output (temp=0) means these patterns stay valid
     # ══════════════════════════════════════════════════════════
 
-    def _check_canary_compromise(self, response: str) -> List[Signal]:
+    def _check_canary_compromise(self, response: str) -> list[Signal]:
         """
         Detect compromise residue in canary output.
 

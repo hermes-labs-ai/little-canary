@@ -16,10 +16,12 @@ If judge_model is specified, the LLM judge replaces the regex analyzer.
 Otherwise, falls back to the regex-based BehavioralAnalyzer.
 """
 
+from __future__ import annotations
+
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable
 
 from .analyzer import BehavioralAnalyzer
 from .audit_logger import AuditLogger
@@ -46,7 +48,7 @@ class SecurityAdvisory:
     """Advisory flag to prepend to production LLM context."""
     flagged: bool
     severity: str  # "none", "low", "medium", "high"
-    signals: List[str]
+    signals: list[str]
     message: str
 
     def to_system_prefix(self) -> str:
@@ -70,13 +72,13 @@ class PipelineVerdict:
     input: str
     safe_input: str
     total_latency: float
-    layers: List[LayerResult] = field(default_factory=list)
-    blocked_by: Optional[str] = None
+    layers: list[LayerResult] = field(default_factory=list)
+    blocked_by: str | None = None
     summary: str = ""
-    canary_risk_score: Optional[float] = None
-    advisory: Optional[SecurityAdvisory] = None
+    canary_risk_score: float | None = None
+    advisory: SecurityAdvisory | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         result = {
             "safe": self.safe,
             "safe_input": self.safe_input,
@@ -156,7 +158,7 @@ class SecurityPipeline:
         self,
         canary_model: str = "qwen2.5:1.5b",
         ollama_url: str = "http://localhost:11434",
-        canary_system_prompt: Optional[str] = None,
+        canary_system_prompt: str | None = None,
         canary_timeout: float = 10.0,
         canary_max_tokens: int = 256,
         block_threshold: float = 0.6,
@@ -167,12 +169,12 @@ class SecurityPipeline:
         mode: str = "block",
         temperature: float = 0.0,
         seed: int = 42,
-        judge_model: Optional[str] = None,
+        judge_model: str | None = None,
         judge_timeout: float = 15.0,
-        audit_log_dir: Optional[str] = None,
-        on_block: Optional[Callable[["PipelineVerdict"], None]] = None,
-        on_flag: Optional[Callable[["PipelineVerdict"], None]] = None,
-        on_pass: Optional[Callable[["PipelineVerdict"], None]] = None,
+        audit_log_dir: str | None = None,
+        on_block: Callable[[PipelineVerdict], None] | None = None,
+        on_flag: Callable[[PipelineVerdict], None] | None = None,
+        on_pass: Callable[[PipelineVerdict], None] | None = None,
         provider: str = "ollama",
         api_key: str = "",
         base_url: str = "",
@@ -283,7 +285,7 @@ class SecurityPipeline:
 
     def _run_check(self, user_input: str) -> PipelineVerdict:
         start_time = time.monotonic()
-        layers: List[LayerResult] = []
+        layers: list[LayerResult] = []
         blocked_by = None
         canary_risk_score = None
         advisory = SecurityAdvisory(
@@ -407,7 +409,7 @@ class SecurityPipeline:
             advisory=advisory,
         )
 
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         status = {
             "structural_filter": self.enable_structural_filter,
             "canary_enabled": self.enable_canary,
