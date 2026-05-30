@@ -1,0 +1,27 @@
+{
+  "title": "little-canary: Prompt-Injection Detection via Sacrificial Canary-Model Behavioral Probes",
+  "description": "little-canary is a prompt-injection detector that reads attacks by their effect on a small sacrificial canary model before untrusted input reaches your production LLM. It combines a structural filter (regex plus base64/hex/ROT13/reverse decode-then-recheck) with a behavioral probe that feeds raw input to a weak canary model and inspects the canary's response for persona adoption, instruction compliance, system-prompt leakage, and refusal collapse, returning a block/flag/pass verdict. It runs against Ollama or any OpenAI-compatible endpoint and is designed as an inbound risk sensor, not a formal guarantee, with a deliberate fail-open availability tradeoff.",
+  "upload_type": "software",
+  "license": "Apache-2.0",
+  "creators": [
+    { "name": "Bosch Rodriguez, Rolando", "orcid": "0009-0005-4896-1112", "affiliation": "Hermes Labs" }
+  ],
+  "keywords": [
+    "AI reliability",
+    "LLM reliability",
+    "verification by effect",
+    "silent failure modes",
+    "prompt-injection detection",
+    "behavioral probe",
+    "sacrificial canary model",
+    "LLM security"
+  ],
+  "version": "0.3.0",
+  "related_identifiers": [
+    {
+      "identifier": "10.5281/zenodo.19042469",
+      "relation": "references",
+      "scheme": "doi"
+    }
+  ]
+}
