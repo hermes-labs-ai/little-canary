@@ -42,7 +42,7 @@ class AnalysisResult:
     risk_score: float
     should_block: bool
     signals: list[Signal] = field(default_factory=list)
-    canary_result: Optional[CanaryResult] = None
+    canary_result: CanaryResult | None = None
     summary: str = ""
     hard_blocked: bool = False
 
