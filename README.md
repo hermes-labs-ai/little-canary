@@ -1,4 +1,6 @@
-# Little Canary
+# little-canary is a prompt-injection detector
+
+little-canary is a prompt-injection detector that reads attacks by their effect on a sacrificial canary model before they reach production.
 
 Prompt injection is hard to catch with string rules alone, and by the time your main model is compromised the damage is already downstream.
 
@@ -46,11 +48,17 @@ Do not use Little Canary as a formal security guarantee, a benchmark replacement
 
 ### Results snapshot
 
-- **99.0% detection on TensorTrust** (400 real attacks, Claude Opus), **94.8% with 3B local model**
-- **0% false positives** on 40 realistic customer chatbot prompts
-- **~250ms latency** per check on consumer hardware
+Reproducible in this repo (`benchmarks/`):
 
-> TensorTrust benchmark — see [Benchmarks](#benchmark-results) and [Limitations](#limitations) for methodology and caveats.
+- **0% false positives** (0/40) on realistic customer chatbot prompts
+- **~250ms latency** per check on consumer hardware
+- Per-category detection rates on the 160-prompt internal red-team suite (see [Benchmark Results](#benchmark-results))
+
+External validation (reproducible — see [`benchmarks/`](benchmarks/README.md)):
+
+- **99.0% / 94.8% detection on TensorTrust** (400 attacks; Toyer et al. 2023). Full pipeline with Opus (396/400) and llama3.2:3b (379/400) behind the `qwen2.5:1.5b` canary. The TensorTrust dataset is third-party (CC-BY) and is fetched, not committed — the runner scripts and our result files are committed, so the numbers reproduce.
+
+> See [Benchmark Results](#benchmark-results) and [Limitations](#limitations) for methodology and caveats.
 
 ---
 
@@ -227,17 +235,15 @@ The canary is deliberately small and weak. It gets compromised by attacks that y
 
 ## Benchmark Results
 
-Tested against an internal red-team suite of 160 adversarial prompts across 9 attack categories, plus a separate false-positive test of 40 realistic chatbot prompts.
+**Reproducible in this repo.** Tested against an internal red-team suite of 160 adversarial prompts across 9 attack categories, plus a separate false-positive test of 40 realistic chatbot prompts. Run them yourself from `benchmarks/` (see [Running the Benchmarks](#running-the-benchmarks)).
 
 | Metric | Value |
 |--------|-------|
-| **TensorTrust detection rate** | **99.0%** (400 attacks, Claude Opus as production LLM) |
-| **3B local model detection rate** | **94.8%** (TensorTrust, 400 attacks) |
 | **Canary standalone block rate** | 37% (canary + structural filter alone) |
 | **False positive rate** | **0/40** on realistic chatbot traffic |
 | **Latency** | ~250ms per check |
 
-**Detection by category:**
+**Detection by category** (160-prompt internal suite):
 
 | Category | Effective Rate | Attacks |
 |----------|---------------|---------|
@@ -252,7 +258,7 @@ Tested against an internal red-team suite of 160 adversarial prompts across 9 at
 | Paired stealthy | — | 10 |
 
 > [!NOTE]
-> **TensorTrust validated.** v0.2.0 results are benchmarked against 400 real-world TensorTrust attacks. Internal red-team category breakdown above is from the original v0.1.0 test suite. See [littlecanary.ai](https://littlecanary.ai) for multi-model comparison.
+> **TensorTrust results (reproducible).** On 400 real-world TensorTrust attacks (Toyer et al. 2023), the full pipeline detects **99.0%** (396/400) with Opus behind the canary and **94.8%** (379/400) with llama3.2:3b; the structural filter alone blocks 241/400. The runner scripts and per-model result files are committed in [`benchmarks/`](benchmarks/README.md); the TensorTrust dataset itself is third-party (CC-BY) and is fetched, not redistributed here. See [`benchmarks/README.md`](benchmarks/README.md) for the full per-model table and exact reproduce steps. The category breakdown above is from the internal suite.
 
 ## Integration Examples
 
@@ -381,15 +387,15 @@ little-canary/
 
 ## Limitations
 
-- **TensorTrust validated (v0.2.0).** 99.0% on 400 attacks with Claude Opus; 94.8% with 3B model. Garak and HarmBench still pending.
-- **Multi-model tested (v0.2.0).** Performance varies by model — see [littlecanary.ai](https://littlecanary.ai) for comparison.
+- **TensorTrust dataset is third-party and not redistributed here.** 99.0% / 94.8% on 400 TensorTrust attacks (Toyer et al. 2023) is reproducible: the runner scripts and result files are in [`benchmarks/`](benchmarks/README.md), but you fetch the CC-BY dataset yourself. Garak and HarmBench still pending.
+- **Multi-model results vary by model.** See the per-model table in [`benchmarks/README.md`](benchmarks/README.md).
 - **Regex-based behavioral analysis.** The experimental `LLMJudge` is included for higher accuracy.
 - **No production deployment data.** All results are from controlled testing.
 - **Ollama + OpenAI-compatible APIs.** Cloud providers (MiniMax, OpenAI, Together, Groq) are supported via the `provider="openai"` option.
 
 ## Roadmap
 
-- [x] Benchmark against TensorTrust (99.0% detection, 400 attacks) — Garak and HarmBench still TODO
+- [x] Benchmark against TensorTrust (99.0% / 94.8%, 400 attacks; reproducible — see [`benchmarks/`](benchmarks/README.md)) — Garak and HarmBench still TODO
 - [ ] LLM judge to replace regex analyzer (higher accuracy)
 - [x] OpenAI-compatible API support (MiniMax, OpenAI, Together, Groq, vLLM)
 - [ ] Fine-tuned canary model (increased susceptibility = stronger signal)
@@ -402,34 +408,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and contribution gu
 
 ## About Hermes Labs
 
-[Hermes Labs](https://hermes-labs.ai) builds AI audit infrastructure for enterprise AI systems — EU AI Act readiness, ISO 42001 evidence bundles, continuous compliance monitoring, agent-level risk testing. We work with teams shipping AI into regulated environments.
-
-**Our OSS philosophy — read this if you're deciding whether to depend on us:**
-
-- **Everything we release is free, forever.** MIT or Apache-2.0. No "open core," no SaaS tier upsell, no paid version with the features you actually need. You can run this repo commercially, without talking to us.
-- **We open-source our own infrastructure.** The tools we release are what Hermes Labs uses internally — we don't publish demo code, we publish production code.
-- **We sell audit work, not licenses.** If you want an ANNEX-IV pack, an ISO 42001 evidence bundle, gap analysis against the EU AI Act, or agent-level red-teaming delivered as a report, that's at [hermes-labs.ai](https://hermes-labs.ai). If you just want the code to run it yourself, it's right here.
-
-**The Hermes Labs OSS audit stack** (public, open-source, no SaaS):
-
-**Static audit** (before deployment)
-- [**lintlang**](https://github.com/hermes-labs-ai/lintlang) — Static linter for AI agent configs, tool descriptions, system prompts. `pip install lintlang`
-- [**rule-audit**](https://github.com/hermes-labs-ai/rule-audit) — Static prompt audit — contradictions, coverage gaps, priority ambiguities
-- [**scaffold-lint**](https://github.com/hermes-labs-ai/scaffold-lint) — Scaffold budget + technique stacking. `pip install scaffold-lint`
-- [**intent-verify**](https://github.com/hermes-labs-ai/intent-verify) — Repo intent verification + spec-drift checks
-
-**Runtime observability** (while the agent runs)
-- [**suy-sideguy**](https://github.com/hermes-labs-ai/suy-sideguy) — Runtime policy guard — user-space enforcement + forensic reports
-- [**colony-probe**](https://github.com/hermes-labs-ai/colony-probe) — Prompt confidentiality audit — detects system-prompt reconstruction
-
-**Regression & scoring** (to prove what changed)
-- [**hermes-jailbench**](https://github.com/hermes-labs-ai/hermes-jailbench) — Jailbreak regression benchmark. `pip install hermes-jailbench`
-- [**agent-convergence-scorer**](https://github.com/hermes-labs-ai/agent-convergence-scorer) — Score how similar N agent outputs are. `pip install agent-convergence-scorer`
-
-**Supporting infra**
-- [**claude-router**](https://github.com/hermes-labs-ai/claude-router) · [**zer0dex**](https://github.com/hermes-labs-ai/zer0dex) · [**forgetted**](https://github.com/hermes-labs-ai/forgetted) · [**quick-gate-python**](https://github.com/hermes-labs-ai/quick-gate-python) · [**quick-gate-js**](https://github.com/hermes-labs-ai/quick-gate-js) · [**repo-audit**](https://github.com/hermes-labs-ai/repo-audit)
-
-Natural pairing: Little Canary protects the **input side**. `suy-sideguy` protects the **runtime/output side** (containment + forensics). Use both for defense in depth.
+Hermes Labs is an independent AI-reliability lab building open-source tools that catch silent failure modes in production AI. More at [hermes-labs.ai](https://hermes-labs.ai).
 
 ---
 
@@ -439,8 +418,8 @@ If Little Canary saves you time, please [star the repo](https://github.com/herme
 
 ```bibtex
 @software{little_canary,
-  author = {Bosch, Rolando},
-  title = {Little Canary: Sacrificial LLM Instances as Behavioral Probes for Prompt Injection Detection},
+  author = {Bosch Rodriguez, Rolando},
+  title = {little-canary: Prompt-Injection Detection via Sacrificial Canary-Model Behavioral Probes},
   year = {2026},
   url = {https://github.com/hermes-labs-ai/little-canary},
   license = {Apache-2.0}

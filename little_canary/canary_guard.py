@@ -14,6 +14,8 @@ Override mechanism:
   Logged to overrides.jsonl. Rate-limited to 5 overrides per hour per caller.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
@@ -22,7 +24,6 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
 
 from .pipeline import SecurityPipeline
 
@@ -50,8 +51,8 @@ class GuardResult:
     original_safe: bool              # What the canary analysis said (pre-trust override)
     trust_level: str                 # TRUSTED | KNOWN | UNKNOWN
     verdict: str                     # PASS | FLAG | BLOCK
-    signals: List[str]               # Detected signal categories
-    risk_score: Optional[float]      # Canary risk score (0.0–1.0) or None
+    signals: list[str]               # Detected signal categories
+    risk_score: float | None      # Canary risk score (0.0–1.0) or None
     source: str                      # Message source (e.g. "whatsapp", "email")
     sender_id: str                   # Identifier for the sender
 
@@ -85,8 +86,8 @@ class CanaryGuard:
         self,
         canary_model: str = "qwen2.5:1.5b",
         audit_log_dir: str = "~/.openclaw/security/",
-        owner_ids: Optional[List[str]] = None,
-        known_ids: Optional[List[str]] = None,
+        owner_ids: list[str] | None = None,
+        known_ids: list[str] | None = None,
         ollama_base_url: str = "http://localhost:11434",
     ):
         self.owner_ids = set(owner_ids or [])
@@ -99,7 +100,7 @@ class CanaryGuard:
         self._overrides_path = os.path.join(self.audit_log_dir, "overrides.jsonl")
 
         # Per-overrider timestamp lists for rate limiting (in-memory)
-        self._override_timestamps: Dict[str, List[float]] = defaultdict(list)
+        self._override_timestamps: dict[str, list[float]] = defaultdict(list)
 
         # Advisory mode: pipeline never blocks — trust logic decides the outcome.
         self._pipeline = SecurityPipeline(

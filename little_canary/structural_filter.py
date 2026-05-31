@@ -6,11 +6,12 @@ for encoded payloads. Detects base64/hex/ROT13 encoded content, decodes it,
 and re-checks the decoded payload against injection patterns.
 """
 
+from __future__ import annotations
+
 import base64
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 class FilterResult:
     """Result from structural filtering."""
     blocked: bool
-    reasons: List[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
     input_sanitized: str = ""
 
 
@@ -34,7 +35,7 @@ class StructuralFilter:
     def __init__(
         self,
         max_input_length: int = 4000,
-        custom_patterns: List[Tuple[str, str]] = None,
+        custom_patterns: list[tuple[str, str]] = None,
     ):
         self.max_input_length = max_input_length
         self.custom_patterns = custom_patterns or []
@@ -73,7 +74,7 @@ class StructuralFilter:
             input_sanitized=user_input if not reasons else "",
         )
 
-    def _decode_and_recheck(self, text: str) -> List[str]:
+    def _decode_and_recheck(self, text: str) -> list[str]:
         """
         Detect encoded payloads (base64, hex, ROT13, reverse), decode them,
         and check the decoded text for injection patterns.
@@ -139,7 +140,7 @@ class StructuralFilter:
 
         return reasons
 
-    def _build_injection_keywords(self) -> List[re.Pattern]:
+    def _build_injection_keywords(self) -> list[re.Pattern]:
         """Build lightweight patterns for checking decoded content."""
         patterns = [
             r"(?i)ignore\s+(?:all\s+)?(?:previous|prior|above)\s+instructions?",
@@ -159,7 +160,7 @@ class StructuralFilter:
                 return True
         return False
 
-    def _build_patterns(self) -> List[Tuple[re.Pattern, str]]:
+    def _build_patterns(self) -> list[tuple[re.Pattern, str]]:
         """Compile regex patterns for known attack signatures."""
         raw_patterns = [
             # ── Direct injection attempts ──

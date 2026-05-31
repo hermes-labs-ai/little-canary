@@ -15,11 +15,12 @@ but only outputs SAFE or UNSAFE. Constrained output means the attack
 payload can't make the judge "do" anything — it's classification, not generation.
 """
 
+from __future__ import annotations
+
 import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 import requests
 
@@ -70,8 +71,8 @@ class AnalysisResult:
     """Analysis result from the LLM judge. Same interface as BehavioralAnalyzer."""
     risk_score: float
     should_block: bool
-    signals: List[Signal] = field(default_factory=list)
-    canary_result: Optional[CanaryResult] = None
+    signals: list[Signal] = field(default_factory=list)
+    canary_result: CanaryResult | None = None
     summary: str = ""
     hard_blocked: bool = False
 

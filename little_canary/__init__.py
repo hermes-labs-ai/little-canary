@@ -9,7 +9,7 @@ indicative of prompt injection, role hijacking, or adversarial manipulation.
 Temperature=0 deterministic output, decode-then-recheck structural filter,
 three deployment modes (block, advisory, full).
 
-Author: Roli Bosch / LPCI Innovations
+Author: Hermes Labs
 License: Apache-2.0
 """
 
