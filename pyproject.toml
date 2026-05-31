@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "little-canary"
-version = "0.3.0"
+version = "0.3.1"
 description = "Prompt injection detection for LLM apps using sacrificial canary-model probes and structural preflight checks"
 readme = "README.md"
 license = {text = "Apache-2.0"}

@@ -4,7 +4,11 @@
   "upload_type": "software",
   "license": "Apache-2.0",
   "creators": [
-    { "name": "Bosch Rodriguez, Rolando", "orcid": "0009-0005-4896-1112", "affiliation": "Hermes Labs" }
+    {
+      "name": "Bosch Rodriguez, Rolando",
+      "orcid": "0009-0005-4896-1112",
+      "affiliation": "Hermes Labs"
+    }
   ],
   "keywords": [
     "AI reliability",
@@ -16,7 +20,7 @@
     "sacrificial canary model",
     "LLM security"
   ],
-  "version": "0.3.0",
+  "version": "0.3.1",
   "related_identifiers": [
     {
       "identifier": "10.5281/zenodo.19042469",
