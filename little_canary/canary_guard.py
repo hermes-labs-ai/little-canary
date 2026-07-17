@@ -73,8 +73,9 @@ class CanaryGuard:
       - Known contact (KNOWN): canary flag → safe=False, verdict=FLAG.
       - Unknown sender: canary flag → safe=False, verdict=BLOCK.
       - Exercised clean result for any trust level → safe=True, verdict=PASS.
-      - Degraded behavioral coverage → verdict=DEGRADED; safe may remain True
-        under the pipeline's fail-open routing policy.
+      - Degraded behavioral coverage without an advisory flag →
+        verdict=DEGRADED; safe may remain True under the pipeline's fail-open
+        routing policy. Existing advisory flags still use the trust policy.
 
     Usage::
 
@@ -85,12 +86,12 @@ class CanaryGuard:
             known_ids=["alice@example.com"],
         )
         result = guard.check(text="...", sender_id="7865413559", source="whatsapp")
-        if result.degraded:
-            quarantine_or_apply_availability_policy(text)
-        elif result.safe:
-            process(text)
-        else:
+        if not result.safe:
             alert_owner(result)
+        elif result.degraded:
+            quarantine_or_apply_availability_policy(text)
+        else:
+            process(text)
     """
 
     def __init__(
@@ -141,7 +142,7 @@ class CanaryGuard:
         risk_score = pipeline_verdict.canary_risk_score
         degraded = pipeline_verdict.degraded
 
-        if degraded:
+        if degraded and not canary_flagged:
             # Preserve the pipeline's fail-open routing decision, but do not
             # reinterpret missing coverage as a safe canary result.
             safe = pipeline_verdict.safe
@@ -166,17 +167,17 @@ class CanaryGuard:
             verdict = VERDICT_PASS
         elif trust_level == TRUST_TRUSTED:
             # Owners are never blocked — flag for logging only
-            original_safe = False
+            original_safe = None if degraded else False
             safe = True
             verdict = VERDICT_FLAG
         elif trust_level == TRUST_KNOWN:
             # Known contacts: flag but do not pass
-            original_safe = False
+            original_safe = None if degraded else False
             safe = False
             verdict = VERDICT_FLAG
         else:
             # Unknown senders: block
-            original_safe = False
+            original_safe = None if degraded else False
             safe = False
             verdict = VERDICT_BLOCK
 
