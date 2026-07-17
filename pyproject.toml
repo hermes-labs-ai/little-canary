@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "little-canary"
-version = "0.3.1"
+version = "0.3.3"
 description = "Prompt injection detection for LLM apps using sacrificial canary-model probes and structural preflight checks"
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 requires-python = ">=3.9"
 authors = [
     {name = "Hermes Labs", email = "roli@hermes-labs.ai"},
@@ -16,7 +16,6 @@ keywords = ["llm", "security", "prompt-injection", "prompt-injection-detection",
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -56,7 +55,7 @@ Changelog = "https://github.com/hermes-labs-ai/little-canary/blob/main/CHANGELOG
 include = ["little_canary*"]
 
 [tool.setuptools.package-data]
-little_canary = ["py.typed"]
+little_canary = ["py.typed", "data/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

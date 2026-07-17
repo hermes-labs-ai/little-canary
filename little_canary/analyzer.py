@@ -10,10 +10,10 @@ Two complementary detection strategies in one pass:
 2. OUTPUT PATTERNS: What the canary's response contains regardless of input
    (first-person compliance, persona adoption, prompt leakage, override narration)
 
-Strategy 2 is the key improvement. With temperature=0, the canary's output
-is deterministic, so these patterns stay valid across runs. They detect the
-RESIDUE of compromise — what a hijacked canary actually says — rather than
-trying to match the infinite variety of attack inputs.
+Strategy 2 detects the RESIDUE of compromise — what an affected canary says —
+rather than relying only on the input text. Temperature zero and a fixed seed
+reduce avoidable sampling variation but do not make live model output
+deterministic across runtimes or runs.
 """
 
 from __future__ import annotations
@@ -39,19 +39,22 @@ class Signal:
 @dataclass
 class AnalysisResult:
     """Complete analysis of a canary probe result."""
-    risk_score: float
+    risk_score: float | None
     should_block: bool
     signals: list[Signal] = field(default_factory=list)
     canary_result: CanaryResult | None = None
     summary: str = ""
     hard_blocked: bool = False
+    degraded: bool = False
+    canary_status: str = "exercised"
+    analysis_method: str = "regex"
+    analysis_status: str = "exercised"
 
 
 # Hard-block categories: both reaction patterns AND output patterns
-# Reaction patterns (persona_shift, instruction_echo, attack_compliance) may
-# produce occasional FPs on security-discussion emails (~2.5% on realistic traffic).
-# For deployments where this matters, use mode='full' — it blocks high-confidence
-# attacks and flags ambiguous ones for review instead of hard-blocking.
+# Reaction patterns (persona_shift, instruction_echo, attack_compliance) can
+# also match benign security discussion. Evaluate deployment-specific controls;
+# no aggregate false-positive rate is asserted by this source.
 HARD_BLOCK_CATEGORIES = {
     "persona_shift",
     "instruction_echo",
@@ -87,10 +90,16 @@ class BehavioralAnalyzer:
     def analyze(self, canary_result: CanaryResult) -> AnalysisResult:
         if not canary_result.success:
             return AnalysisResult(
-                risk_score=0.0,
+                risk_score=None,
                 should_block=False,
                 canary_result=canary_result,
-                summary=f"Canary failed: {canary_result.error}. Passing by default.",
+                summary=(
+                    "Canary probe failed. Behavioral analysis was not run; "
+                    "fail-open routing applies."
+                ),
+                degraded=True,
+                canary_status="failed",
+                analysis_status="not_applicable",
             )
 
         response = canary_result.response
@@ -424,7 +433,8 @@ class BehavioralAnalyzer:
     # ══════════════════════════════════════════════════════════
     # STRATEGY 2: OUTPUT PATTERNS
     # Detect compromise residue in what the canary said
-    # Deterministic output (temp=0) means these patterns stay valid
+    # Pattern evaluation is deterministic for fixed response bytes; producing
+    # those live bytes is model/runtime dependent.
     # ══════════════════════════════════════════════════════════
 
     def _check_canary_compromise(self, response: str) -> list[Signal]:

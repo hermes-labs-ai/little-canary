@@ -38,6 +38,9 @@ TRUST_UNKNOWN = "UNKNOWN"
 VERDICT_PASS = "PASS"
 VERDICT_FLAG = "FLAG"
 VERDICT_BLOCK = "BLOCK"
+VERDICT_DEGRADED = "DEGRADED"
+VERDICT_STRUCTURAL_ONLY = "STRUCTURAL_ONLY"
+VERDICT_UNSCREENED = "UNSCREENED"
 
 # Override rate limit
 OVERRIDE_RATE_LIMIT = 5  # max overrides per hour per overrider_id
@@ -48,13 +51,17 @@ class GuardResult:
     """Result from CanaryGuard.check()."""
 
     safe: bool                       # Final safety decision after trust logic
-    original_safe: bool              # What the canary analysis said (pre-trust override)
+    original_safe: bool | None       # Canary decision, or None when coverage failed
     trust_level: str                 # TRUSTED | KNOWN | UNKNOWN
-    verdict: str                     # PASS | FLAG | BLOCK
+    verdict: str                     # PASS | FLAG | BLOCK | DEGRADED | limited coverage
     signals: list[str]               # Detected signal categories
     risk_score: float | None      # Canary risk score (0.0–1.0) or None
     source: str                      # Message source (e.g. "whatsapp", "email")
     sender_id: str                   # Identifier for the sender
+    degraded: bool = False
+    canary_status: str = "disabled"
+    analysis_method: str = "none"
+    analysis_status: str = "not_applicable"
 
 
 class CanaryGuard:
@@ -65,7 +72,9 @@ class CanaryGuard:
       - Owner (TRUSTED): canary flags become advisory-only — never blocks.
       - Known contact (KNOWN): canary flag → safe=False, verdict=FLAG.
       - Unknown sender: canary flag → safe=False, verdict=BLOCK.
-      - Canary safe for any trust level → safe=True, verdict=PASS.
+      - Exercised clean result for any trust level → safe=True, verdict=PASS.
+      - Degraded behavioral coverage → verdict=DEGRADED; safe may remain True
+        under the pipeline's fail-open routing policy.
 
     Usage::
 
@@ -76,7 +85,9 @@ class CanaryGuard:
             known_ids=["alice@example.com"],
         )
         result = guard.check(text="...", sender_id="7865413559", source="whatsapp")
-        if result.safe:
+        if result.degraded:
+            quarantine_or_apply_availability_policy(text)
+        elif result.safe:
             process(text)
         else:
             alert_owner(result)
@@ -128,24 +139,44 @@ class CanaryGuard:
 
         signals = list(advisory.signals) if advisory and advisory.signals else []
         risk_score = pipeline_verdict.canary_risk_score
+        degraded = pipeline_verdict.degraded
 
-        # original_safe: what the raw canary analysis concluded (ignoring trust)
-        original_safe = not canary_flagged
-
-        # Apply trust-level logic
-        if not canary_flagged:
+        if degraded:
+            # Preserve the pipeline's fail-open routing decision, but do not
+            # reinterpret missing coverage as a safe canary result.
+            safe = pipeline_verdict.safe
+            original_safe = None
+            verdict = VERDICT_DEGRADED
+        elif not canary_flagged and pipeline_verdict.canary_status != "exercised":
+            original_safe = None
+            safe = pipeline_verdict.safe
+            has_structural_result = any(
+                layer.layer_name == "structural_filter"
+                for layer in pipeline_verdict.layers
+            )
+            verdict = (
+                VERDICT_STRUCTURAL_ONLY
+                if has_structural_result
+                else VERDICT_UNSCREENED
+            )
+        elif not canary_flagged:
+            # original_safe: what the raw canary analysis concluded (ignoring trust)
+            original_safe = True
             safe = True
             verdict = VERDICT_PASS
         elif trust_level == TRUST_TRUSTED:
             # Owners are never blocked — flag for logging only
+            original_safe = False
             safe = True
             verdict = VERDICT_FLAG
         elif trust_level == TRUST_KNOWN:
             # Known contacts: flag but do not pass
+            original_safe = False
             safe = False
             verdict = VERDICT_FLAG
         else:
             # Unknown senders: block
+            original_safe = False
             safe = False
             verdict = VERDICT_BLOCK
 
@@ -158,6 +189,10 @@ class CanaryGuard:
             risk_score=risk_score,
             source=source,
             sender_id=sender_id,
+            degraded=degraded,
+            canary_status=pipeline_verdict.canary_status,
+            analysis_method=pipeline_verdict.analysis_method,
+            analysis_status=pipeline_verdict.analysis_status,
         )
 
         self._log_check(text, result)
@@ -221,14 +256,28 @@ class CanaryGuard:
             "original_safe": result.original_safe,
             "signals": result.signals,
             "risk_score": result.risk_score,
+            "degraded": result.degraded,
+            "canary_status": result.canary_status,
+            "analysis_method": result.analysis_method,
+            "analysis_status": result.analysis_status,
         }
         self._write_jsonl(self._audit_path, entry)
-        if result.verdict in (VERDICT_FLAG, VERDICT_BLOCK):
+        if result.verdict in (
+            VERDICT_FLAG,
+            VERDICT_BLOCK,
+            VERDICT_DEGRADED,
+            VERDICT_STRUCTURAL_ONLY,
+            VERDICT_UNSCREENED,
+        ):
             self._write_jsonl(self._alerts_path, entry)
 
     def _write_jsonl(self, path: str, entry: dict) -> None:
         try:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
-        except Exception as e:
-            logger.error("CanaryGuard failed to write to %s: %s", path, e)
+        except Exception as exc:
+            logger.error(
+                "CanaryGuard failed to write %s (%s)",
+                os.path.basename(path),
+                type(exc).__name__,
+            )

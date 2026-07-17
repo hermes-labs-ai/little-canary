@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 import requests
 
 from little_canary.canary import DEFAULT_CANARY_SYSTEM_PROMPT, CanaryResult
@@ -102,6 +103,7 @@ def test_probe_http_error(mock_post):
     result = probe.test("test")
     assert result.success is False
     assert "status 401" in result.error
+    assert "Unauthorized" not in result.error
 
 
 @patch("little_canary.openai_provider.requests.post")
@@ -125,13 +127,26 @@ def test_probe_connection_error(mock_post):
 
 
 @patch("little_canary.openai_provider.requests.post")
+def test_probe_connection_error_redacts_userinfo_query_and_path(mock_post):
+    mock_post.side_effect = requests.ConnectionError("contains-secret")
+    probe = OpenAICanaryProbe(base_url=("https://user:password@example.test/v1/private?api_key=query-secret"))
+
+    result = probe.test("test")
+
+    assert result.error == "Cannot connect to API at https://example.test"
+    for secret in ("user", "password", "private", "query-secret"):
+        assert secret not in result.error
+
+
+@patch("little_canary.openai_provider.requests.post")
 def test_probe_unexpected_error(mock_post):
     mock_post.side_effect = RuntimeError("Something went wrong")
 
     probe = OpenAICanaryProbe()
     result = probe.test("test")
     assert result.success is False
-    assert "Something went wrong" in result.error
+    assert result.error == "Canary probe failed (RuntimeError)"
+    assert "Something went wrong" not in result.error
 
 
 @patch("little_canary.openai_provider.requests.post")
@@ -186,8 +201,50 @@ def test_probe_empty_choices(mock_post):
 
     probe = OpenAICanaryProbe()
     result = probe.test("test")
-    assert result.success is True
+    assert result.success is False
     assert result.response == ""
+    assert result.error == ("API protocol error: response content must be a non-empty string")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"choices": None},
+        {"choices": [{}]},
+        {"choices": [{"message": {}}]},
+        {"choices": [{"message": {"content": None}}]},
+        {"choices": [{"message": {"content": 7}}]},
+        {"choices": [{"message": {"content": "  "}}]},
+        [],
+    ],
+)
+@patch("little_canary.openai_provider.requests.post")
+def test_probe_rejects_invalid_or_empty_content(mock_post, payload):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = payload
+    mock_post.return_value = mock_response
+
+    result = OpenAICanaryProbe().test("test")
+
+    assert result.success is False
+    assert result.error == ("API protocol error: response content must be a non-empty string")
+
+
+@patch("little_canary.openai_provider.requests.post")
+def test_probe_rejects_invalid_json_without_echoing_body(mock_post):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = "secret-response-body"
+    mock_response.json.side_effect = ValueError("secret-response-body")
+    mock_post.return_value = mock_response
+
+    result = OpenAICanaryProbe().test("test")
+
+    assert result.success is False
+    assert result.error == "API protocol error: invalid JSON response"
+    assert "secret" not in result.error
 
 
 # ── is_available() ──
@@ -267,6 +324,19 @@ def test_judge_parse_with_thinking():
     assert judge._parse_verdict("<think>reason here</think>UNSAFE") == "UNSAFE"
 
 
+def test_judge_parse_unknown_abstains():
+    judge = OpenAILLMJudge()
+    assert judge._parse_verdict("I cannot decide") is None
+    assert judge._parse_verdict("The response seems SAFE") is None
+    assert judge._parse_verdict("SAFE or UNSAFE") is None
+
+
+def test_judge_parse_rejects_decorated_verdicts():
+    judge = OpenAILLMJudge()
+    assert judge._parse_verdict("**SAFE**.") is None
+    assert judge._parse_verdict("UNSAFE!") is None
+
+
 @patch("little_canary.openai_provider.requests.post")
 def test_judge_safe_verdict(mock_post):
     mock_response = MagicMock()
@@ -306,8 +376,12 @@ def test_judge_failed_canary_passes():
     judge = OpenAILLMJudge()
     cr = _make_result("", success=False, error="connection failed")
     result = judge.analyze(cr)
-    assert result.risk_score == 0.0
+    assert result.risk_score is None
     assert result.should_block is False
+    assert result.degraded is True
+    assert result.canary_status == "failed"
+    assert result.analysis_method == "llm_judge"
+    assert result.analysis_status == "not_applicable"
 
 
 @patch("little_canary.openai_provider.requests.post")
@@ -321,6 +395,9 @@ def test_judge_http_error(mock_post):
     cr = _make_result("test response")
     result = judge.analyze(cr)
     assert result.should_block is False  # fail-open
+    assert result.risk_score is None
+    assert result.degraded is True
+    assert "Internal Server Error" not in result.summary
 
 
 @patch("little_canary.openai_provider.requests.post")
@@ -331,6 +408,8 @@ def test_judge_timeout(mock_post):
     cr = _make_result("test response")
     result = judge.analyze(cr)
     assert result.should_block is False  # fail-open
+    assert result.risk_score is None
+    assert result.analysis_status == "failed"
 
 
 @patch("little_canary.openai_provider.requests.post")
@@ -341,6 +420,50 @@ def test_judge_connection_error(mock_post):
     cr = _make_result("test response")
     result = judge.analyze(cr)
     assert result.should_block is False  # fail-open
+    assert result.risk_score is None
+    assert result.analysis_status == "failed"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"choices": []},
+        {"choices": [{"message": {"content": None}}]},
+        {"choices": [{"message": {"content": "   "}}]},
+        {"choices": [{"message": {"content": "UNKNOWN"}}]},
+    ],
+)
+@patch("little_canary.openai_provider.requests.post")
+def test_judge_invalid_or_unparseable_content_is_degraded(mock_post, payload):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = payload
+    mock_post.return_value = mock_response
+
+    result = OpenAILLMJudge().analyze(_make_result("normal response"))
+
+    assert result.risk_score is None
+    assert result.should_block is False
+    assert result.degraded is True
+    assert result.canary_status == "exercised"
+    assert result.analysis_method == "llm_judge"
+    assert result.analysis_status == "failed"
+
+
+@patch("little_canary.openai_provider.requests.post")
+def test_judge_invalid_json_is_degraded_without_body_echo(mock_post):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = "credential-in-response"
+    mock_response.json.side_effect = ValueError("credential-in-response")
+    mock_post.return_value = mock_response
+
+    result = OpenAILLMJudge().analyze(_make_result("normal response"))
+
+    assert result.risk_score is None
+    assert result.degraded is True
+    assert "credential" not in result.summary
 
 
 @patch("little_canary.openai_provider.requests.post")

@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
+
+## [0.3.3] - Unreleased
+
+`0.3.2` was not published and is not reused.
+
+### Added
+
+- Explicit `little-canary demo --replay` and `--live` command paths with distinct evidence, model, egress, and exit-state reporting; replay fails unavailable until a complete live capture is admitted.
+- Machine-readable coverage state: routing (`safe`) is separate from `degraded`, `canary_status`, `analysis_method`, and `analysis_status`.
+- Explicit failed/skipped layer states; distinct degraded and unexercised callback paths; and `DEGRADED`, `STRUCTURAL_ONLY`, or `UNSCREENED` propagation through guard and audit records.
+
+### Fixed
+
+- Failed or protocol-invalid canary/judge coverage no longer appears as risk `0`, PASS, or “passed all layers”; fail-open routing remains available with risk unset.
+- Provider HTTP success now requires valid non-empty model content, and provider errors are bounded and redacted.
+- Default pipeline layer snapshots retain signal categories and scores but omit raw canary responses and signal-evidence excerpts before callbacks or serialization.
+- The HTTP adapter no longer skips one-to-five-character inputs or silently truncates attack suffixes; malformed, empty, and oversized requests are explicit errors.
+- Version and organization metadata are coherent, and an unrelated DOI has been removed.
+
+### Documentation
+
+- The primary `0.3.3` README and metadata no longer present historical benchmark rates, universal latency, universal determinism, local-only processing, or operating-system sandboxing as established facts.
+- Replay is recorded analyzer evidence only when an admitted fixture is packaged, not a current model call; this candidate contains no such fixture. Remote backends receive raw input; an optional judge receives raw input plus canary output.
+
+## [0.3.1] - 2026-05-31
+
+GitHub source release and maintenance update. No `0.3.1` artifact was published to PyPI; the registry remained on `0.3.0`. Citation metadata was corrected on `main` after the tag.
+
 ## [0.3.0] - 2026-03-22
 
 ### Added
@@ -52,7 +81,7 @@ Initial open source release.
 
 ### Added
 - **Structural filter** — regex + decode-then-recheck for base64, hex, ROT13, reverse-encoded payloads
-- **Canary probe** — sacrificial LLM behavioral analysis with temperature-0 deterministic output
+- **Canary probe** — sacrificial LLM behavioral analysis with repeatability controls
 - **Behavioral analyzer** — dual-strategy detection (reaction patterns + output patterns)
 - **LLM judge** (experimental) — optional second model to classify canary output
 - **Three deployment modes** — block, advisory, full
@@ -68,7 +97,9 @@ Initial open source release.
 - Dashboard server binds to localhost only (`127.0.0.1`)
 - Licensed under Apache 2.0 (patent grant for AI tooling)
 
-### Benchmarks
+### Historical benchmarks
+
+The figures below were reported by the original release and are retained as history, not revalidated `0.3.3` claims. See the current benchmark documentation for limitations.
 - 98% effective detection (full pipeline: canary + production LLM)
 - 37% standalone block rate (canary + structural filter alone)
 - 0% false positive rate on realistic chatbot traffic (0/40)

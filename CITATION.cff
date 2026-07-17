@@ -1,14 +1,13 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: "little-canary: Prompt-Injection Detection via Sacrificial Canary-Model Behavioral Probes"
-abstract: "little-canary is a prompt-injection detector that reads attacks by their effect on a small sacrificial canary model before untrusted input reaches your production LLM, combining a structural decode-then-recheck filter with a behavioral probe over the canary's response."
+abstract: "little-canary is a prompt-injection risk sensor that combines a structural decode-then-recheck filter with a behavioral probe over a powerless sacrificial model's response, while reporting explicit coverage and degraded state."
 authors:
   - family-names: "Bosch Rodriguez"
     given-names: "Rolando"
     orcid: "https://orcid.org/0009-0005-4896-1112"
     affiliation: "Hermes Labs"
-version: "0.3.1"
-date-released: 2026-03-22
+version: "0.3.3"
 license: Apache-2.0
 repository-code: "https://github.com/hermes-labs-ai/little-canary"
 url: "https://github.com/hermes-labs-ai/little-canary"
@@ -21,10 +20,3 @@ keywords:
   - behavioral probe
   - sacrificial canary model
   - LLM security
-references:
-  - type: article
-    title: "A Taxonomy of Epistemic Failure Modes in LLMs"
-    authors:
-      - family-names: "Bosch Rodriguez"
-        given-names: "Rolando"
-    doi: "10.5281/zenodo.19042469"
