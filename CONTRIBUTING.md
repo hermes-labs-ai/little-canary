@@ -12,9 +12,9 @@ cd little-canary
 # Install in development mode with dev dependencies
 pip install -e ".[dev]"
 
-# Install Ollama and pull the canary model
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2.5:1.5b
+# Optional live evaluation: install Ollama using its reviewed platform
+# instructions, then use a dedicated runtime before pulling/calling a model.
+# Model pulls and live prompts cause network or loopback egress.
 ```
 
 ## How to Contribute
@@ -35,10 +35,15 @@ Open a [feature request](https://github.com/hermes-labs-ai/little-canary/issues/
 1. Fork the repository
 2. Create a feature branch from `main`: `git checkout -b feature/your-feature`
 3. Make your changes
-4. Run the false positive test to verify you haven't introduced regressions:
+4. Run the offline suite and lint checks:
    ```bash
-   cd benchmarks && python3 run_fp_test.py
+   pytest
+   ruff check little_canary tests
    ```
+   If detector behavior changes, also run the case-level benchmark controls on
+   a dedicated model runtime after inspecting the runner's egress and output
+   paths. Do not reduce the result to a rate without the evidence described in
+   `benchmarks/README.md`.
 5. Commit with a clear message describing what and why
 6. Push to your fork and open a Pull Request
 
@@ -48,13 +53,14 @@ Open a [feature request](https://github.com/hermes-labs-ai/little-canary/issues/
 - Include a description of what changed and why
 - If adding detection patterns, include example inputs that trigger them
 - If changing scoring or mode logic, include before/after benchmark results
-- Maintain Python 3.8 compatibility (no walrus operator, no `match`, no `|` union types)
+- Maintain the declared Python 3.9–3.12 support range
 
 ## Project Structure
 
 - `little_canary/` — Core library. Changes here affect all users.
 - `examples/` — Integration examples. Keep these simple and self-contained.
-- `benchmarks/` — Test harnesses and prompt datasets. Run these after any detection logic change.
+- `benchmarks/` — Historical harnesses and prompt datasets. Inspect egress and
+  evidence limitations before running them after detection-logic changes.
 
 ## Code Style
 

@@ -4,6 +4,7 @@
 
 | Version | Supported          |
 |---------|--------------------|
+| 0.3.x   | Yes                |
 | 0.2.x   | Yes                |
 | 0.1.x   | No                 |
 
@@ -24,11 +25,10 @@ To report a vulnerability, please use one of the following methods:
 - Potential impact
 - Suggested fix (if any)
 
-### Response Timeline
+### Response expectations
 
-- **Acknowledgment:** Within 48 hours
-- **Status update:** Within 14 days
-- **Resolution target:** Within 90 days
+Reports are handled on a best-effort basis. This project does not currently
+promise a fixed acknowledgment or resolution service level.
 
 ### Disclosure Policy
 
@@ -39,6 +39,6 @@ We follow coordinated disclosure. After a fix is released, we will:
 
 ## Security Design Notes
 
-Little Canary is a security tool with a **fail-open** design: if the canary model or Ollama is unavailable, inputs pass through unscreened. This is a deliberate availability-over-security tradeoff. Deployments should use `pipeline.health_check()` at startup and monitor canary availability in production.
+Little Canary is a security risk sensor with a **fail-open** design: if an enabled canary or configured analysis dependency fails, routing may still return `safe=True`. The same result is marked `degraded=True`, reports the failed coverage state, and leaves the unavailable risk measurement as `null`. Treat degraded traffic as uninspected pass-through, not as a clean security verdict. Deployments should use `pipeline.health_check()` at startup and monitor readiness and degradation.
 
-The canary model has zero permissions — its output is never executed or forwarded to production systems. It exists only to be observed.
+Little Canary does not give its canary tools, application credentials, or output execution. The default pipeline removes response and signal-evidence bytes from callback/serialized layer snapshots and does not automatically forward canary output. Low-level probe/analysis objects do retain it for analysis and must be treated as sensitive. That library boundary is narrower than an operating-system sandbox. The selected backend receives raw input; an optional judge also receives the canary response.

@@ -1,11 +1,12 @@
 """
 openai_provider.py - OpenAI-Compatible API Providers for Canary and Judge
 
-Adds support for any OpenAI-compatible chat completions endpoint as an
-alternative to Ollama. This enables cloud LLM providers like MiniMax,
-Together, Groq, and OpenAI itself to power the canary and judge.
+Adds an adapter for endpoints that implement the OpenAI chat-completions
+request and response subset used here. Provider compatibility must be tested
+for the selected endpoint; the adapter is an alternative to Ollama.
 
-Same fail-open design as the Ollama implementations: all errors → pass.
+Transport and protocol failures preserve fail-open routing, but are returned as
+degraded/unexercised results rather than evidence of safety.
 
 Usage:
     from little_canary.openai_provider import OpenAICanaryProbe, OpenAILLMJudge
@@ -18,7 +19,7 @@ Usage:
     )
     result = probe.test("What is the capital of France?")
 
-    # Any OpenAI-compatible provider
+    # Example endpoint implementing the expected chat-completions subset
     probe = OpenAICanaryProbe(
         model="gpt-4o-mini",
         api_key="your-openai-key",
@@ -26,13 +27,15 @@ Usage:
     )
 """
 
+from __future__ import annotations
+
 import logging
 import re
 import time
 
-import requests
+import requests  # type: ignore[import-untyped]
 
-from .canary import DEFAULT_CANARY_SYSTEM_PROMPT, CanaryResult
+from .canary import DEFAULT_CANARY_SYSTEM_PROMPT, CanaryResult, _redacted_origin
 from .judge import JUDGE_SYSTEM_PROMPT, AnalysisResult, Signal
 
 logger = logging.getLogger(__name__)
@@ -123,16 +126,40 @@ class OpenAICanaryProbe:
                     system_prompt=self.system_prompt,
                     user_input=user_input,
                     success=False,
-                    error=f"API returned status {response.status_code}: {response.text[:200]}",
+                    error=f"API returned HTTP status {response.status_code}",
                 )
 
-            data = response.json()
-            choices = data.get("choices", [])
-            content = ""
-            if choices:
-                content = choices[0].get("message", {}).get("content", "")
+            try:
+                data = response.json()
+            except ValueError:
+                return CanaryResult(
+                    response="",
+                    latency=elapsed,
+                    model=self.model,
+                    system_prompt=self.system_prompt,
+                    user_input=user_input,
+                    success=False,
+                    error="API protocol error: invalid JSON response",
+                )
+
+            choices = data.get("choices") if isinstance(data, dict) else None
+            first_choice = choices[0] if isinstance(choices, list) and choices else None
+            message = first_choice.get("message") if isinstance(first_choice, dict) else None
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, str) or not content.strip():
+                return CanaryResult(
+                    response="",
+                    latency=elapsed,
+                    model=self.model,
+                    system_prompt=self.system_prompt,
+                    user_input=user_input,
+                    success=False,
+                    error=("API protocol error: response content must be a non-empty string"),
+                )
 
             usage = data.get("usage", {})
+            if not isinstance(usage, dict):
+                usage = {}
 
             return CanaryResult(
                 response=content,
@@ -169,12 +196,13 @@ class OpenAICanaryProbe:
                 system_prompt=self.system_prompt,
                 user_input=user_input,
                 success=False,
-                error=f"Cannot connect to API at {self.base_url}",
+                error=(f"Cannot connect to API at {_redacted_origin(self.base_url)}"),
             )
 
-        except Exception as e:
+        except Exception as exc:
             elapsed = time.monotonic() - start_time
-            logger.exception("Unexpected error in OpenAI canary probe")
+            error_class = type(exc).__name__
+            logger.warning("OpenAI-compatible canary probe failed with %s", error_class)
             return CanaryResult(
                 response="",
                 latency=elapsed,
@@ -182,7 +210,7 @@ class OpenAICanaryProbe:
                 system_prompt=self.system_prompt,
                 user_input=user_input,
                 success=False,
-                error=str(e),
+                error=f"Canary probe failed ({error_class})",
             )
 
     def is_available(self):
@@ -198,7 +226,7 @@ class OpenAICanaryProbe:
                 headers=headers,
                 timeout=5,
             )
-            return resp.status_code == 200
+            return bool(resp.status_code == 200)
         except Exception:
             return False
 
@@ -240,6 +268,27 @@ class OpenAILLMJudge:
         # Kept for interface compatibility with BehavioralAnalyzer
         self.block_threshold = 0.5
 
+    @staticmethod
+    def _failure(
+        canary_result,
+        summary,
+        *,
+        canary_status="exercised",
+        analysis_status="failed",
+    ):
+        # type: (CanaryResult, str, str, str) -> AnalysisResult
+        """Return fail-open routing without inventing a safety measurement."""
+        return AnalysisResult(
+            risk_score=None,
+            should_block=False,
+            canary_result=canary_result,
+            summary=summary,
+            degraded=True,
+            canary_status=canary_status,
+            analysis_method="llm_judge",
+            analysis_status=analysis_status,
+        )
+
     def analyze(self, canary_result):
         # type: (CanaryResult) -> AnalysisResult
         """
@@ -248,16 +297,17 @@ class OpenAILLMJudge:
         Returns AnalysisResult with the same interface as BehavioralAnalyzer.
         """
         if not canary_result.success:
-            return AnalysisResult(
-                risk_score=0.0,
-                should_block=False,
-                canary_result=canary_result,
-                summary=f"Canary failed: {canary_result.error}. Passing by default.",
+            return self._failure(
+                canary_result,
+                (
+                    "Canary probe failed. Judge analysis was not run; "
+                    "fail-open routing applies."
+                ),
+                canary_status="failed",
+                analysis_status="not_applicable",
             )
 
-        judge_input = (
-            f"User message:\n{canary_result.user_input}\n\nAssistant response:\n{canary_result.response}"
-        )
+        judge_input = f"User message:\n{canary_result.user_input}\n\nAssistant response:\n{canary_result.response}"
 
         try:
             start = time.monotonic()
@@ -289,23 +339,29 @@ class OpenAILLMJudge:
             elapsed = time.monotonic() - start
 
             if response.status_code != 200:
-                logger.warning(
-                    "Judge returned %d: %s",
-                    response.status_code,
-                    response.text[:200],
-                )
-                return AnalysisResult(
-                    risk_score=0.0,
-                    should_block=False,
-                    canary_result=canary_result,
-                    summary=f"Judge error (status {response.status_code}). Passing by default.",
+                logger.warning("Judge returned HTTP status %d", response.status_code)
+                return self._failure(
+                    canary_result,
+                    (f"Judge error (status {response.status_code}). Analysis incomplete; fail-open routing applies."),
                 )
 
-            data = response.json()
-            choices = data.get("choices", [])
-            raw_output = ""
-            if choices:
-                raw_output = choices[0].get("message", {}).get("content", "")
+            try:
+                data = response.json()
+            except ValueError:
+                return self._failure(
+                    canary_result,
+                    "Judge returned invalid JSON. Analysis incomplete; fail-open routing applies.",
+                )
+
+            choices = data.get("choices") if isinstance(data, dict) else None
+            first_choice = choices[0] if isinstance(choices, list) and choices else None
+            message = first_choice.get("message") if isinstance(first_choice, dict) else None
+            raw_output = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(raw_output, str) or not raw_output.strip():
+                return self._failure(
+                    canary_result,
+                    ("Judge response content was missing or invalid. Analysis incomplete; fail-open routing applies."),
+                )
 
             verdict = self._parse_verdict(raw_output)
 
@@ -313,17 +369,19 @@ class OpenAILLMJudge:
                 return AnalysisResult(
                     risk_score=1.0,
                     should_block=True,
-                    signals=[Signal(
-                        category="llm_judge",
-                        description="LLM judge classified canary response as compromised",
-                        severity=1.0,
-                        evidence=canary_result.response[:150],
-                    )],
+                    signals=[
+                        Signal(
+                            category="llm_judge",
+                            description="LLM judge classified canary response as compromised",
+                            severity=1.0,
+                            evidence=canary_result.response[:150],
+                        )
+                    ],
                     canary_result=canary_result,
                     summary=f"BLOCKED by LLM judge ({elapsed:0.2f}s). Canary response classified as compromised.",
                     hard_blocked=True,
                 )
-            else:
+            if verdict == "SAFE":
                 return AnalysisResult(
                     risk_score=0.0,
                     should_block=False,
@@ -331,49 +389,53 @@ class OpenAILLMJudge:
                     summary=f"LLM judge: SAFE ({elapsed:0.2f}s).",
                 )
 
-        except requests.Timeout:
-            logger.warning("Judge timed out after %ss", self.timeout)
-            return AnalysisResult(
-                risk_score=0.0,
-                should_block=False,
-                canary_result=canary_result,
-                summary="Judge timed out. Passing by default.",
-            )
-        except requests.ConnectionError:
-            logger.warning("Cannot connect to judge at %s", self.base_url)
-            return AnalysisResult(
-                risk_score=0.0,
-                should_block=False,
-                canary_result=canary_result,
-                summary="Judge unavailable. Passing by default.",
-            )
-        except Exception as e:
-            logger.exception("Judge error")
-            return AnalysisResult(
-                risk_score=0.0,
-                should_block=False,
-                canary_result=canary_result,
-                summary=f"Judge error: {e}. Passing by default.",
+            return self._failure(
+                canary_result,
+                "Judge verdict was unparseable. Analysis incomplete; fail-open routing applies.",
             )
 
-    def _parse_verdict(self, raw_output):
-        # type: (str) -> str
+        except requests.Timeout:
+            logger.warning("Judge timed out after %ss", self.timeout)
+            return self._failure(
+                canary_result,
+                "Judge timed out. Analysis incomplete; fail-open routing applies.",
+            )
+        except requests.ConnectionError:
+            logger.warning(
+                "Cannot connect to judge at %s",
+                _redacted_origin(self.base_url),
+            )
+            return self._failure(
+                canary_result,
+                "Judge unavailable. Analysis incomplete; fail-open routing applies.",
+            )
+        except Exception as exc:
+            logger.warning(
+                "OpenAI-compatible judge failed with %s",
+                type(exc).__name__,
+            )
+            return self._failure(
+                canary_result,
+                "Judge error. Analysis incomplete; fail-open routing applies.",
+            )
+
+    def _parse_verdict(self, raw_output: str) -> str | None:
         """
         Parse SAFE/UNSAFE from judge output.
         Handles thinking tags by stripping ``<think>...</think>`` blocks.
         """
-        cleaned = re.sub(r'<think>.*?</think>', '', raw_output, flags=re.DOTALL).strip()
+        cleaned = re.sub(r"<think>.*?</think>", "", raw_output, flags=re.DOTALL).strip()
         if not cleaned:
             cleaned = raw_output.strip()
 
         upper = cleaned.upper()
-        if "UNSAFE" in upper:
+        if upper == "UNSAFE":
             return "UNSAFE"
-        if "SAFE" in upper:
+        if upper == "SAFE":
             return "SAFE"
 
-        logger.warning("Could not parse judge verdict from: %s", raw_output[:100])
-        return "SAFE"
+        logger.warning("Could not parse judge verdict")
+        return None
 
     def is_available(self):
         # type: () -> bool
@@ -388,6 +450,6 @@ class OpenAILLMJudge:
                 headers=headers,
                 timeout=5,
             )
-            return resp.status_code == 200
+            return bool(resp.status_code == 200)
         except Exception:
             return False
