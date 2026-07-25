@@ -9,7 +9,9 @@ Benchmark and latency figures in entries before `0.3.3` are historical release n
 
 ## [0.3.3] - Unreleased
 
-`0.3.2` was not published and is not reused.
+Release-candidate truth: the package, source metadata, and documented `demo`
+commands are `0.3.3`. GitHub `v0.3.1` was source-only, PyPI remained on
+`0.3.0`, and `0.3.2` was not published and is not reused.
 
 ### Added
 
@@ -24,6 +26,10 @@ Benchmark and latency figures in entries before `0.3.3` are historical release n
 - Default pipeline layer snapshots retain signal categories and scores but omit raw canary responses and signal-evidence excerpts before callbacks or serialization.
 - The HTTP adapter no longer skips one-to-five-character inputs or silently truncates attack suffixes; malformed, empty, and oversized requests are explicit errors.
 - Version and organization metadata are coherent, and an unrelated DOI has been removed.
+- CI installs the declared development tool set instead of carrying a second
+  Ruff pin; mypy stays below version 2 while the project configuration targets
+  Python 3.9; and the Python 3.10+ `pip-audit` tool is excluded only from
+  Python 3.9 development environments.
 
 ### Documentation
 
