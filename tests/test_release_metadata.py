@@ -47,3 +47,11 @@ def test_current_release_metadata_uses_canonical_repository_identity():
     assert canonical_repository in current_metadata["pyproject.toml"]
     assert canonical_repository in current_metadata["CITATION.cff"]
     assert all("roli-lpci" not in text for text in current_metadata.values())
+
+
+def test_readme_describes_the_published_registry_release():
+    readme = _read("README.md")
+
+    assert f"PyPI currently publishes `{__version__}`" in readme
+    assert "Before publication" not in readme
+    assert "PyPI remained on `0.3.0`" not in readme

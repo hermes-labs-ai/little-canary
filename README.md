@@ -17,10 +17,11 @@ Little Canary is an inbound risk sensor, not a security guarantee or an agent ru
 ## Release truth
 
 Source candidates, GitHub releases, and registry builds are separate evidence
-surfaces. This checkout is the `0.3.3` release candidate. GitHub `v0.3.1` was
-source-only, `0.3.2` was intentionally not published or reused, and PyPI
-remained on `0.3.0`. The `demo` commands documented below require `0.3.3`;
-verify the installed artifact with `little-canary --version`.
+surfaces. This checkout, GitHub tag `v0.3.3`, and the registry artifact now
+identify the same release: PyPI currently publishes `0.3.3`. GitHub `v0.3.1`
+was source-only and `0.3.2` was intentionally not published or reused. The
+`demo` commands documented below require `0.3.3`; verify the installed artifact
+with `little-canary --version`.
 
 ## Install
 
@@ -33,11 +34,7 @@ python -m pip install "little-canary==0.3.3"
 little-canary --version
 ```
 
-Before publication, install the exact candidate wheel or source checkout
-instead. An unpinned registry install may resolve `0.3.0`, whose CLI exposes
-`serve` but not the `0.3.3` `demo` command.
-
-For a source checkout:
+For development from a source checkout:
 
 ```bash
 python -m pip install .
