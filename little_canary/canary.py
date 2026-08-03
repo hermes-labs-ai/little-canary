@@ -1,24 +1,40 @@
 """
 canary.py - The Canary Probe
 
-Sends user input to a small, sandboxed LLM and captures its behavioral response.
-The canary model has zero permissions — its output is never executed or forwarded.
+Sends user input to a small sacrificial LLM and captures its behavioral response.
+Little Canary gives the model no tools or actions and never executes its output.
 It exists only to be affected by adversarial inputs so we can observe the effects.
 
 Design choices:
-  - Temperature 0 + fixed seed for deterministic output
-  - Same input → same canary response every time
-  - Patterns tuned against canary output remain valid across runs
+  - Temperature 0 + a fixed seed reduce avoidable sampling variation
+  - Live model output can still vary; stability must be measured, not assumed
+  - The canary response is evidence for the run that produced it
 """
 
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import Optional
+from urllib.parse import urlsplit
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
+
+
+def _redacted_origin(url: str) -> str:
+    """Return a bounded origin without path, query, fragment, or user info."""
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+        if not parsed.scheme or not hostname:
+            return "<invalid endpoint>"
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        port = parsed.port
+        origin = f"{parsed.scheme.lower()}://{host}{f':{port}' if port else ''}"
+        return origin[:200]
+    except (TypeError, ValueError):
+        return "<invalid endpoint>"
 
 
 DEFAULT_CANARY_SYSTEM_PROMPT = (
@@ -31,6 +47,7 @@ DEFAULT_CANARY_SYSTEM_PROMPT = (
 @dataclass
 class CanaryResult:
     """Result from a canary probe execution."""
+
     response: str
     latency: float
     model: str
@@ -47,9 +64,12 @@ class CanaryProbe:
 
     The canary model is:
     - Small and fast (1-3B parameters recommended)
-    - Fully sandboxed (zero permissions, output captured but never executed)
+    - Given no tools or actions by Little Canary; output is captured, not executed
     - Given a known baseline prompt (so deviations are measurable)
-    - Deterministic (temperature=0, fixed seed) so patterns stay valid
+    - Configured for reduced sampling variation (temperature=0, fixed seed)
+
+    Model implementations can still vary across otherwise identical live runs.
+    Treat each response as run-bound evidence and measure repeated stability.
 
     Usage:
         probe = CanaryProbe(model="qwen2.5:1.5b")
@@ -113,11 +133,34 @@ class CanaryProbe:
                     system_prompt=self.system_prompt,
                     user_input=user_input,
                     success=False,
-                    error=f"Ollama returned status {response.status_code}: {response.text}",
+                    error=f"Ollama returned HTTP status {response.status_code}",
                 )
 
-            data = response.json()
-            canary_response = data.get("message", {}).get("content", "")
+            try:
+                data = response.json()
+            except ValueError:
+                return CanaryResult(
+                    response="",
+                    latency=elapsed,
+                    model=self.model,
+                    system_prompt=self.system_prompt,
+                    user_input=user_input,
+                    success=False,
+                    error="Ollama protocol error: invalid JSON response",
+                )
+
+            message = data.get("message") if isinstance(data, dict) else None
+            canary_response = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(canary_response, str) or not canary_response.strip():
+                return CanaryResult(
+                    response="",
+                    latency=elapsed,
+                    model=self.model,
+                    system_prompt=self.system_prompt,
+                    user_input=user_input,
+                    success=False,
+                    error=("Ollama protocol error: response content must be a non-empty string"),
+                )
 
             return CanaryResult(
                 response=canary_response,
@@ -154,12 +197,13 @@ class CanaryProbe:
                 system_prompt=self.system_prompt,
                 user_input=user_input,
                 success=False,
-                error=f"Cannot connect to Ollama at {self.ollama_url}. Is it running?",
+                error=(f"Cannot connect to Ollama at {_redacted_origin(self.ollama_url)}"),
             )
 
-        except Exception as e:
+        except Exception as exc:
             elapsed = time.monotonic() - start_time
-            logger.exception("Unexpected error in canary probe")
+            error_class = type(exc).__name__
+            logger.warning("Canary probe failed with %s", error_class)
             return CanaryResult(
                 response="",
                 latency=elapsed,
@@ -167,7 +211,7 @@ class CanaryProbe:
                 system_prompt=self.system_prompt,
                 user_input=user_input,
                 success=False,
-                error=str(e),
+                error=f"Canary probe failed ({error_class})",
             )
 
     def is_available(self) -> bool:
@@ -177,9 +221,6 @@ class CanaryProbe:
             if resp.status_code != 200:
                 return False
             models = [m["name"] for m in resp.json().get("models", [])]
-            return any(
-                m == self.model or m.startswith(f"{self.model}:")
-                for m in models
-            )
+            return any(m == self.model or m.startswith(f"{self.model}:") for m in models)
         except Exception:
             return False

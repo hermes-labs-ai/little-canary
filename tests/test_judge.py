@@ -55,17 +55,17 @@ def test_parse_unsafe_takes_priority():
     assert judge._parse_verdict("UNSAFE") == "UNSAFE"
 
 
-def test_parse_unparseable_defaults_safe():
+def test_parse_unparseable_abstains():
     judge = LLMJudge()
-    assert judge._parse_verdict("I don't know what to say") == "SAFE"
+    assert judge._parse_verdict("I don't know what to say") is None
 
 
 def test_parse_empty_after_thinking_strip():
     judge = LLMJudge()
     # After stripping thinking, empty string → falls back to raw output check
     result = judge._parse_verdict("<think>only thinking here</think>")
-    # Raw output contains no SAFE/UNSAFE → defaults to SAFE
-    assert result == "SAFE"
+    # Raw output contains no SAFE/UNSAFE → abstains rather than inventing safety
+    assert result is None
 
 
 # ── analyze() with mocked requests ──
@@ -83,6 +83,9 @@ def test_analyze_safe_verdict(mock_post):
     result = judge.analyze(cr)
     assert result.risk_score == 0.0
     assert result.should_block is False
+    assert result.degraded is False
+    assert result.analysis_method == "llm_judge"
+    assert result.analysis_status == "exercised"
 
 
 @patch("little_canary.judge.requests.post")
@@ -102,11 +105,15 @@ def test_analyze_unsafe_verdict(mock_post):
     assert result.signals[0].category == "llm_judge"
 
 
-def test_analyze_failed_canary_passes(failed_canary_result):
+def test_analyze_failed_canary_is_degraded(failed_canary_result):
     judge = LLMJudge()
     result = judge.analyze(failed_canary_result)
-    assert result.risk_score == 0.0
+    assert result.risk_score is None
     assert result.should_block is False
+    assert result.degraded is True
+    assert result.canary_status == "failed"
+    assert result.analysis_method == "llm_judge"
+    assert result.analysis_status == "not_applicable"
 
 
 @patch("little_canary.judge.requests.post")
@@ -120,6 +127,10 @@ def test_analyze_http_error(mock_post):
     cr = _make_result("test response")
     result = judge.analyze(cr)
     assert result.should_block is False  # fail-open
+    assert result.risk_score is None
+    assert result.degraded is True
+    assert result.canary_status == "exercised"
+    assert result.analysis_status == "failed"
 
 
 @patch("little_canary.judge.requests.post")
@@ -130,6 +141,9 @@ def test_analyze_timeout(mock_post):
     cr = _make_result("test response")
     result = judge.analyze(cr)
     assert result.should_block is False  # fail-open
+    assert result.risk_score is None
+    assert result.degraded is True
+    assert result.analysis_status == "failed"
 
 
 @patch("little_canary.judge.requests.post")
@@ -140,16 +154,42 @@ def test_analyze_connection_error(mock_post):
     cr = _make_result("test response")
     result = judge.analyze(cr)
     assert result.should_block is False  # fail-open
+    assert result.risk_score is None
+    assert result.degraded is True
+    assert result.analysis_status == "failed"
 
 
 @patch("little_canary.judge.requests.post")
-def test_analyze_unexpected_error(mock_post):
-    mock_post.side_effect = RuntimeError("unexpected")
+def test_analyze_unexpected_error_is_redacted(mock_post, caplog):
+    mock_post.side_effect = RuntimeError("credential-secret")
 
     judge = LLMJudge()
     cr = _make_result("test response")
     result = judge.analyze(cr)
     assert result.should_block is False  # fail-open
+    assert result.risk_score is None
+    assert result.degraded is True
+    assert result.analysis_status == "failed"
+    assert "credential-secret" not in result.summary
+    assert "credential-secret" not in caplog.text
+
+
+@patch("little_canary.judge.requests.post")
+def test_analyze_unparseable_verdict_is_degraded(mock_post):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"message": {"content": "MAYBE"}}
+    mock_post.return_value = mock_response
+
+    result = LLMJudge().analyze(_make_result("test response"))
+
+    assert result.should_block is False
+    assert result.risk_score is None
+    assert result.degraded is True
+    assert result.canary_status == "exercised"
+    assert result.analysis_method == "llm_judge"
+    assert result.analysis_status == "failed"
+    assert "SAFE" not in result.summary
 
 
 @patch("little_canary.judge.requests.post")

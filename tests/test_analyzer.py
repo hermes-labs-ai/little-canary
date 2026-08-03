@@ -37,6 +37,10 @@ def test_analysis_result_defaults():
     assert r.canary_result is None
     assert r.summary == ""
     assert r.hard_blocked is False
+    assert r.degraded is False
+    assert r.canary_status == "exercised"
+    assert r.analysis_method == "regex"
+    assert r.analysis_status == "exercised"
 
 
 # ── analyze() orchestration ──
@@ -50,12 +54,18 @@ def test_clean_response_no_signals(safe_canary_result):
     assert "No behavioral anomalies" in result.summary
 
 
-def test_failed_canary_passes(failed_canary_result):
+def test_failed_canary_is_degraded_without_risk_measurement(failed_canary_result):
     analyzer = BehavioralAnalyzer()
     result = analyzer.analyze(failed_canary_result)
-    assert result.risk_score == 0.0
+    assert result.risk_score is None
     assert result.should_block is False
-    assert "Canary failed" in result.summary
+    assert result.degraded is True
+    assert result.canary_status == "failed"
+    assert result.analysis_method == "regex"
+    assert result.analysis_status == "not_applicable"
+    assert "Canary probe failed" in result.summary
+    assert "localhost" not in result.summary
+    assert "Passing by default" not in result.summary
 
 
 # ── _check_persona_shift ──

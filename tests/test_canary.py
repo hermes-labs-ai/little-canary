@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 import requests
 
 from little_canary.canary import CanaryProbe, CanaryResult
@@ -124,6 +125,47 @@ def test_probe_http_error(mock_post):
     result = probe.test("test")
     assert result.success is False
     assert "status 500" in result.error
+    assert "Internal Server Error" not in result.error
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"message": {}},
+        {"message": {"content": None}},
+        {"message": {"content": 7}},
+        {"message": {"content": "   "}},
+        [],
+    ],
+)
+@patch("little_canary.canary.requests.post")
+def test_probe_rejects_invalid_or_empty_content(mock_post, payload):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = payload
+    mock_post.return_value = mock_response
+
+    result = CanaryProbe().test("test")
+
+    assert result.success is False
+    assert result.response == ""
+    assert result.error == ("Ollama protocol error: response content must be a non-empty string")
+
+
+@patch("little_canary.canary.requests.post")
+def test_probe_rejects_invalid_json_without_echoing_body(mock_post):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = "secret-response-body"
+    mock_response.json.side_effect = ValueError("secret-response-body")
+    mock_post.return_value = mock_response
+
+    result = CanaryProbe().test("test")
+
+    assert result.success is False
+    assert result.error == "Ollama protocol error: invalid JSON response"
+    assert "secret" not in result.error
 
 
 @patch("little_canary.canary.requests.post")
@@ -147,13 +189,28 @@ def test_probe_connection_error(mock_post):
 
 
 @patch("little_canary.canary.requests.post")
+def test_probe_connection_error_redacts_userinfo_query_and_path(mock_post):
+    mock_post.side_effect = requests.ConnectionError("contains-secret")
+    probe = CanaryProbe(ollama_url=("http://user:password@127.0.0.1:11434/private?api_key=query-secret"))
+
+    result = probe.test("test")
+
+    assert result.error == "Cannot connect to Ollama at http://127.0.0.1:11434"
+    assert "user" not in result.error
+    assert "password" not in result.error
+    assert "private" not in result.error
+    assert "query-secret" not in result.error
+
+
+@patch("little_canary.canary.requests.post")
 def test_probe_unexpected_error(mock_post):
     mock_post.side_effect = RuntimeError("Something went wrong")
 
     probe = CanaryProbe()
     result = probe.test("test")
     assert result.success is False
-    assert "Something went wrong" in result.error
+    assert result.error == "Canary probe failed (RuntimeError)"
+    assert "Something went wrong" not in result.error
 
 
 @patch("little_canary.canary.requests.post")
@@ -202,9 +259,7 @@ def test_is_available_true(mock_get):
 def test_is_available_model_not_found(mock_get):
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {
-        "models": [{"name": "llama3:8b"}]
-    }
+    mock_response.json.return_value = {"models": [{"name": "llama3:8b"}]}
     mock_get.return_value = mock_response
 
     probe = CanaryProbe(model="qwen2.5:1.5b")

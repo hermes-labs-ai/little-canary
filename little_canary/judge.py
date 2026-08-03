@@ -6,13 +6,13 @@ A second, smarter model reads the canary's response and classifies
 whether the canary was compromised by the input.
 
 Architecture:
-  - Canary (qwen2.5:1.5b): dumb, fast, easily compromised = strong signal
-  - Judge (qwen3:4b): smart, reads canary output, classifies SAFE/UNSAFE
-  - Different model families = harder to attack both simultaneously
+  - A sacrificial canary produces behavioral evidence.
+  - An optional second model reads the input and canary output and returns an
+    exact SAFE/UNSAFE protocol token.
 
-The judge sees both the original input and the canary's response,
-but only outputs SAFE or UNSAFE. Constrained output means the attack
-payload can't make the judge "do" anything — it's classification, not generation.
+The judge sees both the original input and the canary's response. It is still a
+model-backed classifier, not a containment boundary or security guarantee;
+invalid output is treated as failed analysis.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import re
 import time
 from dataclasses import dataclass, field
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 from .canary import CanaryResult
 
@@ -69,12 +69,16 @@ class Signal:
 @dataclass
 class AnalysisResult:
     """Analysis result from the LLM judge. Same interface as BehavioralAnalyzer."""
-    risk_score: float
+    risk_score: float | None
     should_block: bool
     signals: list[Signal] = field(default_factory=list)
     canary_result: CanaryResult | None = None
     summary: str = ""
     hard_blocked: bool = False
+    degraded: bool = False
+    canary_status: str = "exercised"
+    analysis_method: str = "llm_judge"
+    analysis_status: str = "exercised"
 
 
 class LLMJudge:
@@ -106,6 +110,25 @@ class LLMJudge:
         # Kept for interface compatibility with BehavioralAnalyzer
         self.block_threshold = 0.5
 
+    @staticmethod
+    def _failure(
+        canary_result: CanaryResult,
+        summary: str,
+        *,
+        canary_status: str = "exercised",
+        analysis_status: str = "failed",
+    ) -> AnalysisResult:
+        """Return a fail-open routing result without inventing a risk measurement."""
+        return AnalysisResult(
+            risk_score=None,
+            should_block=False,
+            canary_result=canary_result,
+            summary=summary,
+            degraded=True,
+            canary_status=canary_status,
+            analysis_status=analysis_status,
+        )
+
     def analyze(self, canary_result: CanaryResult) -> AnalysisResult:
         """
         Ask the judge LLM whether the canary's response shows compromise.
@@ -113,11 +136,14 @@ class LLMJudge:
         Returns AnalysisResult with same interface as BehavioralAnalyzer.
         """
         if not canary_result.success:
-            return AnalysisResult(
-                risk_score=0.0,
-                should_block=False,
-                canary_result=canary_result,
-                summary=f"Canary failed: {canary_result.error}. Passing by default.",
+            return self._failure(
+                canary_result,
+                (
+                    "Canary probe failed. Judge analysis was not run; "
+                    "fail-open routing applies."
+                ),
+                canary_status="failed",
+                analysis_status="not_applicable",
             )
 
         # Build the judge's input: user message + canary response
@@ -148,12 +174,13 @@ class LLMJudge:
             elapsed = time.monotonic() - start
 
             if response.status_code != 200:
-                logger.warning(f"Judge returned {response.status_code}: {response.text}")
-                return AnalysisResult(
-                    risk_score=0.0,
-                    should_block=False,
-                    canary_result=canary_result,
-                    summary=f"Judge error (status {response.status_code}). Passing by default.",
+                logger.warning("Judge returned HTTP status %s", response.status_code)
+                return self._failure(
+                    canary_result,
+                    (
+                        f"Judge error (status {response.status_code}). "
+                        "Analysis incomplete; fail-open routing applies."
+                    ),
                 )
 
             raw_output = response.json().get("message", {}).get("content", "")
@@ -173,7 +200,7 @@ class LLMJudge:
                     summary=f"BLOCKED by LLM judge ({elapsed:.2f}s). Canary response classified as compromised.",
                     hard_blocked=True,
                 )
-            else:
+            if verdict == "SAFE":
                 return AnalysisResult(
                     risk_score=0.0,
                     should_block=False,
@@ -181,32 +208,31 @@ class LLMJudge:
                     summary=f"LLM judge: SAFE ({elapsed:.2f}s).",
                 )
 
-        except requests.Timeout:
-            logger.warning(f"Judge timed out after {self.timeout}s")
-            return AnalysisResult(
-                risk_score=0.0,
-                should_block=False,
-                canary_result=canary_result,
-                summary="Judge timed out. Passing by default.",
-            )
-        except requests.ConnectionError:
-            logger.warning(f"Cannot connect to judge at {self.ollama_url}")
-            return AnalysisResult(
-                risk_score=0.0,
-                should_block=False,
-                canary_result=canary_result,
-                summary="Judge unavailable. Passing by default.",
-            )
-        except Exception as e:
-            logger.exception("Judge error")
-            return AnalysisResult(
-                risk_score=0.0,
-                should_block=False,
-                canary_result=canary_result,
-                summary=f"Judge error: {e}. Passing by default.",
+            return self._failure(
+                canary_result,
+                "Judge verdict was unparseable. Analysis incomplete; fail-open routing applies.",
             )
 
-    def _parse_verdict(self, raw_output: str) -> str:
+        except requests.Timeout:
+            logger.warning(f"Judge timed out after {self.timeout}s")
+            return self._failure(
+                canary_result,
+                "Judge timed out. Analysis incomplete; fail-open routing applies.",
+            )
+        except requests.ConnectionError:
+            logger.warning("Cannot connect to judge endpoint")
+            return self._failure(
+                canary_result,
+                "Judge unavailable. Analysis incomplete; fail-open routing applies.",
+            )
+        except Exception as exc:
+            logger.warning("Judge failed (%s)", type(exc).__name__)
+            return self._failure(
+                canary_result,
+                "Judge error. Analysis incomplete; fail-open routing applies.",
+            )
+
+    def _parse_verdict(self, raw_output: str) -> str | None:
         """
         Parse SAFE/UNSAFE from judge output.
         Handles qwen3 thinking mode by stripping <think>...</think> tags.
@@ -218,16 +244,16 @@ class LLMJudge:
         if not cleaned:
             cleaned = raw_output.strip()
 
-        # Look for UNSAFE first (it's the more specific signal)
+        # The protocol requires exactly one verdict token after thinking is removed.
         upper = cleaned.upper()
-        if "UNSAFE" in upper:
+        if upper == "UNSAFE":
             return "UNSAFE"
-        if "SAFE" in upper:
+        if upper == "SAFE":
             return "SAFE"
 
-        # If we can't parse, log and default to SAFE (permissive)
-        logger.warning(f"Could not parse judge verdict from: {raw_output[:100]}")
-        return "SAFE"
+        # Unknown output is an abstention/failure, never evidence of safety.
+        logger.warning("Could not parse judge verdict")
+        return None
 
     def is_available(self) -> bool:
         """Check if the judge model is available on Ollama."""

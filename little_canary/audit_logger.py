@@ -7,7 +7,8 @@ canary-alerts.jsonl (blocked/flagged events only).
 Log format (compatible with forensic_report.py):
   timestamp  — ISO8601 UTC
   input_hash — sha256 hex digest of raw user input (NOT the raw input)
-  verdict    — "safe" | "blocked" | "flagged"
+  verdict    — "safe" | "blocked" | "flagged" | "degraded" |
+               "structural_only" | "unscreened"
   blocked_by — null | "structural_filter" | "canary_probe"
   risk_score — float | null
   signals    — list of signal category strings
@@ -45,14 +46,28 @@ class AuditLogger:
         """Write a log entry for a PipelineVerdict."""
         entry = self._build_entry(verdict)
         self._write(self.audit_path, entry)
-        if entry["verdict"] in ("blocked", "flagged"):
+        if entry["verdict"] in (
+            "blocked",
+            "flagged",
+            "degraded",
+            "structural_only",
+            "unscreened",
+        ):
             self._write(self.alerts_path, entry)
 
     def _build_entry(self, verdict: Any) -> dict[str, Any]:
         if not verdict.safe:
             verdict_str = "blocked"
+        elif getattr(verdict, "degraded", False):
+            verdict_str = "degraded"
         elif verdict.advisory is not None and verdict.advisory.flagged:
             verdict_str = "flagged"
+        elif getattr(verdict, "canary_status", "disabled") != "exercised":
+            has_structural_result = any(
+                getattr(layer, "layer_name", None) == "structural_filter"
+                for layer in getattr(verdict, "layers", [])
+            )
+            verdict_str = "structural_only" if has_structural_result else "unscreened"
         else:
             verdict_str = "safe"
 
@@ -68,6 +83,12 @@ class AuditLogger:
             "verdict": verdict_str,
             "blocked_by": verdict.blocked_by,
             "risk_score": verdict.canary_risk_score,
+            "degraded": getattr(verdict, "degraded", False),
+            "canary_status": getattr(verdict, "canary_status", "disabled"),
+            "analysis_method": getattr(verdict, "analysis_method", "none"),
+            "analysis_status": getattr(
+                verdict, "analysis_status", "not_applicable"
+            ),
             "signals": signals,
             "latency_ms": round(verdict.total_latency * 1000, 2),
         }
@@ -76,5 +97,9 @@ class AuditLogger:
         try:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
-        except Exception as e:
-            logger.error("AuditLogger failed to write to %s: %s", path, e)
+        except Exception as exc:
+            logger.error(
+                "AuditLogger failed to write %s (%s)",
+                os.path.basename(path),
+                type(exc).__name__,
+            )

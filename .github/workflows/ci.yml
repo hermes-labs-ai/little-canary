@@ -20,15 +20,14 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install .
-          pip install pytest pytest-cov ruff==0.15.14
+          pip install ".[dev]"
 
       - name: Lint with ruff
         run: ruff check little_canary/ tests/

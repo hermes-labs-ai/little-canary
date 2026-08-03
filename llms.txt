@@ -5,25 +5,29 @@ Prompt injection detection library for LLM apps and agents.
 Use this repo when you need to:
 - screen inbound untrusted text before it reaches a main model
 - combine structural pattern checks with sacrificial-canary behavior checks
-- return a simple decision: block, flag, or pass
+- return a routing decision plus explicit behavioral-coverage state
 
 Primary entry points:
 - Python API via `SecurityPipeline`
+- explicit replay-admission and live mechanism gates via `little-canary demo --replay|--live`
 - local server via `little-canary serve`
 
 Expected output:
-- verdict object with safety, action, summary, and optional advisory text
+- verdict object with safety, degradation, canary/analysis status, summary, risk, and optional advisory text
 
 Do not use this repo as:
 - a guarantee that prompt injection is impossible
 - a replacement for runtime containment controls
 - a benchmark suite
 
-Key success condition:
-- the same configured pipeline and mocked backend produce the same verdict behavior across runs
+Evidence rules:
+- `REPLAY` verifies analyzer behavior only when admitted response bytes are packaged; otherwise it exits unavailable
+- replay does not call a model, and unavailable replay is never evidence that input is safe
+- `LIVE` binds the observed result to one backend, model digest, runtime, and configuration
+- `MOCK` and `STATIC_ONLY` validate logic but do not prove live integration
+- remote backends receive raw input; a configured judge receives raw input plus canary output
 
 
 ## About Hermes Labs
 
-Hermes Labs is an independent AI-reliability lab building open-source tools that catch silent failure modes in production AI. More at https://hermes-labs.ai.
-
+Hermes Labs is an independent AI-reliability lab building open-source tools for inspecting silent failure modes. More at https://hermes-labs.ai.
