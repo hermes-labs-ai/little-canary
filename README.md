@@ -212,6 +212,32 @@ Tests are offline by default and mock network behavior. Live evaluation must use
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and [benchmarks/README.md](benchmarks/README.md) for the current evaluation boundary.
 
+## Citation
+
+The architecture implemented here is described in a technical note:
+
+Bosch, R. (2026). *Behavioral Canarying for Prompt Injection: Powerless Model
+Probes with Explicit Coverage Semantics.* Zenodo.
+[10.5281/zenodo.21818565](https://doi.org/10.5281/zenodo.21818565)
+
+```bibtex
+@misc{bosch2026behavioralcanarying,
+  author       = {Bosch, Rolando},
+  title        = {Behavioral Canarying for Prompt Injection: Powerless Model
+                  Probes with Explicit Coverage Semantics},
+  year         = {2026},
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.21818565},
+  url          = {https://doi.org/10.5281/zenodo.21818565},
+  note         = {Technical note}
+}
+```
+
+The note makes no aggregate detection or false-positive claim beyond what
+this README states above; see
+[hermes-publications/papers/behavioral-canarying](https://github.com/hermes-labs-ai/hermes-publications/tree/main/papers/behavioral-canarying)
+for the full evidence boundary.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
