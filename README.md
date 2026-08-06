@@ -14,6 +14,15 @@ untrusted text
 
 Little Canary is an inbound risk sensor, not a security guarantee or an agent runtime.
 
+## Technical note
+
+[Behavioral Canarying for Prompt Injection: Powerless Model Probes with Explicit Coverage Semantics](https://hermes-labs.ai/research/behavioral-canarying)
+documents Little Canary's pre-execution sensing architecture and the separation
+between routing disposition and inspection coverage. It does not claim
+universal detection, formal security, or aggregate accuracy for the current
+release. Cite the archived Version 1.0 record at
+[10.5281/zenodo.21818565](https://doi.org/10.5281/zenodo.21818565).
+
 ## Release truth
 
 Source candidates, GitHub releases, and registry builds are separate evidence
