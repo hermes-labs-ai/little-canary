@@ -21,7 +21,7 @@ documents Little Canary's pre-execution sensing architecture and the separation
 between routing disposition and inspection coverage. It does not claim
 universal detection, formal security, or aggregate accuracy for the current
 release. Cite the archived Version 1.0 record at
-[10.5281/zenodo.21818565](https://doi.org/10.5281/zenodo.21818565):
+[10.5281/zenodo.21818564](https://doi.org/10.5281/zenodo.21818564):
 
 ```bibtex
 @misc{bosch2026behavioralcanarying,
@@ -30,8 +30,8 @@ release. Cite the archived Version 1.0 record at
                   Probes with Explicit Coverage Semantics},
   year         = {2026},
   publisher    = {Zenodo},
-  doi          = {10.5281/zenodo.21818565},
-  url          = {https://doi.org/10.5281/zenodo.21818565},
+  doi          = {10.5281/zenodo.21818564},
+  url          = {https://doi.org/10.5281/zenodo.21818564},
   note         = {Technical note}
 }
 ```
