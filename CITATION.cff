@@ -20,3 +20,14 @@ keywords:
   - behavioral probe
   - sacrificial canary model
   - LLM security
+references:
+  - type: report
+    authors:
+      - family-names: "Bosch"
+        given-names: "Rolando"
+        orcid: "https://orcid.org/0009-0005-4896-1112"
+        affiliation: "Hermes Labs"
+    title: "Behavioral Canarying for Prompt Injection: Powerless Model Probes with Explicit Coverage Semantics"
+    year: 2026
+    doi: "10.5281/zenodo.21818564"
+    url: "https://doi.org/10.5281/zenodo.21818564"

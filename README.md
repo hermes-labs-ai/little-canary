@@ -20,7 +20,7 @@ Little Canary is an inbound risk sensor, not a security guarantee or an agent ru
 documents Little Canary's pre-execution sensing architecture and the separation
 between routing disposition and inspection coverage. It does not claim
 universal detection, formal security, or aggregate accuracy for the current
-release. Cite the archived Version 1.0 record at
+release. Cite the version-independent concept DOI at
 [10.5281/zenodo.21818564](https://doi.org/10.5281/zenodo.21818564):
 
 ```bibtex
