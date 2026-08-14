@@ -1,0 +1,46 @@
+{
+  "@context": "https://w3id.org/codemeta/3.1",
+  "@type": "SoftwareSourceCode",
+  "name": "little-canary",
+  "description": "Prompt injection detection for LLM apps using sacrificial canary-model probes and structural preflight checks",
+  "version": "0.3.3",
+  "identifier": "https://doi.org/10.5281/zenodo.21543681",
+  "codeRepository": "https://github.com/hermes-labs-ai/little-canary",
+  "issueTracker": "https://github.com/hermes-labs-ai/little-canary/issues",
+  "continuousIntegration": "https://github.com/hermes-labs-ai/little-canary/actions",
+  "downloadUrl": "https://pypi.org/project/little-canary/0.3.3/",
+  "license": "https://spdx.org/licenses/Apache-2.0",
+  "programmingLanguage": "Python",
+  "runtimePlatform": "Python >=3.9",
+  "applicationCategory": "Security",
+  "developmentStatus": "active",
+  "author": {
+    "@id": "https://orcid.org/0009-0005-4896-1112",
+    "@type": "Person",
+    "givenName": "Rolando",
+    "familyName": "Bosch Rodriguez",
+    "affiliation": {
+      "@type": "Organization",
+      "name": "Hermes Labs"
+    }
+  },
+  "maintainer": {
+    "@id": "https://orcid.org/0009-0005-4896-1112",
+    "@type": "Person",
+    "givenName": "Rolando",
+    "familyName": "Bosch Rodriguez",
+    "email": "roli@hermes-labs.ai",
+    "affiliation": {
+      "@type": "Organization",
+      "name": "Hermes Labs"
+    }
+  },
+  "keywords": [
+    "AI reliability",
+    "LLM reliability",
+    "prompt-injection detection",
+    "behavioral probe",
+    "sacrificial canary model",
+    "LLM security"
+  ]
+}

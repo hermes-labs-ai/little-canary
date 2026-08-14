@@ -39,6 +39,7 @@ def test_current_release_metadata_uses_canonical_repository_identity():
             "pyproject.toml",
             "CITATION.cff",
             ".zenodo.json",
+            "codemeta.json",
             "README.md",
             "llms.txt",
         )
@@ -47,6 +48,19 @@ def test_current_release_metadata_uses_canonical_repository_identity():
     assert canonical_repository in current_metadata["pyproject.toml"]
     assert canonical_repository in current_metadata["CITATION.cff"]
     assert all("roli-lpci" not in text for text in current_metadata.values())
+
+
+def test_codemeta_tracks_current_release_metadata():
+    codemeta = json.loads(_read("codemeta.json"))
+    canonical_repository = "https://github.com/hermes-labs-ai/little-canary"
+    license_id = _match("pyproject.toml", r'^license = "([^"]+)"$')
+
+    assert codemeta["@context"] == "https://w3id.org/codemeta/3.1"
+    assert codemeta["@type"] == "SoftwareSourceCode"
+    assert codemeta["version"] == __version__
+    assert codemeta["codeRepository"] == canonical_repository
+    assert codemeta["downloadUrl"] == f"https://pypi.org/project/little-canary/{__version__}/"
+    assert codemeta["license"] == f"https://spdx.org/licenses/{license_id}"
 
 
 def test_readme_describes_the_published_registry_release():
