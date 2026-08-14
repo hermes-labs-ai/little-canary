@@ -39,6 +39,7 @@ def test_current_release_metadata_uses_canonical_repository_identity():
             "pyproject.toml",
             "CITATION.cff",
             ".zenodo.json",
+            "codemeta.json",
             "README.md",
             "llms.txt",
         )
@@ -47,6 +48,37 @@ def test_current_release_metadata_uses_canonical_repository_identity():
     assert canonical_repository in current_metadata["pyproject.toml"]
     assert canonical_repository in current_metadata["CITATION.cff"]
     assert all("roli-lpci" not in text for text in current_metadata.values())
+
+
+def test_codemeta_tracks_current_release_metadata():
+    codemeta = json.loads(_read("codemeta.json"))
+    canonical_repository = "https://github.com/hermes-labs-ai/little-canary"
+    license_id = _match("pyproject.toml", r'^license = "([^"]+)"$')
+    citation_orcid = _match("CITATION.cff", r'^    orcid: "([^"]+)"$')
+    citation_given_name = _match("CITATION.cff", r'^    given-names: "([^"]+)"$')
+    citation_family_name = _match("CITATION.cff", r'^  - family-names: "([^"]+)"$')
+    citation_affiliation = _match("CITATION.cff", r'^    affiliation: "([^"]+)"$')
+    maintainer_email = _match("pyproject.toml", r'^    \{name = "Hermes Labs", email = "([^"]+)"\},$')
+    zenodo_creator = json.loads(_read(".zenodo.json"))["creators"][0]
+    author = codemeta["author"]
+    maintainer = codemeta["maintainer"]
+
+    assert codemeta["@context"] == "https://w3id.org/codemeta/3.1"
+    assert codemeta["@type"] == "SoftwareSourceCode"
+    assert codemeta["version"] == __version__
+    assert codemeta["identifier"] == "https://doi.org/10.5281/zenodo.21543681"
+    assert codemeta["codeRepository"] == canonical_repository
+    assert codemeta["downloadUrl"] == f"https://pypi.org/project/little-canary/{__version__}/"
+    assert codemeta["license"] == f"https://spdx.org/licenses/{license_id}"
+    assert author["@id"] == maintainer["@id"] == citation_orcid
+    assert zenodo_creator["orcid"] == citation_orcid.rsplit("/", maxsplit=1)[-1]
+    assert author["givenName"] == maintainer["givenName"] == citation_given_name
+    assert author["familyName"] == maintainer["familyName"] == citation_family_name
+    assert zenodo_creator["name"] == f"{citation_family_name}, {citation_given_name}"
+    assert author["affiliation"]["name"] == maintainer["affiliation"]["name"] == citation_affiliation
+    assert zenodo_creator["affiliation"] == citation_affiliation
+    assert maintainer["email"] == maintainer_email
+    assert "dateModified" not in codemeta
 
 
 def test_readme_describes_the_published_registry_release():
