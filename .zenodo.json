@@ -20,5 +20,12 @@
     "sacrificial canary model",
     "LLM security"
   ],
+  "related_identifiers": [
+    {
+      "identifier": "10.5281/zenodo.21818564",
+      "relation": "isDocumentedBy",
+      "scheme": "doi"
+    }
+  ],
   "version": "0.3.3"
 }
