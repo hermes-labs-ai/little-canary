@@ -7,11 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
-## [0.3.3] - Unreleased
+## [0.3.4] - 2026-08-18
 
-Release-candidate truth: the package, source metadata, and documented `demo`
-commands are `0.3.3`. GitHub `v0.3.1` was source-only, PyPI remained on
-`0.3.0`, and `0.3.2` was not published and is not reused.
+Post-`0.3.3` maintenance release. No product behavior changes.
+
+### Added
+
+- CI package-smoke job on Python 3.12 for pull requests and `main`: builds the
+  sdist and wheel, runs `twine check`, then installs the exact wheel and the
+  exact sdist independently in fresh virtual environments and verifies import,
+  `__version__`, and `little-canary --version`.
+
+### Changed
+
+- Dependency floors refreshed via post-`0.3.3` maintenance (setuptools and
+  requests with Python 3.9 markers; mypy allowed below 3), workflow action
+  references pinned to immutable commit SHAs, the PyPI publishing identity
+  isolated from the build job, and Python 3.13 declared in the package
+  classifiers with CI source-compatibility validation.
+- Stable CodeMeta software metadata added and linked with the Behavioral
+  Canarying technical-note DOIs.
+- Source release surfaces (`pyproject.toml`, `little_canary/__init__.py`,
+  `CITATION.cff`, `.zenodo.json`, `codemeta.json`) advanced to `0.3.4`, and
+  the README now points to GitHub Releases and PyPI as the live authorities
+  on publication state instead of asserting current registry contents.
+
+## [0.3.3] - 2026-07-25
+
+The package, source metadata, and documented `demo` commands are `0.3.3`.
+GitHub `v0.3.1` was source-only, PyPI remained on `0.3.0` until this release,
+and `0.3.2` was not published and is not reused.
 
 ### Added
 
@@ -34,7 +59,7 @@ commands are `0.3.3`. GitHub `v0.3.1` was source-only, PyPI remained on
 ### Documentation
 
 - The primary `0.3.3` README and metadata no longer present historical benchmark rates, universal latency, universal determinism, local-only processing, or operating-system sandboxing as established facts.
-- Replay is recorded analyzer evidence only when an admitted fixture is packaged, not a current model call; this candidate contains no such fixture. Remote backends receive raw input; an optional judge receives raw input plus canary output.
+- Replay is recorded analyzer evidence only when an admitted fixture is packaged, not a current model call; this release contains no such fixture. Remote backends receive raw input; an optional judge receives raw input plus canary output.
 
 ## [0.3.1] - 2026-05-31
 

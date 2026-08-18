@@ -55,3 +55,25 @@ mypy little_canary
 - never treat replay, mock, or static evidence as a current live-model result
 - keep benchmark caveats aligned with README claims
 - keep tests offline and mock network calls
+
+## Optional Hermeneutic Gate
+
+For a consequential semantic review of an assistant-generated English draft,
+you may run the standalone deterministic second-opinion check from the
+separate [Hermeneutic Gate](https://github.com/hermes-labs-ai/hermeneutic#epistemic-gate)
+CLI. It is not part of Little Canary's dev extras; install it separately:
+
+```bash
+python -m pip install hermeneutic
+hermeneutic gate --draft review-summary.md
+```
+
+It flags surface shapes such as completion overclaiming, unsupported numeric
+claims, relayed authority, and unhedged certainty. It runs offline, does not
+invoke Little Canary or a model backend, and does not create a release or
+perimeter gate. Little Canary has no repository-level Gate workflow or hook;
+callers choose whether and how to enforce the exit code. Per the
+[quick start](https://github.com/hermes-labs-ai/hermeneutic#quick-start),
+low-severity `RISK` is advisory (exit 0); medium/high `RISK` exits 1. If it
+flags a claim, add direct evidence, hedge the claim, or remove the
+unverifiable wording.
