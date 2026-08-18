@@ -81,10 +81,16 @@ def test_codemeta_tracks_current_release_metadata():
     assert "dateModified" not in codemeta
 
 
-def test_readme_describes_the_published_registry_release():
+PYPI_PUBLISHED_VERSION = "0.3.3"
+
+
+def test_readme_distinguishes_source_candidate_from_published_release():
     readme = _read("README.md")
 
-    assert f"PyPI currently publishes `{__version__}`" in readme
+    assert f"PyPI currently publishes `{PYPI_PUBLISHED_VERSION}`" in readme
+    if __version__ != PYPI_PUBLISHED_VERSION:
+        assert f"unpublished `{__version__}` source candidate" in readme
+        assert f"PyPI currently publishes `{__version__}`" not in readme
     assert "Before publication" not in readme
     assert "PyPI remained on `0.3.0`" not in readme
 

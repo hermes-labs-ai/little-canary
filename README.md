@@ -42,15 +42,16 @@ for the full evidence boundary.
 ## Release truth
 
 Source candidates, GitHub releases, and registry builds are separate evidence
-surfaces. This checkout, GitHub tag `v0.3.3`, and the registry artifact now
-identify the same release: PyPI currently publishes `0.3.3`. GitHub `v0.3.1`
-was source-only and `0.3.2` was intentionally not published or reused. The
-`demo` commands documented below require `0.3.3`; verify the installed artifact
-with `little-canary --version`.
+surfaces. This checkout is the unpublished `0.3.4` source candidate; no
+`0.3.4` tag or registry artifact exists. PyPI currently publishes `0.3.3`,
+which matches GitHub tag `v0.3.3`. GitHub `v0.3.1` was source-only and
+`0.3.2` was intentionally not published or reused. The `demo` commands
+documented below require `0.3.3` or later; verify the installed artifact with
+`little-canary --version`.
 
 ## Install
 
-Source `main` and the next release support Python 3.9–3.13. The published
+Source `main` and the `0.3.4` candidate support Python 3.9–3.13. The published
 `0.3.3` package metadata advertises Python 3.9–3.12.
 
 For the `0.3.3` registry artifact:
@@ -71,7 +72,8 @@ little-canary --version
 
 ### Replay gate: zero egress
 
-The current `0.3.3` candidate deliberately packages no replay fixture. The
+The published `0.3.3` artifact and the current `0.3.4` source candidate
+deliberately package no replay fixture. The
 available historical live transcript is incomplete, so turning it into a
 fixture would fabricate missing provenance and response bytes. Therefore this
 exact build reports `REPLAY UNAVAILABLE` and exits `2`:
@@ -205,7 +207,7 @@ curl -sS http://127.0.0.1:18421/check \
 
 Every accepted non-empty string reaches the pipeline, including one-character input. Malformed, missing, wrong-type, empty, and oversized requests are explicit errors. Text is never silently truncated before inspection. `/health` is liveness-compatible HTTP `200` and includes truthful `ready`, `degraded`, backend, model, and coverage details.
 
-The loopback server has no authentication, TLS, concurrency hardening, or remote-deployment design in `0.3.3`.
+The loopback server has no authentication, TLS, concurrency hardening, or remote-deployment design in `0.3.3` or the `0.3.4` candidate.
 
 ## Evidence labels and limitations
 
@@ -220,7 +222,8 @@ These labels are not interchangeable. Temperature zero and a seed can improve re
 
 This README makes no aggregate detection, false-positive, latency, or
 token-savings claim. Historical benchmark artifacts remain under `benchmarks/`
-with their limitations and are not a `0.3.3` performance certificate.
+with their limitations and are not a performance certificate for `0.3.3` or
+the `0.3.4` candidate.
 
 Little Canary should be combined with least privilege, tool policy, data boundaries, monitoring, and output/runtime controls. It does not prove an input harmless, prevent every injection, or replace containment.
 
