@@ -87,3 +87,22 @@ def test_readme_describes_the_published_registry_release():
     assert f"PyPI currently publishes `{__version__}`" in readme
     assert "Before publication" not in readme
     assert "PyPI remained on `0.3.0`" not in readme
+
+
+def test_publish_workflow_keeps_build_privileges_away_from_publishing():
+    workflow = _read(".github/workflows/publish.yml")
+    build_workflow, publish_workflow = workflow.split("  publish:\n", maxsplit=1)
+    build_job = build_workflow.split("  build:\n", maxsplit=1)[1]
+
+    assert "  release:\n    types: [published]" in workflow
+    assert "  build:\n" in workflow
+    assert "    permissions:\n      contents: read\n" in build_job
+    assert "id-token: write" not in build_job
+    assert 'test "${GITHUB_REF_NAME}" = "v${package_version}"' in build_job
+    assert "python -m build" in build_job
+    assert "python -m twine check dist/*" in build_job
+    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in build_job
+    assert "    needs: build\n" in publish_workflow
+    assert "      contents: read\n      id-token: write" in publish_workflow
+    assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in publish_workflow
+    assert "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33" in publish_workflow
