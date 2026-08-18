@@ -55,3 +55,19 @@ mypy little_canary
 - never treat replay, mock, or static evidence as a current live-model result
 - keep benchmark caveats aligned with README claims
 - keep tests offline and mock network calls
+
+## Optional Hermes Gate
+
+For a consequential semantic review of an assistant-generated English draft,
+you may run the standalone deterministic second-opinion check:
+
+```bash
+hermeneutic gate --draft review-summary.md
+```
+
+It flags surface shapes such as completion overclaiming, unsupported numeric
+claims, relayed authority, and unhedged certainty. It runs offline, does not
+invoke Little Canary or a model backend, and does not create a release or
+perimeter gate. Inspect both its printed verdict and exit code: low-severity
+`RISK` is advisory (exit 0); medium/high `RISK` exits 1. If it flags a claim,
+add direct evidence, hedge the claim, or remove the unverifiable wording.
