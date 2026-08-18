@@ -50,7 +50,8 @@ with `little-canary --version`.
 
 ## Install
 
-Little Canary supports Python 3.9–3.12.
+Source `main` and the next release support Python 3.9–3.13. The published
+`0.3.3` package metadata advertises Python 3.9–3.12.
 
 For the `0.3.3` registry artifact:
 
