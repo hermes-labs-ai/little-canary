@@ -53,7 +53,7 @@ Open a [feature request](https://github.com/hermes-labs-ai/little-canary/issues/
 - Include a description of what changed and why
 - If adding detection patterns, include example inputs that trigger them
 - If changing scoring or mode logic, include before/after benchmark results
-- Maintain the declared Python 3.9–3.12 support range
+- Maintain the declared Python 3.9–3.13 support range
 
 ## Project Structure
 
