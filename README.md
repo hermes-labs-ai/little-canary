@@ -41,23 +41,29 @@ for the full evidence boundary.
 
 ## Release truth
 
-Source candidates, GitHub releases, and registry builds are separate evidence
-surfaces. This checkout is the unpublished `0.3.4` source candidate; no
-`0.3.4` tag or registry artifact exists. PyPI currently publishes `0.3.3`,
-which matches GitHub tag `v0.3.3`. GitHub `v0.3.1` was source-only and
-`0.3.2` was intentionally not published or reused. The `demo` commands
-documented below require `0.3.3` or later; verify the installed artifact with
-`little-canary --version`.
+Source checkouts, GitHub releases, and registry builds are separate evidence
+surfaces. The version of the source you are reading is recorded in this
+repository's own metadata (`pyproject.toml` and
+`little_canary/__init__.py`); this README does not assert what any registry
+holds at the moment you read it. For current publication state, consult the
+live authorities:
+[GitHub Releases](https://github.com/hermes-labs-ai/little-canary/releases)
+and [PyPI](https://pypi.org/project/little-canary/). Historically, GitHub
+`v0.3.1` was source-only and `0.3.2` was intentionally not published or
+reused. The `demo` commands documented below require `0.3.3` or later; verify
+the installed artifact with `little-canary --version` and confirm it matches
+the version you intended to install.
 
 ## Install
 
-Source `main` and the `0.3.4` candidate support Python 3.9–3.13. The published
-`0.3.3` package metadata advertises Python 3.9–3.12.
+This source tree supports Python 3.9–3.13. A published artifact's own
+package metadata is the authority for the Python range that artifact
+advertises.
 
-For the `0.3.3` registry artifact:
+From the registry (see PyPI for available versions):
 
 ```bash
-python -m pip install "little-canary==0.3.3"
+python -m pip install little-canary
 little-canary --version
 ```
 
@@ -72,8 +78,8 @@ little-canary --version
 
 ### Replay gate: zero egress
 
-The published `0.3.3` artifact and the current `0.3.4` source candidate
-deliberately package no replay fixture. The
+This release, like `0.3.3` before it, deliberately packages no replay
+fixture. The
 available historical live transcript is incomplete, so turning it into a
 fixture would fabricate missing provenance and response bytes. Therefore this
 exact build reports `REPLAY UNAVAILABLE` and exits `2`:
@@ -98,7 +104,7 @@ EGRESS     none
 
 Success is `REPLAY VERIFIED`: the recorded capture exercised a canary, the current command did not, and the analyzer reproduced the expected contrast. Replay does not prove that a model is installed, reachable, or currently behaves the same way.
 
-A source candidate or artifact without an admitted complete capture exits `2` with `REPLAY UNAVAILABLE`; it never invents response bytes or makes a hidden live call.
+A build without an admitted complete capture exits `2` with `REPLAY UNAVAILABLE`; it never invents response bytes or makes a hidden live call.
 
 ### Live proof gate: explicit local egress
 
@@ -207,7 +213,7 @@ curl -sS http://127.0.0.1:18421/check \
 
 Every accepted non-empty string reaches the pipeline, including one-character input. Malformed, missing, wrong-type, empty, and oversized requests are explicit errors. Text is never silently truncated before inspection. `/health` is liveness-compatible HTTP `200` and includes truthful `ready`, `degraded`, backend, model, and coverage details.
 
-The loopback server has no authentication, TLS, concurrency hardening, or remote-deployment design in `0.3.3` or the `0.3.4` candidate.
+The loopback server has no authentication, TLS, concurrency hardening, or remote-deployment design in this release.
 
 ## Evidence labels and limitations
 
@@ -222,8 +228,8 @@ These labels are not interchangeable. Temperature zero and a seed can improve re
 
 This README makes no aggregate detection, false-positive, latency, or
 token-savings claim. Historical benchmark artifacts remain under `benchmarks/`
-with their limitations and are not a performance certificate for `0.3.3` or
-the `0.3.4` candidate.
+with their limitations and are not a performance certificate for this
+release.
 
 Little Canary should be combined with least privilege, tool policy, data boundaries, monitoring, and output/runtime controls. It does not prove an input harmless, prevent every injection, or replace containment.
 

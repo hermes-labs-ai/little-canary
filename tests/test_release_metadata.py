@@ -81,18 +81,34 @@ def test_codemeta_tracks_current_release_metadata():
     assert "dateModified" not in codemeta
 
 
-PYPI_PUBLISHED_VERSION = "0.3.3"
+def test_changelog_top_entry_is_a_dated_release_for_the_current_version():
+    heading = re.search(r"^## \[([^\]]+)\] - (.+)$", _read("CHANGELOG.md"), flags=re.MULTILINE)
+
+    assert heading is not None
+    assert heading.group(1) == __version__
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", heading.group(2)), heading.group(2)
 
 
-def test_readme_distinguishes_source_candidate_from_published_release():
+def test_readme_release_guidance_stays_true_across_publication():
     readme = _read("README.md")
 
-    assert f"PyPI currently publishes `{PYPI_PUBLISHED_VERSION}`" in readme
-    if __version__ != PYPI_PUBLISHED_VERSION:
-        assert f"unpublished `{__version__}` source candidate" in readme
-        assert f"PyPI currently publishes `{__version__}`" not in readme
-    assert "Before publication" not in readme
-    assert "PyPI remained on `0.3.0`" not in readme
+    # Durable guidance: point at live authorities and the local verification
+    # command instead of freezing a snapshot of external registry state.
+    assert "https://github.com/hermes-labs-ai/little-canary/releases" in readme
+    assert "https://pypi.org/project/little-canary/" in readme
+    assert "little-canary --version" in readme
+    assert "pyproject.toml" in readme
+
+
+def test_release_docs_do_not_assert_current_external_registry_state():
+    for relative_path in ("README.md", "CHANGELOG.md"):
+        text = _read(relative_path)
+
+        assert "Unreleased" not in text, relative_path
+        assert "currently publishes" not in text, relative_path
+        assert "source candidate" not in text, relative_path
+        assert "artifact exists" not in text, relative_path
+        assert "Before publication" not in text, relative_path
 
 
 def test_publish_workflow_keeps_build_privileges_away_from_publishing():

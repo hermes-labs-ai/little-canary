@@ -7,11 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
-## [0.3.4] - Unreleased
+## [0.3.4] - 2026-08-18
 
-Post-`0.3.3` maintenance candidate. Source metadata identifies `0.3.4`; PyPI
-still publishes `0.3.3`, and no `0.3.4` artifact exists yet. No product
-behavior changes.
+Post-`0.3.3` maintenance release. No product behavior changes.
 
 ### Added
 
@@ -30,9 +28,9 @@ behavior changes.
 - Stable CodeMeta software metadata added and linked with the Behavioral
   Canarying technical-note DOIs.
 - Source release surfaces (`pyproject.toml`, `little_canary/__init__.py`,
-  `CITATION.cff`, `.zenodo.json`, `codemeta.json`) advanced to the unpublished
-  `0.3.4` candidate, and the README distinguishes this source candidate from
-  the published `0.3.3` registry artifact.
+  `CITATION.cff`, `.zenodo.json`, `codemeta.json`) advanced to `0.3.4`, and
+  the README now points to GitHub Releases and PyPI as the live authorities
+  on publication state instead of asserting current registry contents.
 
 ## [0.3.3] - 2026-07-25
 
@@ -61,7 +59,7 @@ and `0.3.2` was not published and is not reused.
 ### Documentation
 
 - The primary `0.3.3` README and metadata no longer present historical benchmark rates, universal latency, universal determinism, local-only processing, or operating-system sandboxing as established facts.
-- Replay is recorded analyzer evidence only when an admitted fixture is packaged, not a current model call; this candidate contains no such fixture. Remote backends receive raw input; an optional judge receives raw input plus canary output.
+- Replay is recorded analyzer evidence only when an admitted fixture is packaged, not a current model call; this release contains no such fixture. Remote backends receive raw input; an optional judge receives raw input plus canary output.
 
 ## [0.3.1] - 2026-05-31
 
