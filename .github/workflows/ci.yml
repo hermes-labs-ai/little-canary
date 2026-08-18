@@ -78,7 +78,10 @@ jobs:
           cd /tmp
           installed_version="$(/tmp/wheel-venv/bin/python -c 'import little_canary; print(little_canary.__version__)')"
           test "${installed_version}" = "${EXPECTED_VERSION}"
-          /tmp/wheel-venv/bin/little-canary --version
+          distribution_version="$(/tmp/wheel-venv/bin/python -c 'from importlib.metadata import version; print(version("little-canary"))')"
+          test "${distribution_version}" = "${EXPECTED_VERSION}"
+          cli_output="$(/tmp/wheel-venv/bin/little-canary --version)"
+          test "${cli_output}" = "little-canary ${EXPECTED_VERSION}"
 
       - name: Smoke-test exact sdist in a fresh virtualenv
         run: |
@@ -87,4 +90,7 @@ jobs:
           cd /tmp
           installed_version="$(/tmp/sdist-venv/bin/python -c 'import little_canary; print(little_canary.__version__)')"
           test "${installed_version}" = "${EXPECTED_VERSION}"
-          /tmp/sdist-venv/bin/little-canary --version
+          distribution_version="$(/tmp/sdist-venv/bin/python -c 'from importlib.metadata import version; print(version("little-canary"))')"
+          test "${distribution_version}" = "${EXPECTED_VERSION}"
+          cli_output="$(/tmp/sdist-venv/bin/little-canary --version)"
+          test "${cli_output}" = "little-canary ${EXPECTED_VERSION}"

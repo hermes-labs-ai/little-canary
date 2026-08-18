@@ -25,6 +25,7 @@ def test_release_version_surfaces_are_aligned():
         _match("pyproject.toml", r'^version = "([^"]+)"$'),
         _match("CITATION.cff", r'^version: "([^"]+)"$'),
         json.loads(_read(".zenodo.json"))["version"],
+        json.loads(_read("codemeta.json"))["version"],
     }
 
     assert versions == {__version__}
@@ -82,11 +83,12 @@ def test_codemeta_tracks_current_release_metadata():
 
 
 def test_changelog_top_entry_is_a_dated_release_for_the_current_version():
-    heading = re.search(r"^## \[([^\]]+)\] - (.+)$", _read("CHANGELOG.md"), flags=re.MULTILINE)
+    headings = re.findall(r"^## \[([^\]]+)\] - (.+)$", _read("CHANGELOG.md"), flags=re.MULTILINE)
 
-    assert heading is not None
-    assert heading.group(1) == __version__
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", heading.group(2)), heading.group(2)
+    assert headings, "CHANGELOG.md contains no release headings"
+    top_version, top_date = headings[0]
+    assert top_version == __version__
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", top_date), top_date
 
 
 def test_readme_release_guidance_stays_true_across_publication():
