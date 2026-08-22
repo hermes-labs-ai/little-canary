@@ -51,7 +51,8 @@ dev = [
 little-canary = "little_canary.cli:main"
 
 [project.urls]
-Homepage = "https://hermes-labs.ai"
+Homepage = "https://littlecanary.ai"
+"Hermes Labs" = "https://hermes-labs.ai/little-canary"
 Repository = "https://github.com/hermes-labs-ai/little-canary"
 Issues = "https://github.com/hermes-labs-ai/little-canary/issues"
 Documentation = "https://github.com/hermes-labs-ai/little-canary#readme"

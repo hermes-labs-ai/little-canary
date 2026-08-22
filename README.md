@@ -2,6 +2,8 @@
 
 Prompt-injection sensing through a powerless sacrificial model.
 
+**Links:** [Website](https://littlecanary.ai) · [Hermes Labs product page](https://hermes-labs.ai/little-canary)
+
 Little Canary lets untrusted language affect a small model with no application tools or authority, then inspects that model's response for compromise residue before your agent acts. Structural checks catch known input shapes; the distinctive behavioral layer asks what the input *did to the canary*.
 
 ```text
