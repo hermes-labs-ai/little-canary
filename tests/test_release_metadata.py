@@ -130,3 +130,15 @@ def test_publish_workflow_keeps_build_privileges_away_from_publishing():
     assert "      contents: read\n      id-token: write" in publish_workflow
     assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in publish_workflow
     assert "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33" in publish_workflow
+
+
+def test_dependabot_merge_waits_for_required_checks_without_repository_auto_merge():
+    workflow = _read(".github/workflows/dependabot-auto-merge.yml")
+
+    wait = 'gh pr checks --required --watch --fail-fast "$PR_URL"'
+    merge = 'gh pr merge --squash --match-head-commit "$HEAD_SHA" "$PR_URL"'
+    assert wait in workflow
+    assert merge in workflow
+    assert workflow.index(wait) < workflow.index(merge)
+    assert "gh pr merge --auto" not in workflow
+    assert "HEAD_SHA: ${{ github.event.pull_request.head.sha }}" in workflow
