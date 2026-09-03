@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "little-canary-before-agent",
+            "description": "Screen the prompt before Gemini CLI starts the agent loop.",
+            "command": "python3 ${extensionPath}/scripts/little_canary_before_agent.py",
+            "timeout": 7000
+          }
+        ]
+      }
+    ]
+  }
+}
