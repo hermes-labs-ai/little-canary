@@ -299,6 +299,33 @@ This plugin blocks one Claude Code turn at its prompt-submission boundary. It
 does not screen tool results, and it does not establish a general security
 guarantee or replace least privilege and tool policy.
 
+## OpenAI Agents SDK input guardrail
+
+The optional `little_canary.openai_agents` module wraps a `SecurityPipeline`
+(or any object with `check(text) -> PipelineVerdict`) as a native Agents SDK
+`InputGuardrail`. It runs before the agent starts by default.
+
+```bash
+python -m pip install "little-canary[openai-agents]"   # Python 3.10+
+```
+
+```python
+from agents import Agent
+from little_canary import SecurityPipeline
+from little_canary.openai_agents import little_canary_input_guardrail
+
+pipeline = SecurityPipeline(canary_model="qwen2.5:1.5b", mode="block")
+agent = Agent(name="assistant", input_guardrails=[little_canary_input_guardrail(pipeline)])
+```
+
+`output_info` carries a `coverage` label: `unsafe` trips the SDK tripwire;
+`safe` means behavioral coverage was exercised and clean; `flagged`,
+`degraded`, and `unexercised` are visibly not a PASS. Degraded and unexercised
+coverage is fail-open by default, matching the pipeline. Pass
+`on_degraded="fail_closed"` to trip the wire unless coverage is exercised
+`safe`. See `examples/openai_agents_example.py`. Offline tests were exercised
+against `openai-agents` 0.22.0; importing `little_canary` never requires it.
+
 ## Evidence labels and limitations
 
 Behavioral evidence is labeled:

@@ -38,7 +38,11 @@ dependencies = [
 benchmark = [
     "anthropic>=0.117.0",
 ]
+openai-agents = [
+    "openai-agents>=0.22.0; python_version >= '3.10'",
+]
 dev = [
+    "openai-agents>=0.22.0; python_version >= '3.10'",
     "pytest>=8.4.2",
     "pytest-cov>=7.1.0",
     "mypy>=1.19.1,<3",
