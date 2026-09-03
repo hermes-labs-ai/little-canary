@@ -6,13 +6,14 @@ import sys
 from io import BytesIO
 from pathlib import Path
 from urllib.error import URLError
+from urllib.request import ProxyHandler
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from little_canary_before_agent import evaluate  # noqa: E402
+from little_canary_before_agent import DIRECT_OPENER, evaluate  # noqa: E402
 
 
 class _Response:
@@ -36,6 +37,11 @@ class _RawResponse(_Response):
 
 def _input(prompt: str = "summarize this") -> dict[str, object]:
     return {"hook_event_name": "BeforeAgent", "prompt": prompt}
+
+
+def test_default_loopback_client_disables_environment_proxies() -> None:
+    proxy_handlers = [handler for handler in DIRECT_OPENER.handlers if isinstance(handler, ProxyHandler)]
+    assert proxy_handlers == []
 
 
 def _opener(verdict: dict[str, object]):
@@ -138,7 +144,11 @@ def test_command_protocol_emits_single_gemini_hook_json_object() -> None:
         input=json.dumps(_input()),
         text=True,
         capture_output=True,
-        env={"PATH": "/usr/bin:/bin", "LITTLE_CANARY_TIMEOUT_MS": "100"},
+        env={
+            "PATH": "/usr/bin:/bin",
+            "LITTLE_CANARY_ENDPOINT": "https://example.com/check",
+            "LITTLE_CANARY_TIMEOUT_MS": "100",
+        },
         check=True,
     )
     output = json.loads(proc.stdout)
