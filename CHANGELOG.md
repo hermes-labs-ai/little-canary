@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
+## [0.3.5] - 2026-09-02
+
+### Added
+
+- Added a native Gemini CLI `BeforeAgent` extension that calls the local
+  blocking-mode server and denies unsafe prompts before model execution.
+- Added explicit, visible fail-open behavior for unavailable or degraded
+  screening, with an opt-in fail-closed policy.
+
+The copied-install contract was exercised against Gemini CLI 0.32.1 for both
+pre-model denial and visible unavailable-server continuation. This integration
+does not replace least privilege or tool policy.
+
 ## [0.3.4] - 2026-08-18
 
 Post-`0.3.3` maintenance release. No product behavior changes.
