@@ -9,12 +9,13 @@ import sys
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:18421/check"
 DEFAULT_TIMEOUT_MS = 3000
 MAX_HOOK_INPUT_BYTES = 1024 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024
+DIRECT_OPENER = build_opener(ProxyHandler({}))
 
 
 def _output(decision: str, reason: str, *, system_message: str | None = None) -> dict[str, Any]:
@@ -80,7 +81,7 @@ def evaluate(
     hook_input: dict[str, Any],
     env: dict[str, str],
     *,
-    opener: Any = urlopen,
+    opener: Any = DIRECT_OPENER.open,
 ) -> dict[str, Any]:
     try:
         failure_mode = _failure_mode(env)
