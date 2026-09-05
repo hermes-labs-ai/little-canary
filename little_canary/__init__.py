@@ -28,7 +28,7 @@ from .openai_provider import OpenAICanaryProbe, OpenAILLMJudge
 from .pipeline import LayerResult, PipelineVerdict, SecurityAdvisory, SecurityPipeline
 from .structural_filter import StructuralFilter
 
-__version__ = "0.3.4"
+__version__ = "0.3.5"
 __author__ = "Roli Bosch"
 __all__ = [
     "AuditLogger",

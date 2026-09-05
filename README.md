@@ -217,6 +217,33 @@ Every accepted non-empty string reaches the pipeline, including one-character in
 
 The loopback server has no authentication, TLS, concurrency hardening, or remote-deployment design in this release.
 
+## Gemini CLI extension
+
+This repository is also a Gemini CLI extension. It uses Gemini CLI's
+`BeforeAgent` hook to screen the exact current prompt before the agent loop and
+deny the run when Little Canary returns `safe: false`.
+
+Start the loopback server in blocking mode, then validate and install a source
+checkout. This integration was verified with Gemini CLI 0.32.1:
+
+```bash
+little-canary serve --mode block
+gemini extensions validate .
+gemini extensions install . --consent
+```
+
+The hook calls only `http://127.0.0.1:18421/check` by default and completes its
+request within three seconds. Transport errors, malformed responses, and
+unexercised behavioral coverage are visibly fail-open by default; they are not
+reported as a clean pass. Set `LITTLE_CANARY_FAILURE_MODE=deny` in the Gemini
+process environment for fail-closed behavior. `LITTLE_CANARY_ENDPOINT` may
+select another loopback HTTP `/check` URL, and `LITTLE_CANARY_TIMEOUT_MS` may be
+set from 100 through 5000.
+
+This extension blocks one Gemini agent run at its pre-agent boundary. It does
+not establish a general security guarantee or replace least privilege and tool
+policy.
+
 ## Evidence labels and limitations
 
 Behavioral evidence is labeled:

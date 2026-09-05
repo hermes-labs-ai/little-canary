@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Scan agent instructions
-        uses: hermes-labs-ai/lintlang@6be2907d557e534732865d3a3a3c55ea5f1a0ec9 # v0.4.1
+        uses: hermes-labs-ai/lintlang@cad2dca3054b8bfb5d0a6b93ecf19f9d74ab64fe # v0.5.0
         with:
           path: "AGENTS.md"
           fail-on: fail
@@ -25,6 +25,6 @@ jobs:
 
       - name: Upload SARIF
         if: always() && (github.event_name == 'push' || (github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository))
-        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
         with:
           sarif_file: lintlang.sarif
