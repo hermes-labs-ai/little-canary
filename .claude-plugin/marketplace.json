@@ -1,0 +1,17 @@
+{
+  "name": "hermes-labs",
+  "description": "Hermes Labs plugins for Claude Code. Little Canary screens prompts for injection with a sacrificial canary model.",
+  "owner": {
+    "name": "Hermes Labs",
+    "email": "roli@hermes-labs.ai"
+  },
+  "plugins": [
+    {
+      "name": "little-canary",
+      "source": "./plugins/claude-code",
+      "description": "Blocks a Claude Code turn when a local Little Canary server rejects the submitted prompt.",
+      "category": "security",
+      "homepage": "https://littlecanary.ai"
+    }
+  ]
+}

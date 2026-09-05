@@ -244,6 +244,61 @@ This extension blocks one Gemini agent run at its pre-agent boundary. It does
 not establish a general security guarantee or replace least privilege and tool
 policy.
 
+## Claude Code plugin
+
+This repository is also a Claude Code marketplace that serves one plugin. The
+plugin uses Claude Code's `UserPromptSubmit` hook to screen the exact submitted
+prompt before the turn starts and block it when Little Canary returns
+`safe: false`.
+
+The marketplace manifest lives at `.claude-plugin/marketplace.json`, where
+Claude Code discovers it. The plugin itself is the self-contained directory
+`plugins/claude-code/` (plugin manifest, hook registration, and the standalone
+adapter script). Claude Code copies only that directory into its plugin cache,
+so the Gemini CLI extension files at the repository root (`gemini-extension.json`,
+`hooks/hooks.json`) are never installed or loaded by Claude Code.
+
+Start the loopback server in blocking mode, then add this repository as a
+marketplace and install the plugin. This integration was verified with Claude
+Code 2.1.261:
+
+```bash
+little-canary serve --mode block
+claude plugin marketplace add hermes-labs-ai/little-canary
+claude plugin install little-canary@hermes-labs
+```
+
+To validate a source checkout, validate both manifests explicitly. Running
+`claude plugin validate .` from the repository root only validates the
+marketplace manifest, because the repository root is not itself a plugin:
+
+```bash
+claude plugin validate .claude-plugin/marketplace.json --strict
+claude plugin validate plugins/claude-code --strict
+```
+
+To install from a local checkout instead of GitHub, pass the checkout path to
+`claude plugin marketplace add` and then run the same install command.
+
+The hook calls only `http://127.0.0.1:18421/check` by default and completes its
+request within three seconds. It sends the prompt as the JSON body
+`{"text": ...}`. The loopback server rejects request bodies larger than 64 KiB
+(65,536 bytes) with HTTP `413`; that ceiling applies to the encoded JSON body,
+not to the prompt's character count, so non-ASCII text reaches it sooner. Such
+prompts are not screened at all. Transport errors, HTTP errors including that
+`413`, malformed responses, and unexercised behavioral coverage are visibly
+fail-open by default: the turn continues and Claude Code shows a warning such
+as `Little Canary screening unavailable: HTTPError`, so they are never reported
+as a clean pass. Set `LITTLE_CANARY_FAILURE_MODE=deny` in the Claude Code
+process environment to block the turn on every one of those failures instead.
+`LITTLE_CANARY_ENDPOINT` may select another loopback HTTP `/check` URL, and
+`LITTLE_CANARY_TIMEOUT_MS` may be set from 100 through 5000. The hook never
+writes model context; it emits exactly one JSON object per event.
+
+This plugin blocks one Claude Code turn at its prompt-submission boundary. It
+does not screen tool results, and it does not establish a general security
+guarantee or replace least privilege and tool policy.
+
 ## Evidence labels and limitations
 
 Behavioral evidence is labeled:
