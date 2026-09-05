@@ -1,0 +1,16 @@
+{
+  "description": "Screen the exact submitted prompt with the local Little Canary server before Claude Code starts the turn.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/little_canary_user_prompt_submit.py\"",
+            "timeout": 7
+          }
+        ]
+      }
+    ]
+  }
+}
