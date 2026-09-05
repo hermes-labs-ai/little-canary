@@ -15,6 +15,25 @@ import argparse
 import sys
 from collections.abc import Sequence
 
+MIN_PORT = 0
+MAX_PORT = 65535
+
+
+def port_type(value: str) -> int:
+    """argparse type: a bind port integer in the inclusive range 0..65535.
+
+    Port 0 is retained so callers can request an OS-assigned ephemeral port.
+    """
+    try:
+        port = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid port: {value!r} is not an integer") from None
+    if port < MIN_PORT or port > MAX_PORT:
+        raise argparse.ArgumentTypeError(
+            f"invalid port: {port} is outside the valid range {MIN_PORT}..{MAX_PORT}"
+        )
+    return port
+
 
 def build_parser() -> argparse.ArgumentParser:
     from little_canary import __version__
@@ -37,9 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve_parser.add_argument(
         "--port",
-        type=int,
+        type=port_type,
         default=18421,
-        help="TCP port to bind on localhost (default: 18421)",
+        help="TCP port to bind on localhost, 0..65535 (default: 18421)",
     )
     serve_parser.add_argument(
         "--mode",

@@ -104,6 +104,29 @@ def test_serve_passes_explicit_ollama_origin():
     )
 
 
+@pytest.mark.parametrize("port", ["-1", "65536"])
+def test_serve_rejects_out_of_range_port_before_dispatch(port, capsys):
+    with (
+        patch("little_canary.server.run_server") as run_server,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main(["serve", "--port", port])
+
+    assert exc_info.value.code == 2
+    run_server.assert_not_called()
+    error = capsys.readouterr().err
+    assert "invalid port" in error
+    assert "0..65535" in error
+
+
+def test_serve_accepts_port_zero_for_ephemeral_bind():
+    with patch("little_canary.server.run_server") as run_server:
+        exit_code = main(["serve", "--port", "0"])
+
+    assert exit_code == 0
+    assert run_server.call_args.kwargs["port"] == 0
+
+
 def test_bare_command_prints_help_and_returns_one(capsys):
     assert main([]) == 1
     assert "demo" in capsys.readouterr().out
