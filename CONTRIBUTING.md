@@ -56,6 +56,30 @@ Open a [feature request](https://github.com/hermes-labs-ai/little-canary/issues/
 - Maintain source/next-release Python 3.9–3.13 support; published `0.3.3`
   metadata advertises Python 3.9–3.12 until a new release is published
 
+### Repository Quality Gate
+
+`.hermes/gate.toml` and `.hermes/hermes_gate_runner.py` configure the
+[Hermes Gate](https://github.com/hermes-labs-ai/hermes-gate) rail. The runner
+is based on the Hermes Gate 0.1.2 repository runner, with one local preflight:
+Fast checks indexed whitespace for staged files whose working copies are
+missing, then holds until those copies are restored or their deletions are
+staged. This prevents the upstream deletion filter from silently skipping
+staged content. Retain this correction when adopting a newer runner unless
+upstream fixes it, and run `tests/test_hermes_gate_runner.py`.
+
+- **Tooling minimum.** The runner needs Python 3.11 or newer (it uses
+  `tomllib`). This is separate from the library's Python 3.9+ support: CI runs
+  the full gate on Python 3.12, and the runner tests skip on older interpreters.
+- **What `full` runs.** `python3 .hermes/hermes_gate_runner.py full` runs only
+  the `[[full]]` commands (Ruff and pytest with coverage). `fast` runs the
+  `[[fast]]` commands over changed paths, including the runner itself.
+- **Review and LintLang.** The `[review]` and `[lintlang]` tables are read by
+  the installed `hermes-gate` CLI, not by the runner: `hermes-gate fast`
+  applies LintLang to changed files matching its trigger globs, and
+  `hermes-gate review` runs the CodeRabbit review. In CI, LintLang runs from
+  `.github/workflows/lintlang.yml` and CodeRabbit reviews pull requests
+  directly.
+
 ## Project Structure
 
 - `little_canary/` — Core library. Changes here affect all users.
