@@ -189,6 +189,12 @@ def _classify(verdict: PipelineVerdict) -> str:
 
 
 def _tripwire_for(coverage: str, policy: str) -> bool:
+    """Apply the caller's adapter policy without changing pipeline routing.
+
+    Fail-open remains the default. The explicit fail-closed option is an
+    application boundary, like the CLI integrations' failure-mode setting;
+    it must still stop degraded checks when the caller selects that policy.
+    """
     if coverage == COVERAGE_UNSAFE:
         return True
     if policy == POLICY_FAIL_CLOSED:

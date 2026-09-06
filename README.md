@@ -326,6 +326,13 @@ coverage is fail-open by default, matching the pipeline. Pass
 `safe`. See `examples/openai_agents_example.py`. Offline tests were exercised
 against `openai-agents` 0.22.0; importing `little_canary` never requires it.
 
+The fail-closed option is an explicit caller policy at the SDK boundary. It
+does not change `SecurityPipeline` routing or its default fail-open behavior;
+it blocks flagged, degraded, and unexercised outcomes as documented above.
+Only user-message text is screened. Tool outputs and non-text content are
+outside this adapter's coverage, and SDK input guardrails run only for the
+first agent in a chain.
+
 ## Evidence labels and limitations
 
 Behavioral evidence is labeled:
