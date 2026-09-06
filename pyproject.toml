@@ -97,3 +97,7 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 ignore = ["UP007", "E501", "SIM102", "SIM110", "SIM300"]
+
+[tool.ruff.lint.per-file-ignores]
+# Hermes Gate 0.1.2-derived runner; preserve upstream style outside the local preflight.
+".hermes/hermes_gate_runner.py" = ["SIM105"]

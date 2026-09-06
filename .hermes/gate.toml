@@ -4,7 +4,7 @@ version = 1
 fast_budget_seconds = 8.0
 full_required_local = true
 adapter_status = "NATIVE_DEFAULT"
-exclusions = [".git/**", ".hermes/hermes_gate_runner.py", ".pytest_cache/**", ".ruff_cache/**", "**/__pycache__/**", "vendor/**", "node_modules/**", "dist/**", "build/**"]
+exclusions = [".git/**", ".pytest_cache/**", ".ruff_cache/**", "**/__pycache__/**", "vendor/**", "node_modules/**", "dist/**", "build/**"]
 
 [adapter]
 enabled = false
@@ -41,13 +41,13 @@ globs = ["**/*.py"]
 
 [[fast]]
 name = "diff-check"
-argv = ["git", "diff", "--check"]
+argv = ["python3", ".hermes/hermes_gate_runner.py", "diff-check", "{files}"]
 timeout_seconds = 4.0
 globs = ["**/*"]
 
 [[full]]
 name = "ruff"
-argv = ["ruff", "check", "little_canary", "tests", "examples/openai_agents_example.py"]
+argv = ["ruff", "check", "little_canary", "tests", "examples/openai_agents_example.py", ".hermes/hermes_gate_runner.py"]
 timeout_seconds = 60.0
 globs = ["**/*"]
 

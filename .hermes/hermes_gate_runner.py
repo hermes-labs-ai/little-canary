@@ -1,4 +1,4 @@
-"""Self-contained deterministic repository runner; copied byte-for-byte by init."""
+"""Hermes Gate 0.1.2 runner with a local missing-staged-file preflight."""
 
 from __future__ import annotations
 
@@ -8,11 +8,17 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
-import tomllib
 from pathlib import Path
 
-RUNNER_VERSION = "0.1.0"
+# The copied runner has the same minimum runtime as the installed CLI.
+if sys.version_info < (3, 11):
+    raise SystemExit("Hermes Gate runner requires Python 3.11 or newer; use that interpreter to run this file.")
+
+import tomllib
+
+RUNNER_VERSION = "0.1.2"
 OUTPUT_CAP = 65536
 
 
@@ -58,6 +64,26 @@ def run(
     paths = list(files) if files is not None else _changed(root)
     exclusions = config.get("gate", {}).get("exclusions", [])
     paths = [path for path in paths if not any(_match(path, pattern) for pattern in exclusions)]
+    if mode == "fast":
+        staged = subprocess.run(
+            ["git", "-C", str(root), "diff", "--cached", "--name-only", "--diff-filter=ACMRT", "-z"],
+            capture_output=True, check=False,
+        )
+        if staged.returncode:
+            return _result(mode, "ERROR", started, [], "cannot inspect staged paths")
+        staged_paths = {os.fsdecode(path) for path in staged.stdout.split(b"\0") if path}
+        missing = [path for path in paths if path in staged_paths and not os.path.lexists(root / path)]
+        if missing:
+            check = _execute(
+                ["git", "--literal-pathspecs", "diff", "--cached", "--check", "--", *missing],
+                root, 4.0, "staged-diff-check",
+            )
+            return _result(
+                mode, "FAIL", started, [check],
+                "staged files have no working-tree copy; restore them or stage their deletion before file checks: "
+                + ", ".join(missing),
+            )
+    paths = [path for path in paths if os.path.lexists(root / path)]
     if mode == "fast" and not paths:
         return _result(mode, "NOT_APPLICABLE", started, [], "no changed files")
     commands = list(config.get(mode, []))
@@ -105,15 +131,40 @@ def _execute(argv: list[str], root: Path, timeout: float, name: str) -> dict[str
         )
     except FileNotFoundError:
         return {"name": name, "argv": argv, "status": "FAIL", "reason": "executable unavailable"}
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+
+    stdout_capture: dict[str, object] = {"data": b"", "total": 0}
+    stderr_capture: dict[str, object] = {"data": b"", "total": 0}
+    assert proc.stdout is not None
+    assert proc.stderr is not None
+    threads = [
+        threading.Thread(
+            target=_drain_bounded,
+            args=(proc.stdout, OUTPUT_CAP // 2, stdout_capture),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=_drain_bounded,
+            args=(proc.stderr, OUTPUT_CAP // 2, stderr_capture),
+            daemon=True,
+        ),
+    ]
+    for thread in threads:
+        thread.start()
+
+    deadline = started + timeout
+    while proc.poll() is None or any(thread.is_alive() for thread in threads):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(0.01, remaining))
+    timed_out = proc.poll() is None or any(thread.is_alive() for thread in threads)
+    if timed_out:
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
         try:
-            proc.communicate(timeout=0.25)
+            proc.wait(timeout=0.25)
         except subprocess.TimeoutExpired:
             pass
         try:
@@ -121,20 +172,75 @@ def _execute(argv: list[str], root: Path, timeout: float, name: str) -> dict[str
         except ProcessLookupError:
             pass
         if proc.poll() is None:
-            proc.communicate()
+            proc.wait()
+        for thread in threads:
+            thread.join(timeout=0.5)
         return {"name": name, "argv": argv, "status": "FAIL", "reason": "timeout"}
-    stdout_text = stdout[: OUTPUT_CAP // 2].decode("utf-8", "replace")
-    stderr_text = stderr[: OUTPUT_CAP // 2].decode("utf-8", "replace")
+
+    for thread in threads:
+        thread.join()
+    stdout = bytes(stdout_capture["data"])
+    stderr = bytes(stderr_capture["data"])
+    total_output = int(stdout_capture["total"]) + int(stderr_capture["total"])
     return {
         "name": name,
         "argv": argv,
         "status": "PASS" if proc.returncode == 0 else "FAIL",
         "returncode": proc.returncode,
         "elapsed_ms": round((time.monotonic() - started) * 1000),
-        "stdout": stdout_text,
-        "stderr": stderr_text,
-        "output_truncated": len(stdout) + len(stderr) > OUTPUT_CAP,
+        "stdout": stdout.decode("utf-8", "replace"),
+        "stderr": stderr.decode("utf-8", "replace"),
+        "output_truncated": total_output > len(stdout) + len(stderr),
     }
+
+
+def _drain_bounded(pipe, cap: int, capture: dict[str, object]) -> None:
+    kept = bytearray()
+    total = 0
+    try:
+        while chunk := pipe.read(65536):
+            total += len(chunk)
+            remaining = cap - len(kept)
+            if remaining > 0:
+                kept.extend(chunk[:remaining])
+    finally:
+        pipe.close()
+        capture["data"] = bytes(kept)
+        capture["total"] = total
+
+
+def _diff_check(root: Path, paths: list[str]) -> int:
+    """Check selected worktree, index and untracked bytes using Git's whitespace rules."""
+    if not paths:
+        return 0
+    git = ["git", "--literal-pathspecs", "-C", str(root)]
+    for flags in ([], ["--cached"]):
+        result = subprocess.run([*git, "diff", *flags, "--check", "--", *paths], check=False)
+        if result.returncode:
+            return result.returncode
+    untracked = subprocess.run(
+        [*git, "ls-files", "--others", "--exclude-standard", "-z", "--", *paths],
+        capture_output=True, check=False,
+    )
+    if untracked.returncode:
+        sys.stderr.buffer.write(untracked.stderr)
+        return untracked.returncode
+    for raw in untracked.stdout.split(b"\0"):
+        if not raw:
+            continue
+        path = root / os.fsdecode(raw)
+        # Git stores a symlink target, not the contents of its destination.
+        if path.is_symlink() or not path.is_file():
+            continue
+        result = subprocess.run(
+            [*git, "diff", "--no-index", "--check", "--", os.devnull, str(path)],
+            check=False,
+        )
+        # --no-index implies --exit-code: 1 means a clean new-file diff;
+        # --check reports whitespace errors with bit 2 set.
+        if result.returncode not in (0, 1):
+            return result.returncode
+    return 0
 
 
 def _result(
@@ -153,6 +259,8 @@ def _result(
 
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
+    if args and args[0] == "diff-check":
+        return _diff_check(_root(), args[1:])
     if not args or args[0] not in {"fast", "full"}:
         print(json.dumps({"status": "ERROR", "reason": "usage: runner.py fast|full"}))
         return 2
