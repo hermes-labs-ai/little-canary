@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
+## [0.3.6] - 2026-09-09
+
+Publishes the native host integrations that were merged to `main` after
+`0.3.5` and were therefore not installable from PyPI.
+
+### Added
+
+- Optional native OpenAI Agents SDK input guardrail
+  (`little_canary.openai_agents`), installed with the `openai-agents` extra.
+  It maps screening results to safe, unsafe, and degraded outcomes, keeps the
+  documented fail-open default with an explicit opt-in fail-closed policy, and
+  the core package still imports without the SDK installed.
+  `examples/openai_agents_example.py` shows the wiring.
+- Claude Code plugin under `plugins/claude-code` plus the repository
+  marketplace manifest `.claude-plugin/marketplace.json`. The
+  `UserPromptSubmit` hook calls the local blocking-mode server and denies the
+  turn when the prompt is rejected. The hook script uses only the standard
+  library and refuses non-loopback endpoints.
+- Hermes Gate repository rail (`.hermes/gate.toml`,
+  `.hermes/hermes_gate_runner.py`) and the `hermes-quality` workflow, with
+  runner tests in `tests/test_hermes_gate_runner.py`.
+
+### Changed
+
+- `little-canary serve` validates the requested port range and reports an
+  explicit error instead of failing later in the socket bind.
+- The LintLang CI workflow pin moved from `0.5.0` to `0.5.3`.
+
+Adapters remain opt-in. This release does not change detection logic,
+benchmark claims, or the fail-open routing contract.
+
 ## [0.3.5] - 2026-09-02
 
 ### Added
