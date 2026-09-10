@@ -142,3 +142,18 @@ def test_dependabot_merge_waits_for_required_checks_without_repository_auto_merg
     assert workflow.index(wait) < workflow.index(merge)
     assert "gh pr merge --auto" not in workflow
     assert "HEAD_SHA: ${{ github.event.pull_request.head.sha }}" in workflow
+
+
+def test_scorecard_workflow_pins_actions_and_narrows_permissions():
+    workflow = _read(".github/workflows/scorecard.yml")
+
+    for uses in re.findall(r"uses: (\S+)", workflow):
+        action, _, ref = uses.partition("@")
+        assert re.fullmatch(r"[0-9a-f]{40}", ref), f"{action} is not pinned to a full commit SHA"
+
+    assert "permissions: read-all" in workflow
+    assert "      security-events: write\n" in workflow
+    assert "      id-token: write\n" in workflow
+    assert "cron:" in workflow
+    assert "branch_protection_rule:" in workflow
+    assert "branches: [main]" in workflow
