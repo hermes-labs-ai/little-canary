@@ -1,5 +1,11 @@
 # AGENTS.md
 
+<!-- Instruction contract v1.0 — 2026-09-09 -->
+
+Priority order: preserve security and coverage semantics; preserve public API behavior;
+then minimize the diff. Treat each user request as an independent task and carry prior
+task state forward only when the user explicitly asks.
+
 Little Canary is a prompt-injection detection library that uses a sacrificial canary model as an inbound risk sensor.
 
 ## Use it for
@@ -14,6 +20,13 @@ Little Canary is a prompt-injection detection library that uses a sacrificial ca
 - audited benchmark comparisons
 - replacing runtime containment or outbound tool controls
 
+## Key paths
+
+- `little_canary/` — package source
+- `tests/` — pytest suite
+- `benchmarks/` — false-positive/red-team runners, not part of the default CLI flow
+- `.hermes/` — declared quality-gate config run by CI's Hermes quality rail
+
 ## Minimal commands
 
 ```bash
@@ -25,6 +38,7 @@ little-canary serve --help
 pytest -q
 ruff check little_canary tests
 mypy little_canary
+python -m build
 ```
 
 ## Output shape
@@ -55,6 +69,13 @@ mypy little_canary
 - never treat replay, mock, or static evidence as a current live-model result
 - keep benchmark caveats aligned with README claims
 - keep tests offline and mock network calls
+
+## Definition of done
+
+- `pytest -q` and `ruff check little_canary tests` pass; `mypy little_canary` is diagnostic
+- new behavior has an offline, mocked-network test
+- fail-open behavior and coverage-state semantics are unchanged unless explicitly intended
+- README and this file stay consistent with observed CLI/API behavior
 
 ## Optional Hermeneutic Gate
 

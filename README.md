@@ -1,5 +1,10 @@
 # little-canary
 
+[![CI](https://github.com/hermes-labs-ai/little-canary/actions/workflows/ci.yml/badge.svg)](https://github.com/hermes-labs-ai/little-canary/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/little-canary)](https://pypi.org/project/little-canary/)
+[![Python](https://img.shields.io/pypi/pyversions/little-canary)](https://pypi.org/project/little-canary/)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-2ea44f)](LICENSE)
+
 Prompt-injection sensing through a powerless sacrificial model.
 
 **Links:** [Website](https://littlecanary.ai) · [Hermes Labs product page](https://hermes-labs.ai/little-canary)
