@@ -4,6 +4,8 @@ import json
 import re
 from pathlib import Path
 
+import yaml
+
 from little_canary import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -145,15 +147,25 @@ def test_dependabot_merge_waits_for_required_checks_without_repository_auto_merg
 
 
 def test_scorecard_workflow_pins_actions_and_narrows_permissions():
-    workflow = _read(".github/workflows/scorecard.yml")
+    # Parse the executable document: comments and unrelated nodes must not be
+    # able to satisfy the security contract asserted below.
+    workflow = yaml.safe_load(_read(".github/workflows/scorecard.yml"))
+    # PyYAML reads the bare ``on`` key as the YAML 1.1 boolean ``True``.
+    triggers = workflow.get("on", workflow.get(True))
+    analysis = workflow["jobs"]["analysis"]
 
-    for uses in re.findall(r"uses: (\S+)", workflow):
-        action, _, ref = uses.partition("@")
+    assert "branch_protection_rule" in triggers
+    assert triggers["push"] == {"branches": ["main"]}
+    assert triggers["schedule"], "scorecard workflow has no schedule trigger"
+    for entry in triggers["schedule"]:
+        assert re.fullmatch(r"(\S+ ){4}\S+", entry["cron"]), entry
+
+    assert workflow["permissions"] == "read-all"
+    assert analysis["permissions"] == {"security-events": "write", "id-token": "write"}
+
+    pinned = {}
+    for step in analysis["steps"]:
+        action, _, ref = step["uses"].partition("@")
         assert re.fullmatch(r"[0-9a-f]{40}", ref), f"{action} is not pinned to a full commit SHA"
-
-    assert "permissions: read-all" in workflow
-    assert "      security-events: write\n" in workflow
-    assert "      id-token: write\n" in workflow
-    assert "cron:" in workflow
-    assert "branch_protection_rule:" in workflow
-    assert "branches: [main]" in workflow
+        pinned[action] = ref
+    assert {"ossf/scorecard-action", "github/codeql-action/upload-sarif"} <= pinned.keys()
