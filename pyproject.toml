@@ -55,6 +55,14 @@ dev = [
 [project.scripts]
 little-canary = "little_canary.cli:main"
 
+# Opt-in plugin for the Hermes Agent framework (hermes-agent, Nous Research).
+# Its loader resolves this entry point with ``ep.load()`` and then calls
+# ``getattr(module, "register")``, so the value must name the MODULE, not the
+# ``register`` function. Verified against hermes-agent 0.19.0
+# (hermes_cli/plugins.py: ENTRY_POINTS_GROUP, _load_entrypoint_module).
+[project.entry-points."hermes_agent.plugins"]
+little-canary = "little_canary.hermes_agent_plugin"
+
 [project.urls]
 Homepage = "https://littlecanary.ai"
 "Hermes Labs" = "https://hermes-labs.ai/little-canary"
