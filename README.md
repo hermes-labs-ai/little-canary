@@ -338,6 +338,43 @@ Only user-message text is screened. Tool outputs and non-text content are
 outside this adapter's coverage, and SDK input guardrails run only for the
 first agent in a chain.
 
+## Hermes Agent plugin
+
+The optional `little_canary.hermes_agent_plugin` module is an opt-in plugin for
+the Hermes Agent framework (`hermes-agent`, Nous Research). It is published as
+a `hermes_agent.plugins` entry point, so an installed Little Canary is
+discoverable by the host; the host still has to enable it in its own
+`plugins.enabled` allow-list.
+
+The plugin screens the turn's user message **once** at `pre_llm_call` through
+the same `SecurityPipeline` used everywhere else, stores the disposition keyed
+by session and turn, and reuses it at `pre_tool_call` without re-screening.
+
+What it does:
+
+- Injects a bounded annotation into the current turn's user message for
+  `FLAG`, `BLOCK`, and `DEGRADED` dispositions. The annotation carries the
+  disposition, signal categories, and risk score only — never the user's text
+  and never the canary's raw response. `PASS` and `UNSCREENED` inject nothing.
+- Blocks downstream tool calls for a turn whose screening returned a genuine
+  `BLOCK`, by returning the host's documented
+  `{"action": "block", "message": ...}` directive. The tool does not execute
+  and the message becomes the tool result the model sees.
+- Evicts a session's dispositions at `on_session_end`, and bounds its store by
+  capacity and TTL so stale state cannot outlive its turn.
+
+What it does **not** do:
+
+- It **cannot block prompt delivery**. `pre_llm_call` in this framework is a
+  context-injection hook with no deny channel; a blocked turn still reaches the
+  model, annotated, and loses its tool authority instead.
+- It does not modify the system prompt, re-score per tool call, or screen tool
+  outputs.
+
+Fail-open is preserved: a pipeline exception, an unreachable Ollama backend, a
+missing or expired turn record, or any internal plugin error allows the turn
+and its tools. Only a genuine `BLOCK` verdict blocks.
+
 ## Evidence labels and limitations
 
 Behavioral evidence is labeled:
