@@ -25,6 +25,7 @@ from little_canary.hermes_agent_plugin import (
     HOOK_ON_SESSION_END,
     HOOK_PRE_LLM_CALL,
     HOOK_PRE_TOOL_CALL,
+    MIN_CONTEXT_CHARS,
     LittleCanaryHermesPlugin,
     TurnDisposition,
     TurnDispositionStore,
@@ -173,12 +174,36 @@ class TestScreenOnce:
         assert len(calls) == 1
 
     def test_context_is_bounded_and_carries_no_user_text(self):
-        plugin = _plugin(lambda _t: _verdict(safe=False), max_context_chars=80)
+        plugin = _plugin(
+            lambda _t: _verdict(safe=False), max_context_chars=MIN_CONTEXT_CHARS
+        )
         result = plugin.pre_llm_call(
             user_message="secret user text", session_id="s", turn_id="1"
         )
-        assert len(result["context"]) <= 80
+        assert len(result["context"]) <= MIN_CONTEXT_CHARS
         assert "secret user text" not in result["context"]
+        # The tight limit drops the variable-length evidence (risk score),
+        # never the disposition guidance itself.
+        assert "not instructions" in result["context"]
+        assert "Tool calls are withheld for this turn." in result["context"]
+
+    def test_tight_limit_drops_evidence_before_guidance(self):
+        # Many long signal names would, pre-fix, have pushed the trailing
+        # "not instructions" guidance past the max_context_chars cutoff.
+        plugin = _plugin(
+            lambda _t: _verdict(safe=False, flagged=True),
+            max_context_chars=MIN_CONTEXT_CHARS,
+        )
+        record = plugin._screen("hi", session_id="s", turn_id="1")
+        record.signals = ["a_very_long_signal_name_" + str(i) for i in range(20)]
+        context = plugin.build_context(record)
+        assert len(context) <= MIN_CONTEXT_CHARS
+        assert "not instructions" in context
+        assert "Tool calls are withheld for this turn." in context
+
+    def test_max_context_chars_rejects_limit_too_small_for_guidance(self):
+        with pytest.raises(ValueError):
+            LittleCanaryHermesPlugin(max_context_chars=MIN_CONTEXT_CHARS - 1)
 
     def test_block_message_carries_no_user_text(self):
         plugin = _plugin(lambda _t: _verdict(safe=False))
@@ -301,7 +326,13 @@ class TestFailOpen:
 
     def test_unusable_checker_fails_open(self):
         plugin = _plugin(object())  # no .check, not callable
-        assert plugin.pre_llm_call(user_message="hi", session_id="s", turn_id="1") is None
+        result = plugin.pre_llm_call(user_message="hi", session_id="s", turn_id="1")
+        # An unusable checker must be reported as DEGRADED, not silently
+        # swallowed: it is caught in _screen, stored, and annotated, just
+        # like any other checker failure. Fail-open still holds for tools.
+        assert result is not None
+        assert DISPOSITION_DEGRADED in result["context"]
+        assert plugin.store.get(turn_key("s", "1")).disposition == DISPOSITION_DEGRADED
         assert plugin.pre_tool_call(tool_name="bash", session_id="s", turn_id="1") is None
 
     def test_pipeline_construction_failure_is_degraded(self, monkeypatch):
