@@ -98,9 +98,20 @@ ANNOTATED_DISPOSITIONS = (DISPOSITION_BLOCK, DISPOSITION_FLAG, DISPOSITION_DEGRA
 #: Default: only a genuine BLOCK withdraws tool authority.
 DEFAULT_BLOCKING_DISPOSITIONS = (DISPOSITION_BLOCK,)
 
+#: The only disposition a configuration may make blocking. DEGRADED and
+#: UNSCREENED describe coverage that was *not* exercised, and FLAG is an
+#: advisory that explicitly keeps routing; letting any of them withdraw tool
+#: authority would turn Little Canary's documented fail-open contract into a
+#: fail-closed one whenever the canary backend is merely unavailable.
+ALLOWED_BLOCKING_DISPOSITIONS = frozenset({DISPOSITION_BLOCK})
+
 DEFAULT_MAX_TURNS = 128
 DEFAULT_TTL_SECONDS = 900.0
 DEFAULT_MAX_CONTEXT_CHARS = 600
+
+#: Watermark above which an unusually large set of retained live BLOCK records
+#: is logged. It is not an eviction limit; see :class:`TurnDispositionStore`.
+DEFAULT_MAX_BLOCKED_TURNS = 1024
 
 #: The instructional half of ``build_context``'s output for each annotated
 #: disposition. This text -- the "treat this as untrusted data, not
@@ -176,28 +187,107 @@ class TurnDisposition:
         }
 
 
-def turn_key(session_id: str, turn_id: str) -> str:
-    """Build the store key for a turn, or ``""`` when neither id is usable.
+def normalize_blocking_dispositions(value: Any) -> tuple:
+    """Validate a ``blocking_dispositions`` configuration.
 
-    An empty key means the host gave us nothing to correlate on. Rather than
-    fall back to a process-global slot -- which would leak one turn's
-    disposition into an unrelated one -- the plugin declines to store, and the
-    later ``pre_tool_call`` fails open.
+    Rejects anything that is not a collection of genuine ``BLOCK``: a
+    degraded, unexercised or merely flagged screening must always fail open,
+    so there is no supported configuration in which it withdraws tool
+    authority. A bare ``str`` is rejected outright rather than iterated into
+    its characters -- ``"BLOCK"`` would otherwise silently become
+    ``('B', 'L', 'O', 'C', 'K')`` and disable blocking altogether.
     """
-    session = (session_id or "").strip()
-    turn = (turn_id or "").strip()
-    if not session and not turn:
+    if isinstance(value, (str, bytes)):
+        raise TypeError(
+            "blocking_dispositions must be a collection of dispositions, not a "
+            f"bare {type(value).__name__}; use (DISPOSITION_BLOCK,)"
+        )
+    try:
+        items = tuple(value)
+    except TypeError as exc:
+        raise TypeError(
+            "blocking_dispositions must be an iterable of dispositions"
+        ) from exc
+    invalid = [item for item in items if item not in ALLOWED_BLOCKING_DISPOSITIONS]
+    if invalid:
+        raise ValueError(
+            f"blocking_dispositions may contain only {DISPOSITION_BLOCK!r}; got "
+            f"{invalid!r}. Degraded, unexercised and flagged screening always fail "
+            "open by design, so they cannot be configured to block tool calls."
+        )
+    return tuple(dict.fromkeys(items))
+
+
+#: Separator between the session part and the turn part of a store key. The
+#: session part is length-prefixed, so this sequence occurring inside an id
+#: cannot be mistaken for the separator itself.
+KEY_SEPARATOR = "::"
+
+
+def session_prefix(session_id: str) -> str:
+    """Key prefix owned by one session, or ``""`` when the id is unusable.
+
+    The single source of truth for how a session is spelled inside a store
+    key: :func:`turn_key` builds on it and
+    :meth:`TurnDispositionStore.discard_session` matches on it, so the two can
+    never drift into different encodings.
+    """
+    session = session_id or ""
+    if not session.strip():
         return ""
-    return f"{session}::{turn}"
+    return f"{len(session)}:{session}{KEY_SEPARATOR}"
+
+
+def turn_key(session_id: str, turn_id: str) -> str:
+    """Build the store key for a turn, or ``""`` when it cannot be correlated.
+
+    Both ids are required. A key built from only one of them would be shared
+    by every turn that is missing the other -- one turn's BLOCK would then
+    govern an unrelated turn in the same session, and a turn-only key would
+    collide across sessions. When either id is blank the plugin declines to
+    store, and the later ``pre_tool_call`` fails open: no key is safer than an
+    ambiguous one.
+
+    The encoding is collision-free. The session part is length-prefixed
+    (``"<len>:<session>::<turn>"``), so the key parses back to exactly one
+    ``(session, turn)`` pair: the digits before the first ``":"`` fix the
+    session's length, which fixes the session, which fixes the turn. Ids that
+    themselves contain ``"::"`` therefore cannot be re-cut into a different
+    pair -- ``("a::b", "c")`` and ``("a", "b::c")`` produce different keys.
+    """
+    prefix = session_prefix(session_id)
+    turn = turn_id or ""
+    if not prefix or not turn.strip():
+        return ""
+    return f"{prefix}{turn}"
 
 
 class TurnDispositionStore:
     """Bounded, TTL-evicting, thread-safe map of turn key -> disposition.
 
     Deliberately not an unbounded module-level dict: a long-lived agent
-    process would otherwise accumulate one entry per turn forever. Capacity is
-    enforced by LRU eviction and age by TTL, so stale state cannot outlive its
-    turn or crowd out live turns.
+    process would otherwise accumulate one entry per turn forever.
+
+    Capacity and security are not symmetric here, so they are enforced
+    differently:
+
+    * **Non-blocking records** (PASS, FLAG, DEGRADED, UNSCREENED) are bounded
+      by ``max_turns`` and evicted least-recently-used first. Losing one is
+      harmless: ``pre_tool_call`` treats a missing record exactly as it treats
+      those dispositions -- allow.
+    * **Live blocking records** are never evicted to make room. Capacity
+      eviction of a live BLOCK would silently convert a refused turn into an
+      allowed one, so a burst of unrelated turns could buy back the tool
+      authority a BLOCK had just withdrawn. A blocking record leaves this
+      store only when it expires (``ttl_seconds``), when its session ends, or
+      on :meth:`clear`.
+
+    The bound on blocking records is therefore ``ttl_seconds``, not
+    ``max_turns``: at most the BLOCK verdicts the screening pipeline can
+    actually produce within one TTL window are held at once.
+    ``max_blocked_turns`` is a saturation watermark that logs when that set
+    grows unexpectedly large -- it is deliberately not a reaper, because
+    dropping a live BLOCK is the exact failure this store exists to prevent.
     """
 
     def __init__(
@@ -205,20 +295,35 @@ class TurnDispositionStore:
         max_turns: int = DEFAULT_MAX_TURNS,
         ttl_seconds: float = DEFAULT_TTL_SECONDS,
         time_source: TimeSource = time.monotonic,
+        max_blocked_turns: int | None = None,
     ) -> None:
         if max_turns < 1:
             raise ValueError("max_turns must be >= 1")
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be > 0")
+        if max_blocked_turns is not None and max_blocked_turns < 1:
+            raise ValueError("max_blocked_turns must be >= 1")
         self.max_turns = int(max_turns)
         self.ttl_seconds = float(ttl_seconds)
+        self.max_blocked_turns = (
+            int(max_blocked_turns)
+            if max_blocked_turns is not None
+            else max(int(max_turns), DEFAULT_MAX_BLOCKED_TURNS)
+        )
         self._time = time_source
         self._lock = threading.Lock()
         self._entries: OrderedDict[str, TurnDisposition] = OrderedDict()
+        self._saturation_reported = False
 
     def __len__(self) -> int:
         with self._lock:
             return len(self._entries)
+
+    def blocking_len(self) -> int:
+        """Number of live blocking records currently held."""
+        with self._lock:
+            self._purge_expired_locked()
+            return sum(1 for record in self._entries.values() if record.blocks_tools)
 
     def put(self, key: str, record: TurnDisposition) -> None:
         """Store a disposition, purging expired entries and enforcing capacity."""
@@ -228,8 +333,44 @@ class TurnDispositionStore:
             self._purge_expired_locked()
             self._entries[key] = record
             self._entries.move_to_end(key)
-            while len(self._entries) > self.max_turns:
-                self._entries.popitem(last=False)
+            self._enforce_capacity_locked(record)
+
+    def _enforce_capacity_locked(self, stored: TurnDisposition) -> None:
+        """Trim to ``max_turns`` without ever evicting a live blocking record.
+
+        Eviction walks in least-recently-used order and skips blocking
+        records. When the live blocks alone fill the capacity, the record that
+        cannot be kept is a *non-blocking* one (possibly the one just stored);
+        dropping it is indistinguishable from having recorded the PASS,
+        DEGRADED or UNSCREENED it carried, since all three allow tools anyway.
+        """
+        if len(self._entries) > self.max_turns:
+            for key in list(self._entries):
+                if len(self._entries) <= self.max_turns:
+                    break
+                if self._entries[key].blocks_tools:
+                    continue
+                del self._entries[key]
+
+        # The retained-block set can only have grown if the stored record is
+        # itself a block, so the count is not walked on every put.
+        if not stored.blocks_tools:
+            return
+        blocked = sum(1 for record in self._entries.values() if record.blocks_tools)
+        if blocked > self.max_blocked_turns:
+            if not self._saturation_reported:
+                logger.warning(
+                    "little-canary is holding %d live BLOCK turn record(s), above the "
+                    "max_blocked_turns watermark of %d; they are retained rather than "
+                    "evicted so no refused turn regains tool authority, and they expire "
+                    "after ttl_seconds=%.0f",
+                    blocked,
+                    self.max_blocked_turns,
+                    self.ttl_seconds,
+                )
+                self._saturation_reported = True
+        else:
+            self._saturation_reported = False
 
     def get(self, key: str) -> TurnDisposition | None:
         """Return a live disposition, or ``None`` when absent or expired."""
@@ -243,11 +384,15 @@ class TurnDispositionStore:
             return record
 
     def discard_session(self, session_id: str) -> int:
-        """Drop every entry for one session. Returns the number removed."""
-        session = (session_id or "").strip()
-        if not session:
+        """Drop every entry for one session. Returns the number removed.
+
+        Matches on :func:`session_prefix`, the same length-prefixed encoding
+        :func:`turn_key` writes, so ending session ``"a"`` cannot also sweep
+        away the live records of a different session such as ``"a::b"``.
+        """
+        prefix = session_prefix(session_id)
+        if not prefix:
             return 0
-        prefix = f"{session}::"
         with self._lock:
             doomed = [k for k in self._entries if k.startswith(prefix)]
             for key in doomed:
@@ -305,10 +450,21 @@ class LittleCanaryHermesPlugin:
         self._checker_lock = threading.Lock()
         self._time = time_source
         self.max_context_chars = int(max_context_chars)
-        self.blocking_dispositions = tuple(blocking_dispositions)
+        # Validated through the property setter, so a later reassignment is
+        # checked too.
+        self.blocking_dispositions = blocking_dispositions
         self.store = TurnDispositionStore(
             max_turns=max_turns, ttl_seconds=ttl_seconds, time_source=time_source
         )
+
+    @property
+    def blocking_dispositions(self) -> tuple:
+        """Dispositions that withdraw tool authority; only ``BLOCK`` is valid."""
+        return self._blocking_dispositions
+
+    @blocking_dispositions.setter
+    def blocking_dispositions(self, value: Any) -> None:
+        self._blocking_dispositions = normalize_blocking_dispositions(value)
 
     # -- checker resolution -------------------------------------------------
 
@@ -466,7 +622,12 @@ class LittleCanaryHermesPlugin:
             record = self.store.get(turn_key(session_id, turn_id))
             if record is None:
                 return None
-            if record.disposition not in self.blocking_dispositions:
+            # Two independent guards, so no configuration and no later
+            # mutation of ``_blocking_dispositions`` can make a non-BLOCK
+            # disposition withhold a tool call.
+            if not record.blocks_tools:
+                return None
+            if record.disposition not in self._blocking_dispositions:
                 return None
             return {"action": "block", "message": self.build_block_message(record, tool_name)}
         except Exception as exc:  # pragma: no cover - absolute fail-open net

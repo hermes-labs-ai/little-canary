@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from little_canary.hermes_agent_plugin import (
+    DEFAULT_BLOCKING_DISPOSITIONS,
     DISPOSITION_BLOCK,
     DISPOSITION_DEGRADED,
     DISPOSITION_FLAG,
@@ -29,7 +30,9 @@ from little_canary.hermes_agent_plugin import (
     LittleCanaryHermesPlugin,
     TurnDisposition,
     TurnDispositionStore,
+    normalize_blocking_dispositions,
     register,
+    session_prefix,
     turn_key,
 )
 from little_canary.pipeline import PipelineVerdict, SecurityAdvisory, SecurityPipeline
@@ -90,6 +93,11 @@ def _verdict(
 
 def _plugin(checker, **kwargs) -> LittleCanaryHermesPlugin:
     return LittleCanaryHermesPlugin(checker=checker, **kwargs)
+
+
+def _record(disposition: str, created_at: float) -> TurnDisposition:
+    """A store record stamped with a clock the test controls."""
+    return TurnDisposition(disposition=disposition, created_at=created_at)
 
 
 def _fixed_clock():
@@ -249,10 +257,15 @@ class TestIsolation:
         assert len(plugin.store) == 0
         assert plugin.pre_tool_call(tool_name="bash", session_id="", turn_id="") is None
 
-    def test_turn_key_requires_at_least_one_id(self):
+    def test_turn_key_requires_both_ids(self):
+        # A key built from only one id is shared by every turn missing the
+        # other, so one turn's BLOCK would govern an unrelated turn.
         assert turn_key("", "") == ""
-        assert turn_key("s", "") == "s::"
-        assert turn_key("", "1") == "::1"
+        assert turn_key("s", "") == ""
+        assert turn_key("", "1") == ""
+        assert turn_key("  ", "1") == ""
+        assert turn_key("s", "  ") == ""
+        assert turn_key("s", "1") != ""
 
 
 # ---------------------------------------------------------------------------
@@ -473,3 +486,255 @@ class TestRealPipeline:
     def test_default_checker_is_built_lazily(self):
         plugin = LittleCanaryHermesPlugin()
         assert plugin._checker is None
+
+
+# ---------------------------------------------------------------------------
+# Turn-key encoding (CodeRabbit: ambiguous keys and partial ids)
+# ---------------------------------------------------------------------------
+
+
+class TestTurnKeyEncoding:
+    def test_ids_containing_the_separator_do_not_collide(self):
+        assert turn_key("a::b", "c") != turn_key("a", "b::c")
+        assert turn_key("a", "b::c") != turn_key("a::b", "c")
+        assert turn_key("1:a", "b") != turn_key("1", ":a::b")
+
+    def test_colliding_ids_do_not_share_a_disposition(self):
+        plugin = _plugin(lambda _t: _verdict(safe=False))
+        plugin.pre_llm_call(user_message="bad", session_id="a::b", turn_id="c")
+
+        # Pre-fix both turns hashed to "a::b::c", so this never-screened turn
+        # inherited the other turn's BLOCK.
+        assert plugin.pre_tool_call(tool_name="bash", session_id="a::b", turn_id="c") is not None
+        assert plugin.pre_tool_call(tool_name="bash", session_id="a", turn_id="b::c") is None
+
+    def test_missing_turn_id_is_not_stored_under_a_session_wide_key(self):
+        plugin = _plugin(lambda _t: _verdict(safe=False))
+        result = plugin.pre_llm_call(user_message="bad", session_id="s", turn_id="")
+
+        # The turn is still annotated, but nothing is parked under a key that
+        # every other turn_id-less turn of this session would also read.
+        assert DISPOSITION_BLOCK in result["context"]
+        assert len(plugin.store) == 0
+        assert plugin.pre_tool_call(tool_name="bash", session_id="s", turn_id="") is None
+        assert plugin.pre_tool_call(tool_name="bash", session_id="s", turn_id="9") is None
+
+    def test_missing_session_id_is_not_stored_under_a_turn_wide_key(self):
+        plugin = _plugin(lambda _t: _verdict(safe=False))
+        plugin.pre_llm_call(user_message="bad", session_id="", turn_id="1")
+        assert len(plugin.store) == 0
+        # A turn-only key would have been shared by turn "1" of every session.
+        assert plugin.pre_tool_call(tool_name="bash", session_id="other", turn_id="1") is None
+
+    def test_session_cleanup_uses_the_same_encoding_as_turn_key(self):
+        plugin = _plugin(lambda _t: _verdict(safe=False))
+        plugin.pre_llm_call(user_message="bad", session_id="a::b", turn_id="1")
+        plugin.pre_llm_call(user_message="bad", session_id="a", turn_id="1")
+
+        # Ending session "a" must not sweep away session "a::b" -- a plain
+        # "a::" prefix match did exactly that.
+        assert plugin.on_session_end(session_id="a") is None
+        assert plugin.store.get(turn_key("a", "1")) is None
+        assert plugin.store.get(turn_key("a::b", "1")) is not None
+        assert plugin.pre_tool_call(tool_name="bash", session_id="a::b", turn_id="1") is not None
+
+    def test_session_prefix_is_the_prefix_of_that_session_keys_only(self):
+        prefix = session_prefix("a")
+        assert turn_key("a", "1").startswith(prefix)
+        assert not turn_key("a::b", "1").startswith(prefix)
+        assert not turn_key("ab", "1").startswith(prefix)
+        assert session_prefix("") == ""
+        assert session_prefix("   ") == ""
+
+    @pytest.mark.parametrize(
+        ("session_id", "turn_id"),
+        [("s", " 1 "), (" s ", "1")],
+    )
+    def test_whitespace_variant_ids_do_not_inherit_a_block(self, session_id, turn_id):
+        plugin = _plugin(lambda _t: _verdict(safe=False))
+        plugin.pre_llm_call(user_message="bad", session_id="s", turn_id="1")
+
+        # Pre-fix both ids were stripped before encoding, so this never-screened
+        # variant read the screened turn's BLOCK.
+        assert plugin.pre_tool_call(tool_name="bash", session_id="s", turn_id="1") is not None
+        assert plugin.pre_tool_call(tool_name="bash", session_id=session_id, turn_id=turn_id) is None
+
+    def test_session_cleanup_does_not_sweep_a_whitespace_variant_session(self):
+        plugin = _plugin(lambda _t: _verdict(safe=False))
+        plugin.pre_llm_call(user_message="bad", session_id="a", turn_id="1")
+        plugin.pre_llm_call(user_message="bad", session_id=" a ", turn_id="1")
+        assert len(plugin.store) == 2
+
+        # Ending session "a" must leave the distinct session " a " intact, and
+        # its live BLOCK must still withdraw tool authority.
+        assert plugin.on_session_end(session_id="a") is None
+        assert plugin.store.get(turn_key("a", "1")) is None
+        assert plugin.store.get(turn_key(" a ", "1")) is not None
+        assert plugin.pre_tool_call(tool_name="bash", session_id=" a ", turn_id="1") is not None
+
+
+# ---------------------------------------------------------------------------
+# Capacity must never revoke a live BLOCK (CodeRabbit: LRU eviction)
+# ---------------------------------------------------------------------------
+
+
+class TestProtectedBlocks:
+    def test_capacity_pressure_does_not_restore_tool_authority(self):
+        plugin = _plugin(lambda text: _verdict(safe=(text != "bad")), max_turns=3)
+        plugin.pre_llm_call(user_message="bad", session_id="s", turn_id="blocked")
+        assert plugin.pre_tool_call(tool_name="bash", session_id="s", turn_id="blocked") is not None
+
+        # Pre-fix, a handful of unrelated turns evicted the BLOCK and the
+        # refused turn's tool call was allowed again.
+        for i in range(20):
+            plugin.pre_llm_call(user_message="ok", session_id="s", turn_id=f"pass{i}")
+
+        directive = plugin.pre_tool_call(tool_name="bash", session_id="s", turn_id="blocked")
+        assert directive is not None and directive["action"] == "block"
+
+    def test_many_blocks_are_all_retained_under_capacity_pressure(self):
+        plugin = _plugin(lambda text: _verdict(safe=(text != "bad")), max_turns=2)
+        for i in range(10):
+            plugin.pre_llm_call(user_message="bad", session_id="s", turn_id=f"b{i}")
+        for i in range(10):
+            plugin.pre_llm_call(user_message="ok", session_id="s", turn_id=f"p{i}")
+
+        for i in range(10):
+            assert plugin.pre_tool_call(tool_name="bash", session_id="s", turn_id=f"b{i}") is not None
+        assert plugin.store.blocking_len() == 10
+
+    def test_non_blocking_records_are_still_bounded_by_capacity(self):
+        state, clock = _fixed_clock()
+        store = TurnDispositionStore(max_turns=3, time_source=clock)
+        store.put(turn_key("s", "blocked"), _record(DISPOSITION_BLOCK, state["now"]))
+        for i in range(10):
+            store.put(turn_key("s", str(i)), _record(DISPOSITION_PASS, state["now"]))
+
+        # The block is kept; the evictable records stay within capacity.
+        assert store.get(turn_key("s", "blocked")) is not None
+        non_blocking = len(store) - store.blocking_len()
+        assert non_blocking <= 3
+        assert store.get(turn_key("s", "0")) is None
+
+    def test_expired_block_is_still_dropped_and_fails_open(self):
+        state, clock = _fixed_clock()
+        plugin = _plugin(
+            lambda _t: _verdict(safe=False), max_turns=2, ttl_seconds=60.0, time_source=clock
+        )
+        for i in range(5):
+            plugin.pre_llm_call(user_message="bad", session_id="s", turn_id=str(i))
+        assert plugin.store.blocking_len() == 5
+
+        state["now"] += 61.0
+        # TTL, not capacity, is what bounds retained blocks.
+        assert plugin.pre_tool_call(tool_name="bash", session_id="s", turn_id="0") is None
+        assert len(plugin.store) == 0
+
+    def test_session_end_still_drops_that_sessions_blocks(self):
+        plugin = _plugin(lambda _t: _verdict(safe=False), max_turns=2)
+        for i in range(5):
+            plugin.pre_llm_call(user_message="bad", session_id="s1", turn_id=str(i))
+        plugin.pre_llm_call(user_message="bad", session_id="s2", turn_id="0")
+
+        assert plugin.on_session_end(session_id="s1") is None
+        assert plugin.store.blocking_len() == 1
+        assert plugin.pre_tool_call(tool_name="bash", session_id="s1", turn_id="0") is None
+        assert plugin.pre_tool_call(tool_name="bash", session_id="s2", turn_id="0") is not None
+
+    def test_block_saturation_is_reported_but_never_evicted(self, caplog):
+        state, clock = _fixed_clock()
+        store = TurnDispositionStore(max_turns=1, max_blocked_turns=2, time_source=clock)
+        with caplog.at_level("WARNING", logger="little_canary.hermes_agent_plugin"):
+            for i in range(4):
+                store.put(turn_key("s", str(i)), _record(DISPOSITION_BLOCK, state["now"]))
+
+        assert store.blocking_len() == 4
+        assert all(store.get(turn_key("s", str(i))) is not None for i in range(4))
+        assert "max_blocked_turns" in caplog.text
+
+    def test_saturation_is_reported_without_capacity_pressure(self, caplog):
+        # max_blocked_turns below max_turns: the watermark is crossed while
+        # the store is still well within its capacity.
+        state, clock = _fixed_clock()
+        store = TurnDispositionStore(max_turns=10, max_blocked_turns=2, time_source=clock)
+        with caplog.at_level("WARNING", logger="little_canary.hermes_agent_plugin"):
+            for i in range(4):
+                store.put(turn_key("s", str(i)), _record(DISPOSITION_BLOCK, state["now"]))
+
+        assert len(store) == 4
+        assert store.blocking_len() == 4
+        assert "max_blocked_turns" in caplog.text
+
+    def test_store_rejects_invalid_blocked_watermark(self):
+        with pytest.raises(ValueError):
+            TurnDispositionStore(max_blocked_turns=0)
+
+
+# ---------------------------------------------------------------------------
+# Only a genuine BLOCK may be configured as blocking
+# ---------------------------------------------------------------------------
+
+
+class TestBlockingConfiguration:
+    @pytest.mark.parametrize(
+        "configured",
+        [
+            (DISPOSITION_DEGRADED,),
+            (DISPOSITION_UNSCREENED,),
+            (DISPOSITION_FLAG,),
+            (DISPOSITION_PASS,),
+            (DISPOSITION_BLOCK, DISPOSITION_DEGRADED),
+            ("block",),
+            ("",),
+        ],
+    )
+    def test_unsafe_blocking_configuration_is_rejected(self, configured):
+        with pytest.raises(ValueError):
+            LittleCanaryHermesPlugin(
+                checker=lambda _t: _verdict(safe=True), blocking_dispositions=configured
+            )
+
+    def test_bare_string_configuration_is_rejected(self):
+        # tuple("BLOCK") is ('B','L','O','C','K'), which silently blocks
+        # nothing at all; that must not be accepted as a configuration.
+        with pytest.raises(TypeError):
+            LittleCanaryHermesPlugin(
+                checker=lambda _t: _verdict(safe=True), blocking_dispositions="BLOCK"
+            )
+
+    def test_non_iterable_configuration_is_rejected(self):
+        with pytest.raises(TypeError):
+            LittleCanaryHermesPlugin(
+                checker=lambda _t: _verdict(safe=True), blocking_dispositions=7
+            )
+
+    def test_valid_configurations_are_accepted_and_deduped(self):
+        assert normalize_blocking_dispositions(DEFAULT_BLOCKING_DISPOSITIONS) == (
+            DISPOSITION_BLOCK,
+        )
+        assert normalize_blocking_dispositions([DISPOSITION_BLOCK, DISPOSITION_BLOCK]) == (
+            DISPOSITION_BLOCK,
+        )
+        assert normalize_blocking_dispositions({DISPOSITION_BLOCK}) == (DISPOSITION_BLOCK,)
+        # Monitor-only: nothing blocks. Strictly fail-open, so it is allowed.
+        assert normalize_blocking_dispositions(()) == ()
+
+    def test_reassignment_is_validated_too(self):
+        plugin = _plugin(lambda _t: _verdict(safe=True, degraded=True))
+        with pytest.raises(ValueError):
+            plugin.blocking_dispositions = (DISPOSITION_DEGRADED,)
+        assert plugin.blocking_dispositions == (DISPOSITION_BLOCK,)
+
+    def test_degraded_never_blocks_even_if_the_setter_is_bypassed(self):
+        plugin = _plugin(lambda _t: _verdict(safe=True, degraded=True))
+        plugin.pre_llm_call(user_message="hi", session_id="s", turn_id="1")
+        # Tamper with the private attribute directly, skipping validation.
+        plugin._blocking_dispositions = (DISPOSITION_DEGRADED, DISPOSITION_BLOCK)
+        assert plugin.store.get(turn_key("s", "1")).disposition == DISPOSITION_DEGRADED
+        assert plugin.pre_tool_call(tool_name="bash", session_id="s", turn_id="1") is None
+
+    def test_monitor_only_configuration_allows_a_blocked_turn(self):
+        plugin = _plugin(lambda _t: _verdict(safe=False), blocking_dispositions=())
+        result = plugin.pre_llm_call(user_message="bad", session_id="s", turn_id="1")
+        assert DISPOSITION_BLOCK in result["context"]
+        assert plugin.pre_tool_call(tool_name="bash", session_id="s", turn_id="1") is None
