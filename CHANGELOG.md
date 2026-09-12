@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
+## [0.3.7] - 2026-09-12
+
+Publishes the Hermes Agent plugin that merged to `main` after `0.3.6` and was
+therefore not installable from PyPI.
+
+### Added
+
+- Opt-in plugin for the Hermes Agent framework (`hermes-agent`, Nous Research),
+  `little_canary.hermes_agent_plugin`, published through the
+  `hermes_agent.plugins` entry point. The host still has to enable it in its
+  `plugins.enabled` allow-list. It screens the turn's user message once at
+  `pre_llm_call`, annotates `FLAG`, `BLOCK`, and `DEGRADED` turns, and
+  withdraws tool authority at `pre_tool_call` only for a genuine `BLOCK`. The
+  hook cannot stop prompt delivery: a blocked turn still reaches the model,
+  annotated, without its tools. Verified against `hermes-agent` 0.19.0 (#74).
+
+### Fixed
+
+- Hermes Agent plugin turn keys require both ids and are unambiguous, capacity
+  eviction can no longer release a live `BLOCK`, and `blocking_dispositions`
+  accepts only `BLOCK`, so degraded screening cannot fail closed (#75).
+- An unusable configured checker is reported as `DEGRADED` instead of leaving
+  the turn unrecorded, and context truncation keeps the disposition guidance.
+
+### Changed
+
+- Repository standards, OpenSSF Scorecard, and Software Heritage archival
+  workflows (#71, #72, #73).
+
+Adapters remain opt-in. This release does not change detection logic,
+benchmark claims, or the fail-open routing contract.
+
 ## [0.3.6] - 2026-09-09
 
 Publishes the native host integrations that were merged to `main` after
