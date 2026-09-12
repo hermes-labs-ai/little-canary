@@ -546,6 +546,32 @@ class TestTurnKeyEncoding:
         assert session_prefix("") == ""
         assert session_prefix("   ") == ""
 
+    @pytest.mark.parametrize(
+        ("session_id", "turn_id"),
+        [("s", " 1 "), (" s ", "1")],
+    )
+    def test_whitespace_variant_ids_do_not_inherit_a_block(self, session_id, turn_id):
+        plugin = _plugin(lambda _t: _verdict(safe=False))
+        plugin.pre_llm_call(user_message="bad", session_id="s", turn_id="1")
+
+        # Pre-fix both ids were stripped before encoding, so this never-screened
+        # variant read the screened turn's BLOCK.
+        assert plugin.pre_tool_call(tool_name="bash", session_id="s", turn_id="1") is not None
+        assert plugin.pre_tool_call(tool_name="bash", session_id=session_id, turn_id=turn_id) is None
+
+    def test_session_cleanup_does_not_sweep_a_whitespace_variant_session(self):
+        plugin = _plugin(lambda _t: _verdict(safe=False))
+        plugin.pre_llm_call(user_message="bad", session_id="a", turn_id="1")
+        plugin.pre_llm_call(user_message="bad", session_id=" a ", turn_id="1")
+        assert len(plugin.store) == 2
+
+        # Ending session "a" must leave the distinct session " a " intact, and
+        # its live BLOCK must still withdraw tool authority.
+        assert plugin.on_session_end(session_id="a") is None
+        assert plugin.store.get(turn_key("a", "1")) is None
+        assert plugin.store.get(turn_key(" a ", "1")) is not None
+        assert plugin.pre_tool_call(tool_name="bash", session_id=" a ", turn_id="1") is not None
+
 
 # ---------------------------------------------------------------------------
 # Capacity must never revoke a live BLOCK (CodeRabbit: LRU eviction)

@@ -1,4 +1,48 @@
-"""Optional Little Canary hooks for Hermes Agent."""
+"""
+hermes_agent_plugin.py - Optional Hermes Agent plugin integration
+
+Screens the user message of a Hermes Agent turn through Little Canary's
+existing :class:`~little_canary.pipeline.SecurityPipeline` exactly once, then
+lets the resulting disposition govern tool authority for the rest of that turn.
+
+Verified against the upstream framework
+-----------------------------------------
+Built against ``hermes-agent`` 0.19.0 (Nous Research, MIT), the published PyPI
+distribution. The relevant contract, read from that distribution's
+``hermes_cli/plugins.py`` and ``agent/turn_context.py``:
+
+* Discovery: ``ENTRY_POINTS_GROUP = "hermes_agent.plugins"``. The loader calls
+  ``ep.load()`` and then ``getattr(module, "register", None)``, so the entry
+  point must resolve to a **module** exposing ``register(ctx)`` -- not to the
+  ``register`` function itself. Entry-point plugins stay opt-in behind the
+  host's ``plugins.enabled`` allow-list.
+* ``pre_llm_call`` is called with ``session_id``, ``task_id``, ``turn_id``,
+  ``user_message``, ``conversation_history``, ``is_first_turn``, ``model``,
+  ``platform`` and ``sender_id``. A callback may return ``{"context": "..."}``
+  (or a plain string). That text is appended to the **user message** for the
+  current turn only. It **cannot stop the prompt from reaching the model** --
+  the hook has no deny channel at all.
+* ``pre_tool_call`` is called with ``tool_name``, ``args``, ``session_id``,
+  ``turn_id`` and related ids. Returning
+  ``{"action": "block", "message": "..."}`` genuinely vetoes the tool call:
+  ``resolve_pre_tool_block()`` hands the message back as the tool result the
+  model sees, and the tool never executes. A block directive without a
+  non-empty message is ignored by the host, so one is always supplied.
+
+What this plugin does and does not claim
+----------------------------------------
+It **does**: screen the turn's user message once, annotate the turn with a
+bounded note when the screening is FLAG / BLOCK / DEGRADED, and block
+downstream tool calls for a turn whose screening returned a genuine BLOCK.
+
+It **does not**: block prompt delivery, edit the system prompt, re-score on
+every tool call, or emit the raw user text or internal probe transcript into
+the model's context.
+
+Fail-open, like the rest of Little Canary: a pipeline exception, an
+unavailable Ollama backend, a missing turn key or an expired record all allow
+the turn and its tools to proceed. Only a genuine BLOCK verdict blocks.
+"""
 
 from __future__ import annotations
 
@@ -188,8 +232,8 @@ def session_prefix(session_id: str) -> str:
     :meth:`TurnDispositionStore.discard_session` matches on it, so the two can
     never drift into different encodings.
     """
-    session = (session_id or "").strip()
-    if not session:
+    session = session_id or ""
+    if not session.strip():
         return ""
     return f"{len(session)}:{session}{KEY_SEPARATOR}"
 
@@ -212,8 +256,8 @@ def turn_key(session_id: str, turn_id: str) -> str:
     pair -- ``("a::b", "c")`` and ``("a", "b::c")`` produce different keys.
     """
     prefix = session_prefix(session_id)
-    turn = (turn_id or "").strip()
-    if not prefix or not turn:
+    turn = turn_id or ""
+    if not prefix or not turn.strip():
         return ""
     return f"{prefix}{turn}"
 
