@@ -46,7 +46,7 @@ release. Cite the version-independent concept DOI at
 See [hermes-publications/papers/behavioral-canarying](https://github.com/hermes-labs-ai/hermes-publications/tree/main/papers/behavioral-canarying)
 for the full evidence boundary.
 
-## Where little-canary is used
+## Listed in
 
 External projects that have merged a reference to little-canary. Facts only —
 a merge is not adoption or endorsement:
