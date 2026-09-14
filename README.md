@@ -21,6 +21,14 @@ untrusted text
 
 Little Canary is an inbound risk sensor, not a security guarantee or an agent runtime.
 
+```bash
+python -m pip install little-canary
+little-canary --version
+```
+
+Full install options, the evidence-gate demos, and every host integration are
+in [Install](#install) below.
+
 ## Technical note
 
 [Behavioral Canarying for Prompt Injection: Powerless Model Probes with Explicit Coverage Semantics](https://hermes-labs.ai/research/behavioral-canarying)
