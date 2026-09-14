@@ -46,6 +46,21 @@ release. Cite the version-independent concept DOI at
 See [hermes-publications/papers/behavioral-canarying](https://github.com/hermes-labs-ai/hermes-publications/tree/main/papers/behavioral-canarying)
 for the full evidence boundary.
 
+## Where little-canary is used
+
+External projects that have merged a reference to little-canary. Facts only —
+a merge is not adoption or endorsement:
+
+- [scadastrangelove/awesome-ai-security-tools](https://github.com/scadastrangelove/awesome-ai-security-tools/pull/38)
+  lists little-canary among agentic AI / MCP attack tools (merged 2026-08-06).
+- [h5i-dev/awesome-ai-agent-incidents](https://github.com/h5i-dev/awesome-ai-agent-incidents/pull/13)
+  lists little-canary as a related guardrail (merged 2026-09-10).
+
+## Registries
+
+- [Research Software Directory](https://research-software-directory.org/software/little-canary)
+  carries a published software entry.
+
 ## Release truth
 
 Source checkouts, GitHub releases, and registry builds are separate evidence
