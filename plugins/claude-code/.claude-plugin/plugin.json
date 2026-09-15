@@ -1,6 +1,6 @@
 {
   "name": "little-canary",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "Blocks a Claude Code turn when a local Little Canary server rejects the submitted prompt.",
   "author": {
     "name": "Hermes Labs",
