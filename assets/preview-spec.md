@@ -9,6 +9,7 @@
 - Font treatment: monospace only, semibold command line, regular body text
 - Command shown: `little-canary serve --help`
 - Exact output shown: the contents of `assets/preview-source.txt`
+- Regenerated: 2026-09-18 from live `little-canary serve --help` output
 - Semantic coloring:
   - prompt line `#60a5fa`
   - neutral body `#e5e7eb`
