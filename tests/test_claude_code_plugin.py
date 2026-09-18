@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import subprocess
 import sys
 from io import BytesIO
@@ -20,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MARKETPLACE_FILE = ROOT / ".claude-plugin" / "marketplace.json"
 PLUGIN_ROOT = ROOT / "plugins" / "claude-code"
 PLUGIN_MANIFEST = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
+AGENT_PLUGIN_MANIFEST = PLUGIN_ROOT / "plugin.json"
 HOOKS_FILE = PLUGIN_ROOT / "hooks" / "hooks.json"
 HOOK_SCRIPT = PLUGIN_ROOT / "scripts" / "little_canary_user_prompt_submit.py"
 sys.path.insert(0, str(HOOK_SCRIPT.parent))
@@ -116,13 +118,80 @@ def test_plugin_directory_is_self_contained() -> None:
     # needs must live under plugins/claude-code and must not reach above it.
     expected = {
         PLUGIN_ROOT / ".claude-plugin" / "plugin.json",
+        AGENT_PLUGIN_MANIFEST,
         HOOKS_FILE,
         HOOK_SCRIPT,
     }
     actual = {path for path in PLUGIN_ROOT.rglob("*") if path.is_file() and "__pycache__" not in path.parts}
     assert actual == expected
-    for path in (PLUGIN_MANIFEST, HOOKS_FILE):
+    for path in (PLUGIN_MANIFEST, AGENT_PLUGIN_MANIFEST, HOOKS_FILE):
         assert ".." not in path.read_text()
+
+
+# --- Agent Plugins v1.0.0 root manifest --------------------------------------
+
+# https://agent-plugins.org/schemas/1.0.0/plugin.schema.json: required=["$schema", "name"],
+# additionalProperties=False. Kept local (not fetched) so the test suite stays offline.
+AGENT_PLUGIN_SCHEMA_URL = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+AGENT_PLUGIN_ALLOWED_TOP_LEVEL_FIELDS = {
+    "$schema",
+    "name",
+    "version",
+    "description",
+    "author",
+    "homepage",
+    "repository",
+    "license",
+    "keywords",
+    "extensions",
+}
+AGENT_PLUGIN_ALLOWED_AUTHOR_FIELDS = {"name", "email", "url"}
+
+
+def test_agent_plugin_manifest_exists_at_the_plugin_root() -> None:
+    # Awesome Copilot's external-plugin intake (Agent Plugins v1.0.0) looks for plugin.json at
+    # the plugin root, not inside .claude-plugin/. Without it, install/version-match gates fail:
+    # https://github.com/github/awesome-copilot/issues/3304
+    assert AGENT_PLUGIN_MANIFEST.is_file()
+    assert AGENT_PLUGIN_MANIFEST.parent == PLUGIN_ROOT
+
+
+def test_agent_plugin_manifest_is_valid_json_object() -> None:
+    manifest = json.loads(AGENT_PLUGIN_MANIFEST.read_text())
+    assert isinstance(manifest, dict)
+
+
+def test_agent_plugin_manifest_declares_the_v1_schema() -> None:
+    manifest = json.loads(AGENT_PLUGIN_MANIFEST.read_text())
+    assert manifest["$schema"] == AGENT_PLUGIN_SCHEMA_URL
+
+
+def test_agent_plugin_manifest_uses_only_allowed_fields() -> None:
+    manifest = json.loads(AGENT_PLUGIN_MANIFEST.read_text())
+    assert set(manifest) <= AGENT_PLUGIN_ALLOWED_TOP_LEVEL_FIELDS
+    assert "$schema" in manifest and "name" in manifest  # the schema's only required fields
+    if "author" in manifest:
+        assert set(manifest["author"]) <= AGENT_PLUGIN_ALLOWED_AUTHOR_FIELDS
+
+
+def test_agent_plugin_manifest_name_matches_agent_plugins_naming_constraints() -> None:
+    # ^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$ per the Agent Plugins v1.0.0 schema.
+    manifest = json.loads(AGENT_PLUGIN_MANIFEST.read_text())
+    name = manifest["name"]
+    assert 1 <= len(name) <= 64
+    assert re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", name)
+    assert "--" not in name and ".." not in name
+
+
+def test_agent_plugin_manifest_identity_matches_the_claude_plugin_manifest() -> None:
+    # Two manifests, one plugin: the Claude-specific one that Claude Code reads, and this
+    # portable one that Awesome Copilot's Agent Plugins v1.0.0 intake reads. Their identity
+    # must agree so the submission's reviewed SHA matches what installs.
+    agent_manifest = json.loads(AGENT_PLUGIN_MANIFEST.read_text())
+    claude_manifest = json.loads(PLUGIN_MANIFEST.read_text())
+    assert agent_manifest["name"] == claude_manifest["name"] == "little-canary"
+    assert agent_manifest["version"] == claude_manifest["version"] == __version__
+    assert agent_manifest["repository"] == claude_manifest["repository"]
 
 
 def test_hook_script_depends_only_on_the_standard_library() -> None:
