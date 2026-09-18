@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
+## [0.3.8] - 2026-09-18
+
+Packages the Claude Code plugin manifest at the location the Agent Plugins
+v1.0.0 specification reads, so the plugin resolves for hosts outside Claude
+Code. No detection, routing, or hook behavior changes.
+
+### Added
+
+- `plugins/claude-code/plugin.json`: an Agent Plugins v1.0.0 manifest at the
+  plugin root, carrying the `$schema` identifier and the fields that
+  specification allows. Claude Code continues to read
+  `plugins/claude-code/.claude-plugin/plugin.json`, which is unchanged apart
+  from the version bump; the two manifests are held in agreement by
+  `tests/test_claude_code_plugin.py`.
+
 ## [0.3.7] - 2026-09-12
 
 Publishes the Hermes Agent plugin that merged to `main` after `0.3.6` and was
