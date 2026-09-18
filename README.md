@@ -1,13 +1,24 @@
+<div align="center">
+
+<img src="assets/little-canary-logo.png" alt="Little Canary" width="112" height="112">
+
 # little-canary
+
+**Prompt-injection sensing through a powerless sacrificial model.**
 
 [![CI](https://github.com/hermes-labs-ai/little-canary/actions/workflows/ci.yml/badge.svg)](https://github.com/hermes-labs-ai/little-canary/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/little-canary)](https://pypi.org/project/little-canary/)
+[![Downloads](https://img.shields.io/pypi/dm/little-canary?label=downloads%2Fmonth)](https://pypistats.org/packages/little-canary)
 [![Python](https://img.shields.io/pypi/pyversions/little-canary)](https://pypi.org/project/little-canary/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-2ea44f)](LICENSE)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/hermes-labs-ai/little-canary/badge)](https://scorecard.dev/viewer/?uri=github.com/hermes-labs-ai/little-canary)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21543681.svg)](https://doi.org/10.5281/zenodo.21543681)
 
-Prompt-injection sensing through a powerless sacrificial model.
+[Website](https://littlecanary.ai) · [Product page](https://hermes-labs.ai/little-canary) · [PyPI](https://pypi.org/project/little-canary/) · [Releases](https://github.com/hermes-labs-ai/little-canary/releases)
 
-**Links:** [Website](https://littlecanary.ai) · [Hermes Labs product page](https://hermes-labs.ai/little-canary)
+<img src="assets/preview.png" alt="little-canary serve --help terminal output" width="760">
+
+</div>
 
 Little Canary lets untrusted language affect a small model with no application tools or authority, then inspects that model's response for compromise residue before your agent acts. Structural checks catch known input shapes; the distinctive behavioral layer asks what the input *did to the canary*.
 
