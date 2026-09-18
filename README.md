@@ -5,6 +5,8 @@
 [![Python](https://img.shields.io/pypi/pyversions/little-canary)](https://pypi.org/project/little-canary/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-2ea44f)](LICENSE)
 
+![little-canary preview](assets/preview.png)
+
 Prompt-injection sensing through a powerless sacrificial model.
 
 **Links:** [Website](https://littlecanary.ai) · [Hermes Labs product page](https://hermes-labs.ai/little-canary)
