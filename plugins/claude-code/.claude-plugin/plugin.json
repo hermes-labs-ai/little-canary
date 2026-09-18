@@ -1,7 +1,7 @@
 {
   "name": "little-canary",
-  "version": "0.3.7",
-  "description": "Blocks a Claude Code turn when a local Little Canary server rejects the submitted prompt.",
+  "version": "0.3.8",
+  "description": "Blocks a Claude Code turn when a local Little Canary server rejects the submitted prompt. Also installs on Codex CLI, which must trust the hook before it screens.",
   "author": {
     "name": "Hermes Labs",
     "email": "roli@hermes-labs.ai"

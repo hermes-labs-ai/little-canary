@@ -1,0 +1,158 @@
+{
+  "schema": "little-canary-host-capability-matrix/v1",
+  "little_canary_version": "0.3.8",
+  "certified_on": "2026-09-18",
+  "note": "Inbound prompt screening and outbound tool-execution blocking are separate host capabilities. A host that intercepts a prompt does not necessarily allow refusing it, and a host that can refuse a tool call does not necessarily expose the prompt. Each field below records what the named host version can do, not what Little Canary wishes it could do.",
+  "hosts": [
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "observed_version": "2.1.270",
+      "shipped_artifact": "plugins/claude-code",
+      "doc_anchor": "## Claude Code plugin",
+      "inbound": {
+        "shipped": true,
+        "event": "UserPromptSubmit",
+        "interception_point": "after the prompt is submitted, before the turn starts",
+        "deny_channel": true,
+        "deny_wire": "{\"decision\": \"block\", \"reason\": \"...\"}",
+        "runtime_certified": true,
+        "runtime_evidence": "Verified against Claude Code 2.1.261 for release 0.3.7; see README 'Claude Code plugin'. Not re-exercised at runtime by this certification."
+      },
+      "outbound_tool_execution": {
+        "host_deny_channel": true,
+        "host_event": "PreToolUse",
+        "shipped": false
+      },
+      "caveats": [
+        "Screens the submitted prompt only. Tool results, tool arguments, and file contents read during the turn are never screened.",
+        "A request body over 64 KiB is rejected by the loopback server with HTTP 413 and is therefore not screened at all."
+      ]
+    },
+    {
+      "id": "codex-cli",
+      "name": "Codex CLI",
+      "observed_version": "0.154.0",
+      "shipped_artifact": "plugins/claude-code",
+      "doc_anchor": "## Codex CLI",
+      "inbound": {
+        "shipped": true,
+        "event": "UserPromptSubmit",
+        "interception_point": "after the prompt is submitted, before the turn starts",
+        "deny_channel": true,
+        "deny_wire": "{\"decision\": \"block\", \"reason\": \"...\"}",
+        "runtime_certified": false,
+        "runtime_evidence": "Install route exercised: `codex plugin marketplace add <checkout>` then `codex plugin add little-canary@hermes-labs` reports `installed, enabled` at 0.3.8 and copies hooks/hooks.json plus the adapter into the plugin cache. Interception itself was NOT observed: in a headless `codex exec` run against an isolated CODEX_HOME the hook did not execute, no hook-trust state was recorded, and the prompt proceeded to the model call with no warning. Codex gates hook execution behind an explicit trust approval that a non-interactive run cannot give."
+      },
+      "outbound_tool_execution": {
+        "host_deny_channel": true,
+        "host_event": "PreToolUse",
+        "shipped": false
+      },
+      "caveats": [
+        "Codex does not run a hook until its source is trusted. Until a maintainer approves the hook interactively, the plugin is installed and enabled but screens nothing, and Codex says nothing about it.",
+        "The same limits as the Claude Code route apply: submitted prompt only, 64 KiB body ceiling."
+      ]
+    },
+    {
+      "id": "gemini-cli",
+      "name": "Gemini CLI",
+      "observed_version": "0.32.1",
+      "shipped_artifact": "hooks/hooks.json",
+      "doc_anchor": "## Gemini CLI extension",
+      "inbound": {
+        "shipped": true,
+        "event": "BeforeAgent",
+        "interception_point": "before the agent loop starts",
+        "deny_channel": true,
+        "deny_wire": "{\"decision\": \"deny\", \"reason\": \"...\"}",
+        "runtime_certified": true,
+        "runtime_evidence": "Verified against Gemini CLI 0.32.1 for release 0.3.7; see README 'Gemini CLI extension'. Not re-exercised at runtime by this certification."
+      },
+      "outbound_tool_execution": {
+        "host_deny_channel": true,
+        "host_event": "PreToolUse",
+        "shipped": false
+      },
+      "caveats": [
+        "Denies one agent run at its pre-agent boundary. Tool calls made inside an allowed run are not screened."
+      ]
+    },
+    {
+      "id": "openai-agents-sdk",
+      "name": "OpenAI Agents SDK",
+      "observed_version": "0.22.0",
+      "shipped_artifact": "little_canary/openai_agents.py",
+      "doc_anchor": "## OpenAI Agents SDK input guardrail",
+      "inbound": {
+        "shipped": true,
+        "event": "InputGuardrail",
+        "interception_point": "before the agent starts",
+        "deny_channel": true,
+        "deny_wire": "GuardrailFunctionOutput(tripwire_triggered=True)",
+        "runtime_certified": true,
+        "runtime_evidence": "Offline tests exercised against openai-agents 0.22.0; the SDK tripwire is the deny channel. No live model call is involved in the guardrail decision."
+      },
+      "outbound_tool_execution": {
+        "host_deny_channel": true,
+        "host_event": "tool guardrails",
+        "shipped": false
+      },
+      "caveats": [
+        "Only user-message text is screened. Tool outputs and non-text content are outside this adapter.",
+        "SDK input guardrails run only for the first agent in a chain."
+      ]
+    },
+    {
+      "id": "hermes-agent",
+      "name": "Hermes Agent",
+      "observed_version": "0.19.0",
+      "shipped_artifact": "little_canary/hermes_agent_plugin.py",
+      "doc_anchor": "## Hermes Agent plugin",
+      "inbound": {
+        "shipped": true,
+        "event": "pre_llm_call",
+        "interception_point": "before the model call, context injection only",
+        "deny_channel": false,
+        "deny_wire": null,
+        "runtime_certified": true,
+        "runtime_evidence": "Verified against hermes-agent 0.19.0 for release 0.3.7. pre_llm_call is a context-injection hook with no deny channel: a blocked turn still reaches the model, annotated."
+      },
+      "outbound_tool_execution": {
+        "host_deny_channel": true,
+        "host_event": "pre_tool_call",
+        "shipped": true
+      },
+      "caveats": [
+        "This is the one host where Little Canary blocks outbound tool execution rather than inbound prompt delivery.",
+        "A BLOCK verdict withdraws the turn's tool authority. It does not stop the prompt from reaching the model."
+      ]
+    },
+    {
+      "id": "github-copilot",
+      "name": "GitHub Copilot CLI",
+      "observed_version": "1.0.84-5",
+      "shipped_artifact": null,
+      "doc_anchor": "## GitHub Copilot CLI",
+      "inbound": {
+        "shipped": false,
+        "event": "userPromptSubmitted",
+        "interception_point": "after the user submits a prompt",
+        "deny_channel": false,
+        "deny_wire": null,
+        "runtime_certified": false,
+        "runtime_evidence": "Artifact-certified, not runtime-certified. UserPromptSubmittedHookOutput exposes modifiedPrompt, additionalContext, and suppressOutput and no decision field; only PreToolUseHookOutput carries permissionDecision allow/deny/ask. See docs/host-evidence/copilot-cli-1.0.84-5-hook-outputs.d.ts. The Copilot CLI was not installed on this machine, so no run was exercised."
+      },
+      "outbound_tool_execution": {
+        "host_deny_channel": true,
+        "host_event": "preToolUse",
+        "shipped": false
+      },
+      "caveats": [
+        "Copilot cannot refuse an inbound prompt at any hook. A userPromptSubmitted hook can rewrite or annotate the prompt; the prompt still reaches the model.",
+        "Copilot's file-configured hooks use a different manifest than Claude Code and Codex: `.github/hooks/*.json`, `version: 1`, camelCase event names, and `bash`/`timeoutSec` keys. The `plugins/claude-code` hook manifest is not loadable by Copilot.",
+        "Little Canary ships no Copilot artifact. A Copilot marketplace listing of this plugin is an install route for other hosts, not evidence of Copilot prompt screening."
+      ]
+    }
+  ]
+}

@@ -281,6 +281,23 @@ Every accepted non-empty string reaches the pipeline, including one-character in
 
 The loopback server has no authentication, TLS, concurrency hardening, or remote-deployment design in this release.
 
+## Host capability matrix
+
+Little Canary screens text on its way *in*. Whether that screening can refuse
+anything is the host's decision, and hosts differ: Claude Code, Codex CLI,
+Gemini CLI, and the OpenAI Agents SDK let an inbound adapter refuse a prompt;
+Hermes Agent and GitHub Copilot do not. Inbound prompt screening and outbound
+tool-execution blocking are separate capabilities and are never merged into a
+single claim here.
+
+[`docs/host-capability-matrix.md`](docs/host-capability-matrix.md) records,
+per host version, the interception point, whether a refusal is possible, what
+this repository actually ships for it, and the evidence behind each answer.
+Its machine-readable source is
+[`docs/host-capability-matrix.json`](docs/host-capability-matrix.json), which
+`tests/test_host_capability_matrix.py` enforces offline against the shipped
+manifests and adapters.
+
 ## Gemini CLI extension
 
 This repository is also a Gemini CLI extension. It uses Gemini CLI's
@@ -363,6 +380,39 @@ This plugin blocks one Claude Code turn at its prompt-submission boundary. It
 does not screen tool results, and it does not establish a general security
 guarantee or replace least privilege and tool policy.
 
+## Codex CLI
+
+Codex CLI reads the same plugin directory as Claude Code. It loads Claude-shaped
+`hooks/hooks.json` manifests and resolves `CLAUDE_PLUGIN_ROOT`, and its
+`UserPromptSubmit` hook has a real deny channel: the command output schema
+`user-prompt-submit.command.output` accepts `{"decision": "block", "reason":
+...}`. That schema is vendored at
+[`docs/host-evidence/`](docs/host-evidence/), and the offline suite asserts that
+every object the shipped adapter can emit stays inside it — the schema sets
+`additionalProperties: false`, so an extra field would be a Codex-side failure.
+
+Start the loopback server in blocking mode, then add this repository as a
+marketplace and install the plugin. This install route was exercised against
+Codex CLI 0.154.0:
+
+```bash
+little-canary serve --mode block
+codex plugin marketplace add hermes-labs-ai/little-canary
+codex plugin add little-canary@hermes-labs
+codex plugin list
+```
+
+`codex plugin list` reports the plugin as `installed, enabled`, and Codex
+copies `hooks/hooks.json` and the adapter script into its plugin cache.
+
+**Installed and enabled is not yet screening.** Codex does not run a hook until
+its source is trusted. In a headless `codex exec` run with the plugin installed
+and enabled but not yet approved, the hook did not execute, the prompt went on
+to the model call, and Codex printed no warning. Approve the hook in an
+interactive Codex session and confirm the approval took effect before relying
+on it. Until that observation is recorded, this repository does not claim a
+certified Codex interception — see the matrix row for the exact status.
+
 ## OpenAI Agents SDK input guardrail
 
 The optional `little_canary.openai_agents` module wraps a `SecurityPipeline`
@@ -433,6 +483,28 @@ What it does **not** do:
 Fail-open is preserved: a pipeline exception, an unreachable Ollama backend, a
 missing or expired turn record, or any internal plugin error allows the turn
 and its tools. Only a genuine `BLOCK` verdict blocks.
+
+## GitHub Copilot CLI
+
+Little Canary ships **no GitHub Copilot artifact**, and the reason is a
+capability limit rather than an oversight.
+
+GitHub Copilot CLI 1.0.84-5 has a `userPromptSubmitted` hook, documented as
+running after the user submits a prompt. Its output type carries
+`modifiedPrompt`, `additionalContext`, and `suppressOutput` — and no decision
+field. A hook there can rewrite or annotate a prompt; it cannot refuse one, and
+the prompt reaches the model either way. Only Copilot's `preToolUse` hook
+carries `permissionDecision: "allow" | "deny" | "ask"`, which is an outbound
+tool control, not inbound screening. The SDK declarations behind this are
+vendored verbatim at [`docs/host-evidence/`](docs/host-evidence/).
+
+Copilot also reads a different manifest than Claude Code and Codex —
+`.github/hooks/*.json`, `version: 1`, camelCase event names, `bash` and
+`timeoutSec` — so the `plugins/claude-code` manifest is not loadable by it.
+
+A Copilot-facing marketplace that lists this plugin is offering an install
+route for other hosts. It is not evidence that Copilot screens prompts, and
+this repository does not make that claim.
 
 ## Evidence labels and limitations
 
