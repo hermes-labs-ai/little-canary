@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import subprocess
 import sys
 from io import BytesIO
@@ -20,11 +21,29 @@ ROOT = Path(__file__).resolve().parents[1]
 MARKETPLACE_FILE = ROOT / ".claude-plugin" / "marketplace.json"
 PLUGIN_ROOT = ROOT / "plugins" / "claude-code"
 PLUGIN_MANIFEST = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
+AGENT_PLUGIN_MANIFEST = PLUGIN_ROOT / "plugin.json"
 HOOKS_FILE = PLUGIN_ROOT / "hooks" / "hooks.json"
 HOOK_SCRIPT = PLUGIN_ROOT / "scripts" / "little_canary_user_prompt_submit.py"
 sys.path.insert(0, str(HOOK_SCRIPT.parent))
 
 from little_canary_user_prompt_submit import DIRECT_OPENER, evaluate  # noqa: E402
+
+# Agent Plugins v1.0.0 manifest contract, as enforced by the awesome-copilot intake gates
+# (github/awesome-copilot eng/external-plugin-quality-gates.mjs, eng/agent-plugin-schema.mjs).
+AGENT_PLUGIN_SPEC_URL = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+AGENT_PLUGIN_ALLOWED_FIELDS = {
+    "$schema",
+    "name",
+    "version",
+    "description",
+    "author",
+    "homepage",
+    "repository",
+    "license",
+    "keywords",
+    "extensions",
+}
+AGENT_PLUGIN_NAME_PATTERN = re.compile(r"^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
 
 
 class _Response:
@@ -116,13 +135,47 @@ def test_plugin_directory_is_self_contained() -> None:
     # needs must live under plugins/claude-code and must not reach above it.
     expected = {
         PLUGIN_ROOT / ".claude-plugin" / "plugin.json",
+        PLUGIN_ROOT / "plugin.json",
         HOOKS_FILE,
         HOOK_SCRIPT,
     }
     actual = {path for path in PLUGIN_ROOT.rglob("*") if path.is_file() and "__pycache__" not in path.parts}
     assert actual == expected
-    for path in (PLUGIN_MANIFEST, HOOKS_FILE):
+    for path in (PLUGIN_MANIFEST, AGENT_PLUGIN_MANIFEST, HOOKS_FILE):
         assert ".." not in path.read_text()
+
+
+def test_agent_plugin_manifest_satisfies_the_v1_specification() -> None:
+    # Claude Code resolves .claude-plugin/plugin.json and ignores this file; hosts that follow the
+    # Agent Plugins specification only look at the plugin root, so the plugin ships both.
+    manifest = json.loads(AGENT_PLUGIN_MANIFEST.read_text())
+
+    assert manifest["$schema"] == AGENT_PLUGIN_SPEC_URL
+    assert set(manifest) <= AGENT_PLUGIN_ALLOWED_FIELDS
+    assert AGENT_PLUGIN_NAME_PATTERN.fullmatch(manifest["name"]) is not None
+    assert 1 <= len(manifest["name"]) <= 64
+    for field in ("version", "description"):
+        assert isinstance(manifest[field], str) and manifest[field].strip()
+    for field in ("homepage", "repository", "license"):
+        assert isinstance(manifest[field], str)
+    assert set(manifest["author"]) <= {"name", "email", "url"}
+    assert all(isinstance(value, str) for value in manifest["author"].values())
+    assert all(isinstance(keyword, str) for keyword in manifest["keywords"])
+    assert manifest["version"] == __version__
+
+
+def test_both_plugin_manifests_stay_in_agreement() -> None:
+    # Two manifests describe one plugin, so they must never drift: an edit to either one that the
+    # other does not mirror fails here rather than shipping two different answers to the same host.
+    claude = json.loads(PLUGIN_MANIFEST.read_text())
+    agent = json.loads(AGENT_PLUGIN_MANIFEST.read_text())
+
+    shared = set(agent) - {"$schema"}
+    # "$schema" is the only field the Agent Plugins manifest is allowed to carry on its own.
+    assert shared == set(claude) & AGENT_PLUGIN_ALLOWED_FIELDS
+    for field in sorted(shared):
+        assert agent[field] == claude[field], field
+    assert {"name", "version", "description", "license"} <= shared
 
 
 def test_hook_script_depends_only_on_the_standard_library() -> None:
