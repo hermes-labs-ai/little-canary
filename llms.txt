@@ -30,4 +30,4 @@ Evidence rules:
 
 ## About Hermes Labs
 
-Hermes Labs is an independent AI-reliability lab building open-source tools for inspecting silent failure modes. More at https://hermes-labs.ai.
+Hermes Labs studies failure modes in agent and LLM systems, develops open-source tools that treat language as part of the runtime, and works with teams to remediate reliability failures in production. More at https://hermes-labs.ai.
