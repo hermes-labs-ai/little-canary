@@ -20,6 +20,10 @@
 
 </div>
 
+Little Canary is developed by [Hermes Labs](https://hermes-labs.ai).
+
+Hermes Labs studies failure modes in agent and LLM systems, develops open-source tools that treat language as part of the runtime, and works with teams to remediate reliability failures in production.
+
 Little Canary screens untrusted language before your agent acts. It exposes the
 input to a small model with no application tools or authority, then inspects the
 model's response for evidence that the input changed its behavior.
@@ -279,5 +283,3 @@ what is published.
 ## License
 
 Apache License 2.0
-
-Little Canary is maintained by [Hermes Labs](https://hermes-labs.ai).
