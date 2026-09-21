@@ -26,6 +26,9 @@ Little Canary is a prompt-injection detection library that uses a sacrificial ca
 - `tests/` — pytest suite
 - `benchmarks/` — false-positive/red-team runners, not part of the default CLI flow
 - `.hermes/` — declared quality-gate config run by CI's Hermes quality rail
+- `docs/host-capability-matrix.json` — per-host interception claims, enforced by
+  `tests/test_host_capability_matrix.py`; `docs/host-capability-matrix.md` is its prose form
+- `docs/host-evidence/` — verbatim host declarations backing those claims; re-extract, never edit
 
 ## Minimal commands
 
@@ -56,6 +59,9 @@ python -m build
 - structural and behavioral layers agree with the documented modes
 - the Ollama path and OpenAI-compatible protocol adapter pass their declared
   offline tests; live support remains bound to endpoint-specific evidence
+- a host integration claims only what that host version can do: inbound prompt
+  screening and outbound tool-execution blocking stay separate claims, and a
+  host that cannot refuse a prompt is documented as unable to
 
 ## Common failure cases
 
@@ -67,6 +73,8 @@ python -m build
 
 - preserve fail-open behavior unless there is an explicit versioned policy change
 - never treat replay, mock, or static evidence as a current live-model result
+- never raise a host's `runtime_certified` flag on manifest parsing alone; record
+  what was observed, on which host version, in `docs/host-capability-matrix.json`
 - keep benchmark caveats aligned with README claims
 - keep tests offline and mock network calls
 
@@ -76,6 +84,7 @@ python -m build
 - new behavior has an offline, mocked-network test
 - fail-open behavior and coverage-state semantics are unchanged unless explicitly intended
 - README and this file stay consistent with observed CLI/API behavior
+- a change to any host adapter updates `docs/host-capability-matrix.json` in the same commit
 
 ## Optional Hermeneutic Gate
 

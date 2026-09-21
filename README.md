@@ -131,14 +131,60 @@ Little Canary can sit at the input boundary of several agent environments.
 | --- | --- |
 | Python | `SecurityPipeline` before application forwarding |
 | Claude Code | `UserPromptSubmit` hook before the turn |
+| Codex CLI | Shared `UserPromptSubmit` plugin; install route observed, runtime interception not yet certified |
 | Gemini CLI | `BeforeAgent` hook before the agent loop |
 | OpenAI Agents SDK | Native `InputGuardrail` |
 | Hermes Agent | Screens the user turn and removes tool authority on `BLOCK` |
+| GitHub Copilot CLI | No artifact: its inbound hook has no deny channel |
 | Local HTTP | Loopback `/check` adapter for other hosts |
 
 Each integration preserves the host's actual enforcement capabilities. For
 example, the Hermes Agent plugin cannot prevent prompt delivery at its available
 hook boundary, so a `BLOCK` removes downstream tool authority instead.
+
+### Host capability matrix
+
+[`docs/host-capability-matrix.md`](docs/host-capability-matrix.md) records the
+interception point, deny capability, shipped artifact, and evidence for each
+tested host version. Its machine-readable source is
+[`docs/host-capability-matrix.json`](docs/host-capability-matrix.json), enforced
+offline by `tests/test_host_capability_matrix.py`. Inbound prompt screening and
+outbound tool-execution blocking remain separate claims.
+
+### Claude Code
+
+The marketplace plugin under `plugins/claude-code` screens `UserPromptSubmit`
+through the local adapter and can block the turn before it starts.
+
+### Codex CLI
+
+Codex CLI 0.154.0 installed and enabled the same plugin directory and accepts
+the adapter's `{"decision": "block", "reason": ...}` output schema. Runtime
+interception was not observed in the headless evidence run because Codex
+requires an interactive trust approval first. Treat install success as distinct
+from active screening until that approval is confirmed; the matrix records the
+row as `runtime_certified: false`.
+
+### Gemini CLI
+
+The repository-level extension screens `BeforeAgent` and can deny the agent run
+before its loop starts.
+
+### OpenAI Agents SDK
+
+The optional input guardrail maps Little Canary's verdict to the SDK's native
+tripwire before the first agent starts.
+
+### Hermes Agent
+
+Its available inbound hook can annotate but not refuse prompt delivery. A
+genuine `BLOCK` instead removes downstream tool authority for that turn.
+
+### GitHub Copilot CLI
+
+Little Canary ships no Copilot artifact. Copilot CLI 1.0.84-5 exposes an inbound
+hook that can rewrite or annotate a prompt but has no deny field; its tool-call
+deny channel is a separate outbound capability.
 
 ## What "powerless" means
 
@@ -225,6 +271,7 @@ what is published.
 | --- | --- |
 | Security and vulnerability reporting | [SECURITY.md](SECURITY.md) |
 | Evaluation and evidence boundary | [benchmarks/README.md](benchmarks/README.md) |
+| Host capability and evidence matrix | [docs/host-capability-matrix.md](docs/host-capability-matrix.md) |
 | Research and methodology | [Behavioral Canarying](https://hermes-labs.ai/research/behavioral-canarying) |
 | Releases | [GitHub Releases](https://github.com/hermes-labs-ai/little-canary/releases) |
 | Package | [PyPI](https://pypi.org/project/little-canary/) |
