@@ -98,6 +98,61 @@ def test_profile_uses_runner_diff_check_and_keeps_runner_in_scope() -> None:
     assert RUNNER_RELATIVE in full_ruff["argv"]
 
 
+def test_profile_scopes_lintlang_through_the_repository_runner() -> None:
+    profile = _profile()
+    assert profile["lintlang"]["argv"] == [
+        "python3",
+        RUNNER_RELATIVE,
+        "lintlang-scope",
+        "{files}",
+    ]
+
+
+def test_lintlang_scope_passes_only_declared_instruction_surfaces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _load_runner()
+    hermes = tmp_path / ".hermes"
+    hermes.mkdir()
+    (hermes / "gate.toml").write_text(
+        "[lintlang]\n"
+        'trigger_globs = ["**/AGENTS.md", "**/prompts/**", ".claude/**"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "AGENTS.md").write_text("instructions\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("documentation\n", encoding="utf-8")
+    calls: list[tuple[list[str], Path]] = []
+
+    class _Result:
+        returncode = 0
+
+    def fake_run(argv, *, cwd, check):
+        calls.append((argv, cwd))
+        assert check is False
+        return _Result()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+
+    result = runner._lintlang_scope(tmp_path, ["AGENTS.md", "README.md"])
+
+    assert result == 0
+    assert calls == [
+        (
+            [
+                "lintlang",
+                "scan",
+                "--format",
+                "json",
+                "--fail-on",
+                "review",
+                "--",
+                "AGENTS.md",
+            ],
+            tmp_path,
+        )
+    ]
+
+
 @pytest.mark.parametrize("state", ["unstaged", "staged", "untracked", "staged_then_cleaned"])
 @pytest.mark.parametrize("bad", [False, True])
 def test_profile_whitespace_check_covers_git_states(tmp_path: Path, state: str, bad: bool) -> None:

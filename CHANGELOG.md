@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
+## Next version
+
+### Added
+
+- Host capability matrix: `docs/host-capability-matrix.json` records, per host
+  version, where a prompt is intercepted, whether that host allows refusing it,
+  what this repository ships for it, and the evidence for each answer.
+  `docs/host-capability-matrix.md` is its prose form and
+  `tests/test_host_capability_matrix.py` enforces it offline against the shipped
+  manifests and adapters. Inbound prompt screening and outbound tool-execution
+  blocking are recorded as separate capabilities and are never merged into one
+  claim.
+- Codex CLI certification. Codex CLI 0.154.0 loads the existing
+  `plugins/claude-code` directory: it reads Claude-shaped `hooks/hooks.json`,
+  resolves `CLAUDE_PLUGIN_ROOT`, and its `UserPromptSubmit` command output
+  schema accepts `{"decision": "block", "reason": ...}`. The install route was
+  exercised at 0.3.8. Interception itself was **not** observed: Codex gates hook
+  execution behind an explicit trust approval, and in a headless run an
+  unapproved hook was skipped silently while the prompt proceeded. The matrix
+  row therefore remains `runtime_certified: false`.
+- GitHub Copilot certification, as a negative result. Copilot CLI 1.0.84-5
+  exposes `userPromptSubmitted`, whose output carries `modifiedPrompt`,
+  `additionalContext`, and `suppressOutput` and no decision field: a hook can
+  rewrite or annotate a prompt but cannot refuse it. Little Canary therefore
+  ships no Copilot artifact, and a test asserts none appears.
+
+### Changed
+
+- README and plugin descriptions now distinguish installed host support from
+  observed runtime interception.
+
 ## [0.3.8] - 2026-09-18
 
 Packages the Claude Code plugin manifest at the location the Agent Plugins

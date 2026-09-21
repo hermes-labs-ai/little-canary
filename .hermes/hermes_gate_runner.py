@@ -243,6 +243,36 @@ def _diff_check(root: Path, paths: list[str]) -> int:
     return 0
 
 
+def _lintlang_scope(root: Path, paths: list[str]) -> int:
+    """Run LintLang only on the instruction surfaces declared by the profile."""
+    try:
+        config = tomllib.loads((root / ".hermes" / "gate.toml").read_text(encoding="utf-8"))
+        patterns = config["lintlang"]["trigger_globs"]
+    except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
+        print(f"invalid LintLang scope: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(patterns, list) or any(not isinstance(pattern, str) for pattern in patterns):
+        print("invalid LintLang scope: trigger_globs must be a string array", file=sys.stderr)
+        return 2
+    selected = [
+        path
+        for path in paths
+        if os.path.lexists(root / path) and any(_match(path, pattern) for pattern in patterns)
+    ]
+    if not selected:
+        return 0
+    try:
+        result = subprocess.run(
+            ["lintlang", "scan", "--format", "json", "--fail-on", "review", "--", *selected],
+            cwd=root,
+            check=False,
+        )
+    except FileNotFoundError:
+        print("lintlang is unavailable", file=sys.stderr)
+        return 127
+    return result.returncode
+
+
 def _result(
     mode: str, status: str, started: float, checks: list[dict[str, object]], reason: str
 ) -> dict[str, object]:
@@ -261,8 +291,17 @@ def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
     if args and args[0] == "diff-check":
         return _diff_check(_root(), args[1:])
+    if args and args[0] == "lintlang-scope":
+        return _lintlang_scope(_root(), args[1:])
     if not args or args[0] not in {"fast", "full"}:
-        print(json.dumps({"status": "ERROR", "reason": "usage: runner.py fast|full"}))
+        print(
+            json.dumps(
+                {
+                    "status": "ERROR",
+                    "reason": "usage: runner.py fast|full|diff-check|lintlang-scope",
+                }
+            )
+        )
         return 2
     result = run(args[0])
     print(json.dumps(result, sort_keys=True))

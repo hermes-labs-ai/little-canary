@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "little-canary",
   "version": "0.3.8",
-  "description": "Blocks a Claude Code turn when a local Little Canary server rejects the submitted prompt.",
+  "description": "Blocks a Claude Code turn when a local Little Canary server rejects the submitted prompt. Also installs on Codex CLI, which must trust the hook before it screens.",
   "author": {
     "name": "Hermes Labs",
     "email": "roli@hermes-labs.ai"

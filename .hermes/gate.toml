@@ -14,7 +14,7 @@ minimum_version = ""
 
 [lintlang]
 enabled = true
-argv = ["lintlang", "scan", "--format", "json", "--fail-on", "review", "{files}"]
+argv = ["python3", ".hermes/hermes_gate_runner.py", "lintlang-scope", "{files}"]
 trigger_globs = ["**/AGENTS.md", "**/CLAUDE.md", "**/prompts/**", "**/*.prompt", ".codex/**", ".claude/**"]
 timeout_seconds = 4.0
 blocking_threshold = "MEDIUM"
