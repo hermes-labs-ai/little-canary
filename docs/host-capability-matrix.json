@@ -1,7 +1,7 @@
 {
   "schema": "little-canary-host-capability-matrix/v1",
   "little_canary_version": "0.3.8",
-  "certified_on": "2026-09-18",
+  "certified_on": "2026-09-23",
   "note": "Inbound prompt screening and outbound tool-execution blocking are separate host capabilities. A host that intercepts a prompt does not necessarily allow refusing it, and a host that can refuse a tool call does not necessarily expose the prompt. Each field below records what the named host version can do, not what Little Canary wishes it could do.",
   "hosts": [
     {
@@ -106,7 +106,7 @@
     {
       "id": "hermes-agent",
       "name": "Hermes Agent",
-      "observed_version": "0.19.0",
+      "observed_version": "0.21.3",
       "shipped_artifact": "little_canary/hermes_agent_plugin.py",
       "doc_anchor": "### Hermes Agent",
       "inbound": {
@@ -116,7 +116,7 @@
         "deny_channel": false,
         "deny_wire": null,
         "runtime_certified": true,
-        "runtime_evidence": "Verified against hermes-agent 0.19.0 for release 0.3.7. pre_llm_call is a context-injection hook with no deny channel: a blocked turn still reaches the model, annotated."
+        "runtime_evidence": "Verified on 2026-09-23 against installed Hermes Agent 0.21.3: its PluginManager loaded the repository directory plugin and registered three hooks. With an offline structural BLOCK input, pre_llm_call returned an annotation, pre_tool_call returned a block directive for the same turn, and an unrelated turn stayed allowed. Host turn assembly appends hook context to the original user message; it exposes no pre_llm_call deny channel. No live model call was made."
       },
       "outbound_tool_execution": {
         "host_deny_channel": true,

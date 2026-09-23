@@ -7,15 +7,16 @@ lets the resulting disposition govern tool authority for the rest of that turn.
 
 Verified against the upstream framework
 -----------------------------------------
-Built against ``hermes-agent`` 0.19.0 (Nous Research, MIT), the published PyPI
-distribution. The relevant contract, read from that distribution's
-``hermes_cli/plugins.py`` and ``agent/turn_context.py``:
+Verified against installed ``hermes-agent`` 0.21.3 (Nous Research, MIT), with
+directory-plugin registration and hook dispatch exercised. The relevant
+contract is read from ``hermes_cli/plugins*.py`` and ``agent/turn_context.py``:
 
-* Discovery: ``ENTRY_POINTS_GROUP = "hermes_agent.plugins"``. The loader calls
-  ``ep.load()`` and then ``getattr(module, "register", None)``, so the entry
-  point must resolve to a **module** exposing ``register(ctx)`` -- not to the
-  ``register`` function itself. Entry-point plugins stay opt-in behind the
-  host's ``plugins.enabled`` allow-list.
+* Discovery: ``ENTRY_POINTS_GROUP = "hermes_agent.plugins"``. The pip loader
+  calls ``ep.load()`` and then ``getattr(module, "register", None)``, so the
+  entry point resolves to a **module** exposing ``register(ctx)``. A native
+  directory install loads the repository-root ``plugin.yaml`` and
+  ``__init__.py`` instead. Both routes stay opt-in behind the host's
+  ``plugins.enabled`` allow-list.
 * ``pre_llm_call`` is called with ``session_id``, ``task_id``, ``turn_id``,
   ``user_message``, ``conversation_history``, ``is_first_turn``, ``model``,
   ``platform`` and ``sender_id``. A callback may return ``{"context": "..."}``
@@ -69,7 +70,7 @@ from .openai_agents import (
 
 logger = logging.getLogger(__name__)
 
-#: Entry-point group the upstream framework scans (hermes-agent 0.19.0).
+#: Entry-point group the upstream framework scans (hermes-agent 0.21.3).
 ENTRY_POINT_GROUP = "hermes_agent.plugins"
 
 #: Hooks this plugin registers. All three are in upstream ``VALID_HOOKS``.
