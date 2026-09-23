@@ -1,14 +1,14 @@
 <div align="center">
 
-<img src="assets/little-canary-logo.png" alt="Little Canary" width="112" height="112">
-
 # Little Canary
+
+<img src="assets/little-canary-logo.png" alt="Little Canary" width="112" height="112">
 
 **Prompt-injection sensing through a powerless sacrificial model.**
 
 Little Canary is developed by [Hermes Labs](https://hermes-labs.ai).
 
-Hermes Labs studies failure modes in agent and LLM systems, develops open-source tools that treat language as part of the runtime, and works with teams to remediate reliability failures in production.
+Hermes Labs is an agentic infrastructure company building the reliability layer for autonomous systems.
 
 [![CI](https://github.com/hermes-labs-ai/little-canary/actions/workflows/ci.yml/badge.svg)](https://github.com/hermes-labs-ai/little-canary/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/little-canary)](https://pypi.org/project/little-canary/)
@@ -20,9 +20,9 @@ Hermes Labs studies failure modes in agent and LLM systems, develops open-source
 
 [Website](https://littlecanary.ai) · [Product page](https://hermes-labs.ai/little-canary) · [PyPI](https://pypi.org/project/little-canary/) · [Research](https://hermes-labs.ai/research/behavioral-canarying)
 
-<img src="assets/preview.png" alt="Little Canary terminal output" width="760">
-
 </div>
+
+<img src="assets/preview.png" alt="Little Canary terminal output" width="760">
 
 Little Canary screens untrusted language before your agent acts. It exposes the
 input to a small model with no application tools or authority, then inspects the
