@@ -11,6 +11,16 @@ Benchmark and latency figures in entries before `0.3.3` are historical release n
 
 ### Added
 
+- Document/tool-result guard with overlapping chunks and an explicit local
+  context-classifier option (`qwen3.5:4b`). It holds unavailable or incomplete
+  inspection and returns the original text only after all chunks pass. A local
+  Agents SDK example enforces this boundary on each documentation fetch.
+
+- Packaged `little-canary check` command: live stdin inspection with explicit
+  forwarding decisions, coverage, layer reasons, and exit codes. The README
+  includes isolated installation, local Ollama setup, and the known benign
+  quotation false positive. Existing library routing and detectors are unchanged.
+
 - Native OpenClaw plugin (`plugins/openclaw`) using the typed
   `before_agent_run` gate on supported embedded and CLI runners. It sends only
   the current prompt to the existing loopback HTTP adapter, blocks only an
