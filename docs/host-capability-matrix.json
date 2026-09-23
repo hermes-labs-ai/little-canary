@@ -135,7 +135,7 @@
       "id": "hermes-agent",
       "name": "Hermes Agent",
       "observed_version": "0.21.3",
-      "shipped_artifact": "little_canary/hermes_agent_plugin.py",
+      "shipped_artifact": "integrations/hermes-agent/",
       "doc_anchor": "### Hermes Agent",
       "inbound": {
         "shipped": true,
