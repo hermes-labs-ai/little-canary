@@ -1,0 +1,20 @@
+{
+  "name": "little-canary-openclaw",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenClaw pre-run prompt screening through the local Little Canary service",
+  "peerDependencies": {
+    "openclaw": ">=2026.9.5"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "openclaw": {
+    "extensions": ["./index.mjs"],
+    "compat": {
+      "pluginApi": ">=2026.9.5",
+      "minGatewayVersion": "2026.9.5"
+    }
+  }
+}

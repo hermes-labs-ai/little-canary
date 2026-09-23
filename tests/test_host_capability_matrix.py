@@ -1,7 +1,7 @@
 """Host capability matrix acceptance tests (offline, no model call).
 
 The matrix in ``docs/host-capability-matrix.json`` is a set of claims about
-what six hosts can do with an inbound prompt. These tests exist so that a
+what seven hosts can do with an inbound prompt. These tests exist so that a
 claim cannot drift away from the artifact that is supposed to back it: every
 row that says Little Canary ships an adapter has to point at a real file that
 registers the named event, every row that says a host cannot refuse a prompt

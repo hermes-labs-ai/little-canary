@@ -13,8 +13,8 @@ Two capabilities are tracked separately and must not be conflated:
 - **Outbound tool-execution blocking** — can the host let a plugin veto a
   tool call the model has already decided to make?
 
-A host can have one without the other. Little Canary ships an inbound adapter
-for five hosts and an outbound tool gate for exactly one.
+A host can have one without the other. Little Canary ships inbound adapters for
+seven host surfaces and an outbound tool gate for exactly one.
 
 The machine-readable source of truth for this page is
 [`host-capability-matrix.json`](host-capability-matrix.json), enforced by
@@ -27,6 +27,7 @@ The machine-readable source of truth for this page is
 | Claude Code | 2.1.261 | `UserPromptSubmit` | **yes** — `{"decision":"block"}` | yes | no |
 | Codex CLI | 0.154.0 | `UserPromptSubmit` | **yes** — `{"decision":"block"}` | yes, install route certified; interception not observed | no |
 | Gemini CLI | 0.32.1 | `BeforeAgent` | **yes** — `{"decision":"deny"}` | yes | no |
+| OpenClaw | 2026.9.5 | `before_agent_run` | **yes** — `{ "outcome": "block" }` | yes, embedded/CLI runners | no |
 | OpenAI Agents SDK | 0.22.0 | `InputGuardrail` | **yes** — tripwire | yes | no |
 | Hermes Agent | 0.21.3 | `pre_llm_call` | **no** — context injection only | yes, annotation only | **yes** — `pre_tool_call` |
 | GitHub Copilot CLI | 1.0.84-5 | `userPromptSubmitted` | **no** — rewrite/annotate only | **no artifact shipped** | no |
@@ -71,6 +72,28 @@ enabled is not the same as screening. A maintainer must approve the hook in an
 interactive Codex session, and should confirm the approval took effect before
 relying on it. Until someone records that observation, this row stays
 `runtime_certified: false`.
+
+## OpenClaw — supported embedded and CLI runners
+
+The native plugin at [`plugins/openclaw`](../plugins/openclaw) registers the
+typed `before_agent_run` gate. [OpenClaw's hook contract](https://docs.openclaw.ai/plugins/hooks/prompt-and-session)
+documents this hook after prompt construction and before model submission on
+embedded and CLI runners;
+it is not an input gate for Codex or Copilot harnesses. The adapter sends only
+`event.prompt` to the local Little Canary `/check` endpoint and blocks only an
+explicit `safe: false` verdict. It does not separately inspect `event.messages`
+history or anything the agent reads or does later in the turn.
+
+The operator must start Little Canary in `block` mode and grant this
+non-bundled plugin `hooks.allowConversationAccess`. Service errors, malformed
+results, degraded coverage, and request bodies over the service's 64 KiB limit
+pass through with a warning. We verified blocking and a benign control through
+`openclaw agent --local` on OpenClaw 2026.9.5 using a loopback test service and
+fake local model. In that same version, the isolated `openclaw agent exec`
+path bypassed plugin hooks; it is outside tested coverage. Runtime
+certification covers hook dispatch and adapter behavior only. It does not
+certify the detector against a live model or establish prompt-injection
+detection efficacy. The plugin requires OpenClaw 2026.9.5 or later.
 
 ## GitHub Copilot CLI — certified as unable to refuse a prompt
 
