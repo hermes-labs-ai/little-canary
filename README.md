@@ -225,7 +225,8 @@ tripwire before the first agent starts.
 
 ### Hermes Agent
 
-Hermes Agent 0.21.3 can install the focused native plugin directory:
+Hermes Agent 0.21.4 can install the focused native plugin directory (verified
+in an isolated environment):
 
 ```bash
 hermes plugins install hermes-labs-ai/little-canary/integrations/hermes-agent --no-enable
