@@ -11,6 +11,12 @@ Benchmark and latency figures in entries before `0.3.3` are historical release n
 
 ### Added
 
+- Native OpenClaw plugin (`plugins/openclaw`) using the typed
+  `before_agent_run` gate on supported embedded and CLI runners. It sends only
+  the current prompt to the existing loopback HTTP adapter, blocks only an
+  explicit unsafe verdict, and passes through with a sanitized warning when
+  screening is unavailable, invalid, or degraded. The README and host matrix
+  state the required service/config setup and runner limits.
 - Host capability matrix: `docs/host-capability-matrix.json` records, per host
   version, where a prompt is intercepted, whether that host allows refusing it,
   what this repository ships for it, and the evidence for each answer.

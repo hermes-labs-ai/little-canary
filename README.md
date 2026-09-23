@@ -139,6 +139,7 @@ Little Canary can sit at the input boundary of several agent environments.
 | Gemini CLI | `BeforeAgent` hook before the agent loop |
 | OpenAI Agents SDK | Native `InputGuardrail` |
 | Hermes Agent | Screens the user turn and removes tool authority on `BLOCK` |
+| OpenClaw | Native `before_agent_run` plugin; verified with `agent --local` |
 | GitHub Copilot CLI | No artifact: its inbound hook has no deny channel |
 | Local HTTP | Loopback `/check` adapter for other hosts |
 
@@ -173,6 +174,49 @@ row as `runtime_certified: false`.
 
 The repository-level extension screens `BeforeAgent` and can deny the agent run
 before its loop starts.
+
+### OpenClaw
+
+The native plugin under [`plugins/openclaw`](plugins/openclaw) sends only
+OpenClaw's `event.prompt` field to the local Little Canary HTTP service from
+its typed `before_agent_run` hook; it does not separately traverse
+`event.messages` history. With the service running in `block` mode, an explicit
+unsafe verdict stops that run before model submission. The integration covers
+the current prompt only; it does not screen prior history, tool calls, tool
+results, or files. OpenClaw documents this gate for embedded and CLI runners
+([hook contract](https://docs.openclaw.ai/plugins/hooks/prompt-and-session)),
+not its Codex or Copilot harnesses. Runtime verification exercised
+`openclaw agent --local`; OpenClaw's isolated `agent exec` path did not dispatch
+the plugin hook in that same version and is outside this integration's tested
+coverage.
+
+Install Little Canary and start its loopback service:
+
+```bash
+python -m pip install little-canary
+little-canary serve --mode block
+```
+
+From a Little Canary source checkout, install and enable the native plugin:
+
+```bash
+openclaw plugins install ./plugins/openclaw --force
+openclaw plugins enable little-canary-openclaw
+openclaw config set plugins.entries.little-canary-openclaw.hooks.allowConversationAccess true
+```
+
+Remove it with `openclaw plugins uninstall little-canary-openclaw`.
+
+The plugin uses `http://127.0.0.1:18421` by default. To use a different
+loopback port, set
+`plugins.entries.little-canary-openclaw.config.serviceUrl` in OpenClaw config.
+The URL must remain on `127.0.0.1`; the plugin rejects non-loopback endpoints.
+Unavailable, invalid, degraded, or oversized screening passes the run through
+with a sanitized warning. The HTTP service limits request bodies to 64 KiB.
+Configure the Little Canary service's Ollama endpoint
+separately; the prompt sent to that backend follows the service's configured
+privacy boundary. Review OpenClaw's plugin install and conversation-access
+consent before enabling this integration.
 
 ### OpenAI Agents SDK
 

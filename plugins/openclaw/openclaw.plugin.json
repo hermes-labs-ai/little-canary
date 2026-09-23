@@ -1,0 +1,23 @@
+{
+  "id": "little-canary-openclaw",
+  "name": "Little Canary",
+  "description": "Screen the current prompt before supported OpenClaw runners submit it to a model.",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "serviceUrl": {
+        "type": "string",
+        "format": "uri",
+        "default": "http://127.0.0.1:18421",
+        "description": "Loopback URL of the Little Canary HTTP service."
+      }
+    },
+    "additionalProperties": false
+  },
+  "uiHints": {
+    "serviceUrl": {
+      "label": "Little Canary service URL",
+      "placeholder": "http://127.0.0.1:18421"
+    }
+  }
+}

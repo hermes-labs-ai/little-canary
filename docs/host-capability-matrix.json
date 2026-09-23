@@ -79,6 +79,34 @@
       ]
     },
     {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "observed_version": "2026.9.5",
+      "shipped_artifact": "plugins/openclaw",
+      "doc_anchor": "### OpenClaw",
+      "inbound": {
+        "shipped": true,
+        "event": "before_agent_run",
+        "interception_point": "before model submission on OpenClaw paths that dispatch before_agent_run; verified with agent --local",
+        "deny_channel": true,
+        "deny_wire": "{ \"outcome\": \"block\", \"reason\": \"...\", \"message\": \"...\" }",
+        "runtime_certified": true,
+        "runtime_evidence": "Verified with OpenClaw 2026.9.5 on Node 26.1.0: local-path plugin install and runtime inspection reported typedHooks.before_agent_run; `openclaw agent --local` blocked a synthetic unsafe response from a loopback test service before reaching a local fake model, while a benign response reached that fake model. No live canary/model was used. The isolated `agent exec` path bypassed this hook in the same runtime and is explicitly outside the tested coverage."
+      },
+      "outbound_tool_execution": {
+        "host_deny_channel": true,
+        "host_event": "before_tool_call",
+        "shipped": false
+      },
+      "caveats": [
+        "Screens only event.prompt; the handler does not separately inspect event.messages history, tool calls, tool results, or files.",
+        "OpenClaw documents before_agent_run for embedded and CLI runners, but `openclaw agent exec` bypassed plugin hooks in the verified runtime; use a path that dispatches this hook. It is not a Codex or Copilot input gate.",
+        "Requires the operator to run the Little Canary loopback service. The plugin passes through when service checks fail or report degraded coverage.",
+        "The service rejects HTTP request bodies over 64 KiB; this plugin passes those runs through unscreened.",
+        "The non-bundled plugin needs hooks.allowConversationAccess enabled for its entry."
+      ]
+    },
+    {
       "id": "openai-agents-sdk",
       "name": "OpenAI Agents SDK",
       "observed_version": "0.22.0",
