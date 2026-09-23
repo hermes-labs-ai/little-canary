@@ -1,7 +1,10 @@
 name: little-canary
 version: 0.3.8
 description: Screen Hermes Agent turns with Little Canary and block tools on a BLOCK verdict
-author: Hermes Labs
+author: roli-lpci (Hermes Labs; independent of Nous Research)
+requires_hermes: ">=0.21.3"
+python_dependencies:
+  - requests>=2.32.5,<3
 license: Apache-2.0
 homepage: https://github.com/hermes-labs-ai/little-canary
 provides_hooks:

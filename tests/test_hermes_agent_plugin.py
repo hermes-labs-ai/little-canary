@@ -413,14 +413,18 @@ class TestDiscovery:
 
         import yaml
 
-        manifest = yaml.safe_load((ROOT / "plugin.yaml").read_text(encoding="utf-8"))
+        plugin_root = ROOT / "integrations" / "hermes-agent"
+        manifest = yaml.safe_load((plugin_root / "plugin.yaml").read_text(encoding="utf-8"))
         expected = {HOOK_PRE_LLM_CALL, HOOK_PRE_TOOL_CALL, HOOK_ON_SESSION_END}
         assert manifest["name"] == "little-canary"
         assert set(manifest["provides_hooks"]) == expected
+        assert manifest["requires_hermes"] == ">=0.21.3"
+        assert manifest["python_dependencies"] == ["requests>=2.32.5,<3"]
+        assert "independent of Nous Research" in manifest["author"]
 
         module_name = "hermes_plugin_test"
         spec = importlib.util.spec_from_file_location(
-            module_name, ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
+            module_name, plugin_root / "__init__.py", submodule_search_locations=[str(plugin_root)]
         )
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
@@ -434,6 +438,13 @@ class TestDiscovery:
             for name in list(sys.modules):
                 if name == module_name or name.startswith(module_name + "."):
                     del sys.modules[name]
+
+    def test_directory_plugin_bundles_current_library_source(self):
+        source = ROOT / "little_canary"
+        bundled = ROOT / "integrations" / "hermes-agent" / "little_canary"
+        source_files = {p.relative_to(source): p.read_bytes() for p in source.rglob("*") if p.is_file() and "__pycache__" not in p.parts}
+        bundled_files = {p.relative_to(bundled): p.read_bytes() for p in bundled.rglob("*") if p.is_file() and "__pycache__" not in p.parts}
+        assert bundled_files == source_files
 
     def test_register_wires_the_three_hooks(self):
         ctx = FakeContext()

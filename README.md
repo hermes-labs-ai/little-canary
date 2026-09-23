@@ -225,16 +225,23 @@ tripwire before the first agent starts.
 
 ### Hermes Agent
 
-Hermes Agent 0.21.3 can install this repository as a native directory plugin:
+Hermes Agent 0.21.4 can install the focused native plugin directory (verified
+in an isolated environment):
 
 ```bash
-hermes plugins install hermes-labs-ai/little-canary --no-enable
+hermes plugins install hermes-labs-ai/little-canary/integrations/hermes-agent --no-enable
 hermes plugins enable little-canary
 ```
 
-The PyPI distribution also exposes the `hermes_agent.plugins` entry point for
-users who already install Little Canary into Hermes Agent's Python environment.
-Both routes register `pre_llm_call`, `pre_tool_call`, and `on_session_end`.
+The earlier repository-root install path no longer has a native plugin
+manifest. Existing root installations should be reinstalled from the
+subdirectory above when updating to this source revision.
+
+The Python package also exposes a `hermes_agent.plugins` entry point. The
+published 0.3.8 package still requires a newer `requests` than Hermes Agent's
+current core constraint permits, so use the directory install above until a
+compatible package release is published. The directory plugin registers `pre_llm_call`,
+`pre_tool_call`, and `on_session_end`.
 The inbound hook screens the user message once and can annotate the turn, but
 it cannot refuse prompt delivery. A genuine `BLOCK` withdraws downstream tool
 authority for that turn. Unavailable screening fails open with a degraded

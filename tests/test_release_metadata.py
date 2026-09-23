@@ -25,6 +25,7 @@ def test_release_version_surfaces_are_aligned():
     versions = {
         __version__,
         _match("pyproject.toml", r'^version = "([^"]+)"$'),
+        _match("integrations/hermes-agent/plugin.yaml", r"^version: ([^\s]+)$"),
         _match("CITATION.cff", r'^version: "([^"]+)"$'),
         json.loads(_read(".zenodo.json"))["version"],
         json.loads(_read("codemeta.json"))["version"],

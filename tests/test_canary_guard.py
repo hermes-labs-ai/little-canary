@@ -329,7 +329,7 @@ def test_unknown_structural_flag_blocks_when_canary_unavailable(
     assert result.original_safe is None
     assert result.trust_level == TRUST_UNKNOWN
     assert result.verdict == VERDICT_BLOCK
-    assert result.signals == ["Direct injection: ignore previous instructions"]
+    assert result.signals == ["Direct injection (instruction override)"]
     assert result.degraded is True
     assert result.risk_score is None
     assert result.canary_status == "failed"
