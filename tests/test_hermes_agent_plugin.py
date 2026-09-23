@@ -407,6 +407,34 @@ class TestDiscovery:
         register_fn = getattr(module, "register", None)
         assert callable(register_fn)
 
+    def test_directory_plugin_loads_bundled_package_and_declares_hooks(self):
+        import importlib.util
+        import sys
+
+        import yaml
+
+        manifest = yaml.safe_load((ROOT / "plugin.yaml").read_text(encoding="utf-8"))
+        expected = {HOOK_PRE_LLM_CALL, HOOK_PRE_TOOL_CALL, HOOK_ON_SESSION_END}
+        assert manifest["name"] == "little-canary"
+        assert set(manifest["provides_hooks"]) == expected
+
+        module_name = "hermes_plugin_test"
+        spec = importlib.util.spec_from_file_location(
+            module_name, ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+            ctx = FakeContext()
+            module.register(ctx)
+            assert set(ctx.hooks) == expected
+        finally:
+            for name in list(sys.modules):
+                if name == module_name or name.startswith(module_name + "."):
+                    del sys.modules[name]
+
     def test_register_wires_the_three_hooks(self):
         ctx = FakeContext()
         plugin = register(ctx)
@@ -417,7 +445,7 @@ class TestDiscovery:
         assert ctx.hooks[HOOK_ON_SESSION_END] == [plugin.on_session_end]
 
     def test_registered_hook_names_are_upstream_valid_hooks(self):
-        # Names copied from hermes-agent 0.19.0 hermes_cli/plugins.py VALID_HOOKS.
+        # Names present in hermes-agent 0.21.3 hermes_cli/plugins.py VALID_HOOKS.
         upstream_valid = {"pre_llm_call", "pre_tool_call", "on_session_end"}
         assert {HOOK_PRE_LLM_CALL, HOOK_PRE_TOOL_CALL, HOOK_ON_SESSION_END} <= upstream_valid
 

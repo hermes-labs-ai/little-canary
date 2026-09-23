@@ -181,8 +181,21 @@ tripwire before the first agent starts.
 
 ### Hermes Agent
 
-Its available inbound hook can annotate but not refuse prompt delivery. A
-genuine `BLOCK` instead removes downstream tool authority for that turn.
+Hermes Agent 0.21.3 can install this repository as a native directory plugin:
+
+```bash
+hermes plugins install hermes-labs-ai/little-canary --no-enable
+hermes plugins enable little-canary
+```
+
+The PyPI distribution also exposes the `hermes_agent.plugins` entry point for
+users who already install Little Canary into Hermes Agent's Python environment.
+Both routes register `pre_llm_call`, `pre_tool_call`, and `on_session_end`.
+The inbound hook screens the user message once and can annotate the turn, but
+it cannot refuse prompt delivery. A genuine `BLOCK` withdraws downstream tool
+authority for that turn. Unavailable screening fails open with a degraded
+coverage annotation. Verification used Hermes Agent 0.21.3's plugin loader and
+hook dispatcher with a structural test input; it did not call a live model.
 
 ### GitHub Copilot CLI
 
