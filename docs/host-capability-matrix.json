@@ -134,7 +134,7 @@
     {
       "id": "hermes-agent",
       "name": "Hermes Agent",
-      "observed_version": "0.21.3",
+      "observed_version": "0.21.4",
       "shipped_artifact": "integrations/hermes-agent/",
       "doc_anchor": "### Hermes Agent",
       "inbound": {
@@ -144,7 +144,7 @@
         "deny_channel": false,
         "deny_wire": null,
         "runtime_certified": true,
-        "runtime_evidence": "Verified on 2026-09-23 against installed Hermes Agent 0.21.3: its PluginManager loaded the repository directory plugin and registered three hooks. With an offline structural BLOCK input, pre_llm_call returned an annotation, pre_tool_call returned a block directive for the same turn, and an unrelated turn stayed allowed. Host turn assembly appends hook context to the original user message; it exposes no pre_llm_call deny channel. No live model call was made."
+        "runtime_evidence": "Verified on 2026-09-23 against Hermes Agent 0.21.4 in an isolated Python 3.13 environment: installed the pinned Git subdirectory with its Python dependency, enabled little-canary, and Plugin Doctor reported successful import and three hook registrations. Offline hook tests show that a structural BLOCK annotates the user turn and vetoes downstream tools while an unrelated turn remains allowed. Host turn assembly still appends hook context to the original user message; pre_llm_call has no deny channel. No live model call was made."
       },
       "outbound_tool_execution": {
         "host_deny_channel": true,

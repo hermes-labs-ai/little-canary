@@ -232,6 +232,10 @@ hermes plugins install hermes-labs-ai/little-canary/integrations/hermes-agent --
 hermes plugins enable little-canary
 ```
 
+The earlier repository-root install path no longer has a native plugin
+manifest. Existing root installations should be reinstalled from the
+subdirectory above when updating to this source revision.
+
 The Python package also exposes a `hermes_agent.plugins` entry point. The
 published 0.3.8 package still requires a newer `requests` than Hermes Agent's
 current core constraint permits, so use the directory install above until a

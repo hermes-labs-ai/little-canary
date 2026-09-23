@@ -41,6 +41,15 @@ Benchmark and latency figures in entries before `0.3.3` are historical release n
 
 ### Changed
 
+- The Hermes Agent directory plugin now installs from
+  `integrations/hermes-agent` so its install scan covers runtime code without
+  benchmark fixtures. The old repository-root install path is retired.
+- The structural signal formerly displayed as
+  `Direct injection: ignore previous instructions` is now displayed as
+  `Direct injection (instruction override)` in verdicts and audit records.
+  Consumers matching signal text should update that label.
+- The `requests` dependency range now admits Hermes Agent's core pin while
+  keeping a bounded upper limit.
 - README and plugin descriptions now distinguish installed host support from
   observed runtime interception.
 
