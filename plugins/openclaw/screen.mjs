@@ -52,6 +52,8 @@ export function createBeforeAgentRunHandler({
     try {
       const response = await fetchImpl(checkUrl, {
         method: "POST",
+        // Never forward the prompt if a local service attempts to redirect it.
+        redirect: "error",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ text: prompt }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
