@@ -225,8 +225,20 @@ tripwire before the first agent starts.
 
 ### Hermes Agent
 
-Hermes Agent 0.21.4 can install the focused native plugin directory (verified
-in an isolated environment):
+Hermes Agent's reviewed community catalog pins the focused native plugin directory.
+With Hermes Agent 0.21.3 or later and local Ollama running with `qwen2.5:1.5b`:
+
+```bash
+ollama pull qwen2.5:1.5b
+hermes plugins install little-canary
+hermes plugins enable little-canary
+hermes plugins list
+```
+
+The [Little Canary Hermes Agent guide](https://littlecanary.ai/docs/integrations/hermes-agent)
+has the install steps, a catalog-cache fallback, and the exact hook behavior.
+The catalog installs reviewed commit `b67c7292679f202e6378e439307dea1f82cbf243`.
+For a direct source install before the entry reaches your client, use:
 
 ```bash
 hermes plugins install hermes-labs-ai/little-canary/integrations/hermes-agent --no-enable
@@ -340,6 +352,7 @@ what is published.
 | Security and vulnerability reporting | [SECURITY.md](SECURITY.md) |
 | Evaluation and evidence boundary | [benchmarks/README.md](benchmarks/README.md) |
 | Host capability and evidence matrix | [docs/host-capability-matrix.md](docs/host-capability-matrix.md) |
+| Hermes Agent installation | [Little Canary Hermes Agent guide](https://littlecanary.ai/docs/integrations/hermes-agent) |
 | Research and methodology | [Behavioral Canarying](https://hermes-labs.ai/research/behavioral-canarying) |
 | Releases | [GitHub Releases](https://github.com/hermes-labs-ai/little-canary/releases) |
 | Package | [PyPI](https://pypi.org/project/little-canary/) |
