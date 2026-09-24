@@ -85,6 +85,41 @@ def test_codemeta_tracks_current_release_metadata():
     assert "dateModified" not in codemeta
 
 
+def test_current_project_license_metadata_is_spdx_consistent():
+    license_id = _match("pyproject.toml", r'^license = "([^\"]+)"$')
+    assert license_id == "Apache-2.0"
+
+    skill_license = _match(".agents/skills/little-canary/SKILL.md", r"^license: (\S+)$")
+    citation_license = _match("CITATION.cff", r"^license: (\S+)$")
+    zenodo_license = json.loads(_read(".zenodo.json"))["license"]
+    codemeta_license = json.loads(_read("codemeta.json"))["license"]
+    readme = _read("README.md")
+    readme_badge_license = _match("README.md", r"^\[!\[License: ([^\]]+)\]")
+    readme_section_license = readme.split("## License\n\n", maxsplit=1)[1].splitlines()[0]
+    package_license = _match("little_canary/__init__.py", r"^License: (\S+)$")
+    integration_package_license = _match(
+        "integrations/hermes-agent/little_canary/__init__.py", r"^License: (\S+)$"
+    )
+    integration_manifest_license = _match("integrations/hermes-agent/plugin.yaml", r"^license: (\S+)$")
+    plugin_license = json.loads(_read("plugins/claude-code/plugin.json"))["license"]
+    agent_plugin_license = json.loads(_read("plugins/claude-code/.claude-plugin/plugin.json"))["license"]
+
+    assert {
+        license_id,
+        skill_license,
+        citation_license,
+        zenodo_license,
+        codemeta_license.rsplit("/", maxsplit=1)[-1],
+        readme_badge_license,
+        readme_section_license,
+        package_license,
+        integration_package_license,
+        integration_manifest_license,
+        plugin_license,
+        agent_plugin_license,
+    } == {"Apache-2.0"}
+
+
 def test_changelog_top_entry_is_a_dated_release_for_the_current_version():
     headings = re.findall(r"^## \[([^\]]+)\] - (.+)$", _read("CHANGELOG.md"), flags=re.MULTILINE)
 
