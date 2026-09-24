@@ -127,7 +127,7 @@
         "shipped": false
       },
       "caveats": [
-        "Only user-message text is screened. Tool outputs and non-text content are outside this adapter.",
+        "Only user-message text is screened by the input-guardrail adapter. The separate examples/document_agent.py tool explicitly calls documents.guard_document before returning fetched text; it does not automatically cover other tools or non-text content.",
         "SDK input guardrails run only for the first agent in a chain."
       ]
     },
