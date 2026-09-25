@@ -34,6 +34,8 @@ Structural checks run alongside to catch known attack shapes. The canary can rev
 
 <img src="assets/preview.png" alt="Little Canary screening output: clean input passes, injected input is blocked" width="760">
 
+Little Canary is developed by [Hermes Labs](https://hermes-labs.ai).
+
 ## Quick start (2 minutes)
 
 Requires Python 3.9+ and a local [Ollama](https://ollama.com/) install.
@@ -127,11 +129,3 @@ Found an injection that got through? [Open an issue](https://github.com/hermes-l
 ## License
 
 Apache-2.0. The source version lives in `pyproject.toml`; compare `little-canary --version` against [GitHub Releases](https://github.com/hermes-labs-ai/little-canary/releases) and [PyPI](https://pypi.org/project/little-canary/) for the published build.
-
----
-
-<div align="center">
-
-Built by [Hermes Labs](https://hermes-labs.ai) — agentic infrastructure for autonomous systems.
-
-</div>
