@@ -2,7 +2,7 @@
 
 # Little Canary
 
-<img src="assets/little-canary-logo.png" alt="Little Canary" width="112" height="112">
+<img src="assets/little-canary-header.jpg" alt="Little Canary — detection sensing through a sacrificial model, with four cartoon canaries" width="760">
 
 **Prompt-injection sensing through a powerless sacrificial model.**
 
