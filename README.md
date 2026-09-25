@@ -8,6 +8,8 @@
 
 by [Hermes Labs](https://hermes-labs.ai)
 
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-2ea44f)](LICENSE)
+
 [Website](https://littlecanary.ai) · [PyPI](https://pypi.org/project/little-canary/) · [Integrations](#put-it-in-front-of-an-agent) · [Research](https://hermes-labs.ai/research/behavioral-canarying)
 
 </div>
@@ -24,6 +26,7 @@ Install [Ollama](https://ollama.com/), start it locally, and pull the small mode
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install little-canary
+little-canary --version
 ollama pull qwen2.5:1.5b
 little-canary demo --live --backend ollama --model qwen2.5:1.5b \
   --endpoint http://127.0.0.1:11434
@@ -54,9 +57,31 @@ Python applications can call `SecurityPipeline.check()` directly; see the [examp
 
 ## Put it in front of an agent
 
-Little Canary ships host integrations for Claude Code, Gemini CLI, OpenClaw, OpenAI Agents SDK, and Hermes Agent, as well as the Python API and local HTTP service. The [host capability matrix](docs/host-capability-matrix.md) tells you where each integration intercepts input and what it can actually block. Plugin artifacts for [Claude Code](plugins/claude-code) and [OpenClaw](plugins/openclaw) are in this repository; [Hermes Agent setup](integrations/hermes-agent/README.md) has a separate guide.
+Start with the local HTTP service above. Host integrations can then put that screening step at the right boundary. Their capabilities differ by host; the [host capability matrix](docs/host-capability-matrix.md) records what each one can actually intercept and block.
 
-For OpenClaw, start the service above and, from a Little Canary checkout, install the native plugin:
+### Claude Code
+
+The [repository plugin](plugins/claude-code) uses `UserPromptSubmit` to screen an inbound turn through the local service and can refuse it on a block.
+
+### Codex CLI
+
+The same plugin has an install route, but prompt interception has not been certified in the recorded headless run. Codex requires interactive hook trust approval; verify screening before depending on it.
+
+### Gemini CLI
+
+The repository extension screens `BeforeAgent` and can deny the agent run before its loop starts.
+
+### OpenAI Agents SDK
+
+The optional [input guardrail](examples/openai_agents_example.py) maps a Little Canary verdict to the SDK tripwire before the first agent starts.
+
+### Hermes Agent
+
+The [native plugin](integrations/hermes-agent/README.md) screens the user turn. Its inbound hook cannot refuse prompt delivery, so a block removes downstream tool authority instead.
+
+### OpenClaw
+
+Start the service above and, from a Little Canary checkout, install the [native plugin](plugins/openclaw):
 
 ```bash
 openclaw plugins install ./plugins/openclaw --force
@@ -64,9 +89,11 @@ openclaw plugins enable little-canary-openclaw
 openclaw config set plugins.entries.little-canary-openclaw.hooks.allowConversationAccess true
 ```
 
-The OpenClaw adapter covers the current prompt in supported embedded and CLI runs, not previous history or tool results. Review its conversation-access permission before enabling it.
+The adapter covers the current prompt in supported embedded and CLI runs, not previous history or tool results. Review its conversation-access permission before enabling it.
 
-Host boundaries differ: some can deny an inbound turn, while Hermes Agent can screen the message and withdraw downstream tool authority on a block. The Codex CLI plugin can be installed, but runtime prompt interception was not certified in the recorded headless run. The repo does not ship a GitHub Copilot CLI integration. Check the matrix for the host version you use.
+### GitHub Copilot CLI
+
+No Copilot CLI artifact is shipped. Its inbound hook cannot deny a prompt; a separate outbound tool-call hook is a different capability.
 
 ## How to read a result
 
@@ -81,4 +108,8 @@ Routing and coverage are separate. If the model is unavailable, a fail-open conf
 
 [Security](SECURITY.md) · [Host capability matrix](docs/host-capability-matrix.md) · [Benchmarks and methodology](benchmarks/README.md) · [Contributing](CONTRIBUTING.md) · [Releases](https://github.com/hermes-labs-ai/little-canary/releases)
 
-Apache-2.0. [Hermes Labs](https://hermes-labs.ai) builds agentic infrastructure for autonomous systems.
+## License
+
+Apache-2.0
+
+The source version is in `pyproject.toml`; compare `little-canary --version` with [GitHub Releases](https://github.com/hermes-labs-ai/little-canary/releases) and [PyPI](https://pypi.org/project/little-canary/) for the published build. [Hermes Labs](https://hermes-labs.ai) builds agentic infrastructure for autonomous systems.
