@@ -21,7 +21,9 @@ A prompt injection can look like ordinary task data until an agent follows it. L
 Install [Ollama](https://ollama.com/), start it locally, and pull the small model used by the live demo. Little Canary supports Python 3.9+.
 
 ```bash
-python3 -m pip install little-canary
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install little-canary
 ollama pull qwen2.5:1.5b
 little-canary demo --live --backend ollama --model qwen2.5:1.5b \
   --endpoint http://127.0.0.1:11434
