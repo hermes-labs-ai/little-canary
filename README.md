@@ -52,7 +52,17 @@ Python applications can call `SecurityPipeline.check()` directly; see the [examp
 
 ## Put it in front of an agent
 
-Little Canary ships host integrations for Claude Code, Gemini CLI, OpenClaw, OpenAI Agents SDK, and Hermes Agent, as well as the Python API and local HTTP service. The [host capability matrix](docs/host-capability-matrix.md) tells you where each integration intercepts input and what it can actually block. Start from the [Claude Code plugin](plugins/claude-code), [OpenClaw plugin](plugins/openclaw), or [Hermes Agent guide](integrations/hermes-agent/README.md) for their install paths.
+Little Canary ships host integrations for Claude Code, Gemini CLI, OpenClaw, OpenAI Agents SDK, and Hermes Agent, as well as the Python API and local HTTP service. The [host capability matrix](docs/host-capability-matrix.md) tells you where each integration intercepts input and what it can actually block. Plugin artifacts for [Claude Code](plugins/claude-code) and [OpenClaw](plugins/openclaw) are in this repository; [Hermes Agent setup](integrations/hermes-agent/README.md) has a separate guide.
+
+For OpenClaw, start the service above and, from a Little Canary checkout, install the native plugin:
+
+```bash
+openclaw plugins install ./plugins/openclaw --force
+openclaw plugins enable little-canary-openclaw
+openclaw config set plugins.entries.little-canary-openclaw.hooks.allowConversationAccess true
+```
+
+The OpenClaw adapter covers the current prompt in supported embedded and CLI runs, not previous history or tool results. Review its conversation-access permission before enabling it.
 
 Host boundaries differ: some can deny an inbound turn, while Hermes Agent can screen the message and withdraw downstream tool authority on a block. The Codex CLI plugin can be installed, but runtime prompt interception was not certified in the recorded headless run. The repo does not ship a GitHub Copilot CLI integration. Check the matrix for the host version you use.
 
