@@ -84,6 +84,8 @@ The default canary remains `qwen2.5:1.5b`. To select another installed Ollama mo
 **Routing and coverage are separate.** A fail-open setup can let a turn continue while reporting degraded coverage. Don't mistake that for a behavioral pass.
 Failed canary coverage can include a `coverage_reason` in the layer result, such as `output_limit` or `timeout`; this diagnostic does not change the verdict.
 
+**Known false-block limitation:** a structural signature can also match an attack phrase quoted in a benign security newsletter or incident report. A harmless canary acknowledgement can also match a broad behavioral signal. In block mode these can produce `BLOCK`; Little Canary does not infer that quoted or organization-origin text is safe. Python and service callers can choose advisory routing and build an explicit review step in their host. Little Canary does not provide a universal pause-and-approve UI, and the [host capability matrix](docs/host-capability-matrix.md) identifies what each integration can actually enforce.
+
 ## Put it in front of your agent
 
 Run the local service above, then wire in the host you use. Not every host lets a plugin refuse a prompt; the [host capability matrix](docs/host-capability-matrix.md) records exactly what each one can intercept and block.

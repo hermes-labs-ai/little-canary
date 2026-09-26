@@ -1,10 +1,10 @@
 # Benchmarks and evaluation evidence
 
-This directory contains historical runners, prompt corpora, and partial result artifacts. It is useful for regression work; it is not a current performance certificate for Little Canary `0.3.3`.
+This directory contains the current headless runner, regression corpora, and historical result artifacts. The `0.3.3` section below records a prior evaluation contract; it is not a current performance certificate for the unpublished `0.4.0` candidate.
 
 ## Current claim boundary
 
-This `0.3.3` evaluation guide makes no aggregate detection, false-positive,
+The historical `0.3.3` evaluation guide makes no aggregate detection, false-positive,
 latency, token-savings, or universal-repeatability claim. In particular, the
 old `0/40` false-positive headline is not admitted by this guide because a
 later live rerun did not reproduce it.
