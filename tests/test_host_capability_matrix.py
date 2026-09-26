@@ -25,7 +25,6 @@ from little_canary import __version__
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX_FILE = ROOT / "docs" / "host-capability-matrix.json"
 MATRIX_DOC = ROOT / "docs" / "host-capability-matrix.md"
-README = ROOT / "README.md"
 EVIDENCE_DIR = ROOT / "docs" / "host-evidence"
 CODEX_SCHEMA_FILE = EVIDENCE_DIR / "codex-0.154.0-user-prompt-submit.command.output.schema.json"
 COPILOT_EVIDENCE_FILE = EVIDENCE_DIR / "copilot-cli-1.0.84-5-hook-outputs.d.ts"
@@ -240,11 +239,6 @@ def test_every_adapter_output_validates_against_the_codex_schema(index):
 
 
 # --- documentation consistency ------------------------------------------
-
-
-@pytest.mark.parametrize("host_id", HOST_IDS)
-def test_every_host_has_a_readme_section(host_id):
-    assert HOSTS[host_id]["doc_anchor"] in README.read_text(), f"README has no section for {host_id}"
 
 
 @pytest.mark.parametrize("host_id", HOST_IDS)

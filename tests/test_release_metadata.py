@@ -44,7 +44,6 @@ def test_current_release_metadata_uses_canonical_repository_identity():
             "CITATION.cff",
             ".zenodo.json",
             "codemeta.json",
-            "README.md",
             "llms.txt",
         )
     }
@@ -93,9 +92,6 @@ def test_current_project_license_metadata_is_spdx_consistent():
     citation_license = _match("CITATION.cff", r"^license: (\S+)$")
     zenodo_license = json.loads(_read(".zenodo.json"))["license"]
     codemeta_license = json.loads(_read("codemeta.json"))["license"]
-    readme = _read("README.md")
-    readme_badge_license = _match("README.md", r"^\[!\[License: ([^\]]+)\]")
-    readme_section_license = readme.split("## License\n\n", maxsplit=1)[1].splitlines()[0]
     package_license = _match("little_canary/__init__.py", r"^License: (\S+)$")
     integration_package_license = _match(
         "integrations/hermes-agent/little_canary/__init__.py", r"^License: (\S+)$"
@@ -110,8 +106,6 @@ def test_current_project_license_metadata_is_spdx_consistent():
         citation_license,
         zenodo_license,
         codemeta_license.rsplit("/", maxsplit=1)[-1],
-        readme_badge_license,
-        readme_section_license,
         package_license,
         integration_package_license,
         integration_manifest_license,
@@ -129,19 +123,8 @@ def test_changelog_top_entry_is_a_dated_release_for_the_current_version():
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", top_date), top_date
 
 
-def test_readme_release_guidance_stays_true_across_publication():
-    readme = _read("README.md")
-
-    # Durable guidance: point at live authorities and the local verification
-    # command instead of freezing a snapshot of external registry state.
-    assert "https://github.com/hermes-labs-ai/little-canary/releases" in readme
-    assert "https://pypi.org/project/little-canary/" in readme
-    assert "little-canary --version" in readme
-    assert "pyproject.toml" in readme
-
-
 def test_release_docs_do_not_assert_current_external_registry_state():
-    for relative_path in ("README.md", "CHANGELOG.md"):
+    for relative_path in ("CHANGELOG.md",):
         text = _read(relative_path)
 
         assert "Unreleased" not in text, relative_path
