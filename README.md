@@ -6,7 +6,7 @@
 
 **Catch prompt injection before your agent acts on it.**
 
-Little Canary runs untrusted text through a powerless "canary" model first and watches what it does. If the text hijacks the canary, your real agent never sees it.
+Little Canary runs untrusted text through a powerless "canary" model first and watches what it does. A host integration can use the verdict to block the input or restrict downstream tool authority, depending on that host's capabilities.
 
 [![PyPI](https://img.shields.io/pypi/v/little-canary)](https://pypi.org/project/little-canary/)
 [![Python 3.9+](https://img.shields.io/pypi/pyversions/little-canary)](https://pypi.org/project/little-canary/)
@@ -28,7 +28,7 @@ Coal miners sent a canary in first. Little Canary does the same thing for agents
 
 1. **Send the untrusted text to a canary model** that has no tools, no credentials, and nothing to lose.
 2. **Inspect the canary's response** for signs the input changed its behavior.
-3. **Return a verdict** (`PASS`, `FLAG`, `BLOCK`) before your primary agent touches the input.
+3. **Return a verdict** (`PASS`, `FLAG`, `BLOCK`) for the host to enforce within its available interception points.
 
 Structural checks run alongside to catch known attack shapes. The canary can reveal attacks that no pattern check has catalogued yet.
 
@@ -78,10 +78,11 @@ The default canary remains `qwen2.5:1.5b`. To select another installed Ollama mo
 | --- | --- | --- |
 | `PASS` | Inspection ran and found no covered compromise signal. | Proceed. |
 | `FLAG` | Suspicious behavior observed. | Log it, restrict tools, or ask a human. |
-| `BLOCK` | Configured policy rejects the input. | Don't forward it. |
+| `BLOCK` | Configured policy rejects the input. | Apply the host's documented blocking behavior. |
 | `DEGRADED` / `UNSCREENED` | Behavioral inspection didn't complete or didn't run. | Treat as unscreened, not as clean. |
 
 **Routing and coverage are separate.** A fail-open setup can let a turn continue while reporting degraded coverage. Don't mistake that for a behavioral pass.
+Failed canary coverage can include a `coverage_reason` in the layer result, such as `output_limit` or `timeout`; this diagnostic does not change the verdict.
 
 ## Put it in front of your agent
 

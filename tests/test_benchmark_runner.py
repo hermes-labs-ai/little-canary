@@ -6,7 +6,7 @@ import pytest
 
 from benchmarks import red_team_runner
 from benchmarks.red_team_runner import DashboardHandler, load_cases, run_tests
-from little_canary.pipeline import AnalysisSnapshot, LayerResult, PipelineVerdict, SignalSnapshot
+from little_canary.pipeline import AnalysisSnapshot, LayerResult, PipelineVerdict, SecurityPipeline, SignalSnapshot
 
 
 class FakePipeline:
@@ -51,6 +51,7 @@ def _verdict(*, safe, degraded=False, snapshot=None, canary_status="exercised", 
                 details="test",
                 raw_result=snapshot,
                 status="failed" if degraded else ("passed" if safe else "blocked"),
+                coverage_reason="output_limit" if degraded else None,
             )
         ],
     )
@@ -68,6 +69,7 @@ def test_degraded_attack_is_unscored_instead_of_false_negative():
     result, summary = _run(_verdict(safe=True, degraded=True, canary_status="failed", analysis_status="not_applicable"))
 
     assert result["scored"] is False
+    assert result["coverage_reason"] == "output_limit"
     assert result["actual_safe"] is None
     assert result["correct"] is None
     assert summary["unscored"] == 1
@@ -75,6 +77,31 @@ def test_degraded_attack_is_unscored_instead_of_false_negative():
     assert summary["attack_total"] == 1
     assert summary["attack_unscored"] == 1
     assert summary["attack_detection_full_population_rate"] == 0.0
+
+
+def test_output_limit_cause_survives_probe_pipeline_and_runner(monkeypatch):
+    class IncompleteResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "message": {"content": "partial answer"},
+                "done": True,
+                "done_reason": "length",
+                "eval_count": 256,
+            }
+
+    monkeypatch.setattr("little_canary.canary.requests.post", lambda *args, **kwargs: IncompleteResponse())
+    events = []
+    pipeline = SecurityPipeline(mode="block", enable_structural_filter=False)
+
+    run_tests(pipeline, [_case()], mode="model-only", sink=events.append)
+
+    case = events[0]
+    assert case["coverage_reason"] == "output_limit"
+    assert case["unscored_reason"] == "degraded"
+    assert case["actual_safe"] is None
 
 
 def test_response_free_snapshot_signals_serialize():

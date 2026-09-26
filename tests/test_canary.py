@@ -176,6 +176,15 @@ def test_probe_rejects_incomplete_output(mock_post, done, reason):
     result = CanaryProbe().test("test")
     assert result.success is False
     assert result.error == "Ollama protocol error: incomplete chat response"
+    assert result.failure_code == ("output_limit" if reason == "length" else "incomplete_response")
+    assert result.metadata["done_reason"] == reason
+
+
+def test_canary_result_keeps_positional_metadata_argument():
+    result = CanaryResult("", 0.0, "model", "system", "input", False, "error", {"old": True})
+
+    assert result.metadata == {"old": True}
+    assert result.failure_code is None
 
 
 @patch("little_canary.canary.requests.post")

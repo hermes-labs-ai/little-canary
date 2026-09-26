@@ -101,8 +101,9 @@ hermeneutic gate --draft review-summary.md
 It flags surface shapes such as completion overclaiming, unsupported numeric
 claims, relayed authority, and unhedged certainty. It runs offline, does not
 invoke Little Canary or a model backend, and does not create a release or
-perimeter gate. Little Canary has no repository-level Gate workflow or hook;
-callers choose whether and how to enforce the exit code. Per the
+perimeter gate. This optional Hermeneutic Gate is separate from the
+repository's configured Hermes Gate quality rail; callers choose whether
+and how to enforce its exit code. Per the
 [quick start](https://github.com/hermes-labs-ai/hermeneutic#quick-start),
 low-severity `RISK` is advisory (exit 0); medium/high `RISK` exits 1. If it
 flags a claim, add direct evidence, hedge the claim, or remove the
