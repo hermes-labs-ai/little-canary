@@ -70,6 +70,8 @@ The service binds to loopback only and exposes `GET /health`. Your application r
 
 Python apps can skip HTTP and call `SecurityPipeline.check()` directly — see the [example integrations](examples/).
 
+The default canary remains `qwen2.5:1.5b`. To select another installed Ollama model, pass its exact tag to `serve --canary-model`, `demo --model`, or Python's `SecurityPipeline(canary_model=...)`. The Hermes Agent directory plugin reads `LITTLE_CANARY_MODEL` from its process environment. Locally exercised alternatives are `qwen3.5:2b-q4_K_M`, `LiquidAI/lfm2.5-1.2b-instruct:q4_k_m`, and `gemma3:1b`. Pull a model with `ollama pull <tag>` before selecting it. Little Canary does not bundle model weights; check each model's own license and terms before deployment. [Evaluation guidance](benchmarks/README.md) explains the limits of model comparisons.
+
 ## Reading a verdict
 
 | Verdict | Meaning | What to do |

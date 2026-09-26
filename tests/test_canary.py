@@ -67,6 +67,8 @@ def test_successful_probe(mock_post):
     mock_response.status_code = 200
     mock_response.json.return_value = {
         "message": {"content": "The capital of France is Paris."},
+        "done": True,
+        "done_reason": "stop",
         "total_duration": 250000000,
         "eval_count": 8,
         "eval_duration": 200000000,
@@ -88,6 +90,8 @@ def test_probe_captures_response_content(mock_post):
     mock_response.status_code = 200
     mock_response.json.return_value = {
         "message": {"content": "Hello world!"},
+        "done": True,
+        "done_reason": "stop",
     }
     mock_post.return_value = mock_response
 
@@ -102,6 +106,8 @@ def test_probe_records_metadata(mock_post):
     mock_response.status_code = 200
     mock_response.json.return_value = {
         "message": {"content": "test"},
+        "done": True,
+        "done_reason": "stop",
         "total_duration": 123456,
         "eval_count": 5,
         "eval_duration": 100000,
@@ -143,6 +149,8 @@ def test_probe_http_error(mock_post):
 def test_probe_rejects_invalid_or_empty_content(mock_post, payload):
     mock_response = MagicMock()
     mock_response.status_code = 200
+    if isinstance(payload, dict):
+        payload = {"done": True, "done_reason": "stop", **payload}
     mock_response.json.return_value = payload
     mock_post.return_value = mock_response
 
@@ -151,6 +159,23 @@ def test_probe_rejects_invalid_or_empty_content(mock_post, payload):
     assert result.success is False
     assert result.response == ""
     assert result.error == ("Ollama protocol error: response content must be a non-empty string")
+
+
+@pytest.mark.parametrize("done,reason", [(False, "stop"), (True, "length"), (True, None)])
+@patch("little_canary.canary.requests.post")
+def test_probe_rejects_incomplete_output(mock_post, done, reason):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "message": {"content": "partial answer"},
+        "done": done,
+        "done_reason": reason,
+    }
+    mock_post.return_value = mock_response
+
+    result = CanaryProbe().test("test")
+    assert result.success is False
+    assert result.error == "Ollama protocol error: incomplete chat response"
 
 
 @patch("little_canary.canary.requests.post")
@@ -217,7 +242,7 @@ def test_probe_unexpected_error(mock_post):
 def test_probe_sends_correct_payload(mock_post):
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {"message": {"content": "test"}}
+    mock_response.json.return_value = {"message": {"content": "test"}, "done": True, "done_reason": "stop"}
     mock_post.return_value = mock_response
 
     probe = CanaryProbe(model="test-model", temperature=0.0, seed=42, max_tokens=256)
@@ -228,6 +253,7 @@ def test_probe_sends_correct_payload(mock_post):
 
     assert payload["model"] == "test-model"
     assert payload["stream"] is False
+    assert payload["think"] is False
     assert payload["messages"][0]["role"] == "system"
     assert payload["messages"][1]["role"] == "user"
     assert payload["messages"][1]["content"] == "Hello world"

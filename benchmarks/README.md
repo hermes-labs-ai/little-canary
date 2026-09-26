@@ -52,3 +52,18 @@ Never drop degraded or skipped cases from a denominator without displaying both 
 The scripts can still support local research, but they may call Ollama or remote APIs and write result files. Inspect their arguments and egress before use. Never run them against a shared model service or with production prompts/credentials merely to reproduce a headline.
 
 The historical external dataset is TensorTrust (Toyer et al., 2023, arXiv:2311.01011), distributed separately under CC-BY. Little Canary does not redistribute that dataset.
+
+## Reproducible local model comparison
+
+`red_team_runner.py` uses the two committed corpora above. An IDs file is a JSON list of unique case IDs, in the intended run order; IDs can come from either corpus. Keep the same file, source revision, threshold, Ollama configuration, and host for every model in a comparison. Use `--corpus all` to run all 220 committed cases without an IDs file. The default corpus remains `prompts.json` for the dashboard.
+
+```sh
+python3 benchmarks/red_team_runner.py --mode pipeline --model qwen2.5:1.5b --ids-file screening-ids.json --timeout 30 --warmup --headless --output /tmp/canary-pipeline.jsonl
+python3 benchmarks/red_team_runner.py --mode model-only --model qwen2.5:1.5b --ids-file screening-ids.json --timeout 30 --warmup --headless --output /tmp/canary-model-only.jsonl
+python3 benchmarks/red_team_runner.py --mode structural-only --ids-file screening-ids.json --headless --output /tmp/canary-structural-only.jsonl
+python3 benchmarks/run_fp_test.py --mode model-only --model qwen2.5:1.5b --headless --output /tmp/canary-benign.jsonl
+```
+
+`pipeline` exercises both layers on every case, including cases the structural filter blocks. `model-only` disables the structural filter, so its model results are independent of filtered traffic. `structural-only` disables the canary. All three use block mode and the same committed prompts. The canary probe sends `think: false` to Ollama; the output header records its model tag, prompt hash, temperature, seed, token limit, timeout, and warmup choice. Record the immutable model digest and Ollama/runtime version separately with the results. The warmup request is not scored.
+
+Headless output is JSONL: one run header, one result per case flushed immediately, then a completion summary. A missing completion line indicates an interrupted run. Case records include both layer block outcomes, degraded and analysis status, total wall latency, structural layer latency, and canary layer latency (probe plus analysis). Incomplete or failed coverage has `scored: false`, `actual_safe: null`, and `correct: null`; its `raw_actual_safe` records the pipeline's routing outcome without treating fail-open as a successful benign pass or an attack miss. Adjudicated rates use only scored cases. The summary also reports attack and benign total/scored/unscored counts and a conservative `attack_detection_full_population_rate` (scored blocks divided by all attack cases). Latency summaries distinguish all attempted cases from scored cases, so fast failures do not masquerade as a model speedup. A model unavailable at startup exits nonzero. The live dashboard remains available by omitting `--headless --output`.

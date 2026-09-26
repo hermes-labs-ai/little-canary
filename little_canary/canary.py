@@ -114,6 +114,7 @@ class CanaryProbe:
                         {"role": "user", "content": user_input},
                     ],
                     "stream": False,
+                    "think": False,
                     "options": {
                         "num_predict": self.max_tokens,
                         "temperature": self.temperature,
@@ -149,7 +150,27 @@ class CanaryProbe:
                     error="Ollama protocol error: invalid JSON response",
                 )
 
-            message = data.get("message") if isinstance(data, dict) else None
+            if not isinstance(data, dict):
+                return CanaryResult(
+                    response="",
+                    latency=elapsed,
+                    model=self.model,
+                    system_prompt=self.system_prompt,
+                    user_input=user_input,
+                    success=False,
+                    error="Ollama protocol error: response content must be a non-empty string",
+                )
+            message = data.get("message")
+            if data.get("done") is not True or data.get("done_reason") != "stop":
+                return CanaryResult(
+                    response="",
+                    latency=elapsed,
+                    model=self.model,
+                    system_prompt=self.system_prompt,
+                    user_input=user_input,
+                    success=False,
+                    error="Ollama protocol error: incomplete chat response",
+                )
             canary_response = message.get("content") if isinstance(message, dict) else None
             if not isinstance(canary_response, str) or not canary_response.strip():
                 return CanaryResult(
@@ -171,6 +192,8 @@ class CanaryProbe:
                 success=True,
                 metadata={
                     "total_duration": data.get("total_duration"),
+                    "load_duration": data.get("load_duration"),
+                    "prompt_eval_count": data.get("prompt_eval_count"),
                     "eval_count": data.get("eval_count"),
                     "eval_duration": data.get("eval_duration"),
                 },

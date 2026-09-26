@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
-## Next version
+## [0.3.9] - Unreleased
+
+This is an unpublished package candidate. The published 0.3.8 wheel still
+declares `requests` ranges that conflict with Hermes Agent's core pin; the
+0.3.9 candidate carries the compatible range and the focused directory plugin
+already admitted to the Nous Research catalog at its pinned source revision.
 
 ### Added
 

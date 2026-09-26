@@ -48,6 +48,7 @@ the turn and its tools to proceed. Only a genuine BLOCK verdict blocks.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -435,6 +436,7 @@ class LittleCanaryHermesPlugin:
         self,
         checker: Checker | None = None,
         *,
+        canary_model: str = "qwen2.5:1.5b",
         max_turns: int = DEFAULT_MAX_TURNS,
         ttl_seconds: float = DEFAULT_TTL_SECONDS,
         max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
@@ -448,6 +450,7 @@ class LittleCanaryHermesPlugin:
                 "smaller limit would silently truncate that framing away"
             )
         self._checker = checker
+        self.canary_model = canary_model
         self._checker_lock = threading.Lock()
         self._time = time_source
         self.max_context_chars = int(max_context_chars)
@@ -475,7 +478,7 @@ class LittleCanaryHermesPlugin:
             if self._checker is None:
                 from .pipeline import SecurityPipeline
 
-                self._checker = SecurityPipeline()
+                self._checker = SecurityPipeline(canary_model=self.canary_model)
             return self._checker
 
     # -- hook: pre_llm_call -------------------------------------------------
@@ -669,7 +672,9 @@ def register(ctx: Any) -> LittleCanaryHermesPlugin:
     register_hook = getattr(ctx, "register_hook", None)
     if not callable(register_hook):
         raise TypeError("ctx must expose register_hook(hook_name, callback)")
-    plugin = LittleCanaryHermesPlugin()
+    plugin = LittleCanaryHermesPlugin(
+        canary_model=os.environ.get("LITTLE_CANARY_MODEL") or "qwen2.5:1.5b"
+    )
     register_hook(HOOK_PRE_LLM_CALL, plugin.pre_llm_call)
     register_hook(HOOK_PRE_TOOL_CALL, plugin.pre_tool_call)
     register_hook(HOOK_ON_SESSION_END, plugin.on_session_end)

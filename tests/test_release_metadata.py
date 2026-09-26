@@ -71,7 +71,10 @@ def test_codemeta_tracks_current_release_metadata():
     assert codemeta["version"] == __version__
     assert codemeta["identifier"] == "https://doi.org/10.5281/zenodo.21543681"
     assert codemeta["codeRepository"] == canonical_repository
-    assert codemeta["downloadUrl"] == f"https://pypi.org/project/little-canary/{__version__}/"
+    if f"## [{__version__}] - Unreleased" in _read("CHANGELOG.md"):
+        assert "downloadUrl" not in codemeta
+    else:
+        assert codemeta["downloadUrl"] == f"https://pypi.org/project/little-canary/{__version__}/"
     assert codemeta["license"] == f"https://spdx.org/licenses/{license_id}"
     assert author["@id"] == maintainer["@id"] == citation_orcid
     assert zenodo_creator["orcid"] == citation_orcid.rsplit("/", maxsplit=1)[-1]
@@ -114,20 +117,20 @@ def test_current_project_license_metadata_is_spdx_consistent():
     } == {"Apache-2.0"}
 
 
-def test_changelog_top_entry_is_a_dated_release_for_the_current_version():
+def test_changelog_top_entry_tracks_the_current_version():
     headings = re.findall(r"^## \[([^\]]+)\] - (.+)$", _read("CHANGELOG.md"), flags=re.MULTILINE)
 
     assert headings, "CHANGELOG.md contains no release headings"
-    top_version, top_date = headings[0]
+    top_version, top_status = headings[0]
     assert top_version == __version__
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", top_date), top_date
+    assert top_status == "Unreleased" or re.fullmatch(r"\d{4}-\d{2}-\d{2}", top_status), top_status
+    assert all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) for _, date in headings[1:])
 
 
 def test_release_docs_do_not_assert_current_external_registry_state():
     for relative_path in ("CHANGELOG.md",):
         text = _read(relative_path)
 
-        assert "Unreleased" not in text, relative_path
         assert "currently publishes" not in text, relative_path
         assert "source candidate" not in text, relative_path
         assert "artifact exists" not in text, relative_path
