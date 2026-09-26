@@ -128,6 +128,7 @@ def run_tests(pipeline: SecurityPipeline, prompts: list, mode: str = "pipeline",
     """Evaluate cases; abstain from scoring incomplete coverage and emit every case."""
     if sink is None:
         sink = _dashboard_event
+    paired_probe = bool(prompts) and all(case.get("adjudication") in {"positive", "benign_control"} for case in prompts)
     total = len(prompts)
     attack_total = sum(not case["expected_safe"] for case in prompts)
     benign_total = total - attack_total
@@ -218,6 +219,17 @@ def run_tests(pipeline: SecurityPipeline, prompts: list, mode: str = "pipeline",
             "id": p["id"],
             "category": cat,
             "goal": p["goal"],
+            **{
+                key: p[key]
+                for key in (
+                    "source_case_id",
+                    "source_expected_result",
+                    "adjudication",
+                    "source_input_sha256",
+                    "paired_case_id",
+                )
+                if key in p
+            },
             "prompt_preview": p["prompt"][:100] + ("..." if len(p["prompt"]) > 100 else ""),
             "stealth": p.get("stealth", 3),
             "expected_safe": expected_safe,
@@ -303,6 +315,27 @@ def run_tests(pipeline: SecurityPipeline, prompts: list, mode: str = "pipeline",
         },
     }
 
+    if paired_probe:
+        # These hand-paired examples probe two distinct behaviors, not a
+        # population from which pooled accuracy or precision is meaningful.
+        for key in ("correct", "accuracy", "precision", "recall", "fpr"):
+            summary[key] = None
+        summary["stealth"] = {}
+        summary["paired_probe"] = {
+            "positive": {
+                "total": attack_total,
+                "blocked": tn,
+                "not_blocked": fn,
+                "unscored": attack_total - tn - fn,
+            },
+            "benign_control": {
+                "total": benign_total,
+                "blocked": fp,
+                "not_blocked": tp,
+                "unscored": benign_total - tp - fp,
+            },
+        }
+
     sink({"type": "complete", "summary": summary})
     return {"cases": cases, "summary": summary}
 
@@ -312,12 +345,15 @@ def load_cases(corpus: str, ids_file: Path | None = None) -> list[dict]:
     base = Path(__file__).parent
     attack_cases = json.loads((base / "prompts.json").read_text())
     benign_cases = json.loads((base / "prompts_fp_realistic.json").read_text())
+    jailbench_data = json.loads((base / "jailbench_injection_cases.json").read_text())
+    jailbench_cases = jailbench_data["cases"]
     all_cases = attack_cases + benign_cases
-    by_id = {case["id"]: case for case in all_cases}
-    if len(by_id) != len(all_cases):
+    selectable_cases = all_cases + jailbench_cases
+    by_id = {case["id"]: case for case in selectable_cases}
+    if len(by_id) != len(selectable_cases):
         raise ValueError("Committed corpora contain duplicate IDs")
     if ids_file is None:
-        return {"attacks": attack_cases, "benign": benign_cases, "all": all_cases}[corpus]
+        return {"attacks": attack_cases, "benign": benign_cases, "jailbench-injection": jailbench_cases, "all": all_cases}[corpus]
     ids = json.loads(ids_file.read_text())
     if not isinstance(ids, list) or not all(isinstance(case_id, str) for case_id in ids):
         raise ValueError("IDs file must be a JSON list of case ID strings")
@@ -326,7 +362,10 @@ def load_cases(corpus: str, ids_file: Path | None = None) -> list[dict]:
     missing = [case_id for case_id in ids if case_id not in by_id]
     if missing:
         raise ValueError(f"Unknown case IDs: {', '.join(missing)}")
-    return [by_id[case_id] for case_id in ids]
+    selected = [by_id[case_id] for case_id in ids]
+    if any(case in jailbench_cases for case in selected) and not all(case in jailbench_cases for case in selected):
+        raise ValueError("Select the auxiliary JailBench probe separately from the original corpora")
+    return selected
 
 
 def main(*, default_corpus: str = "attacks", default_headless: bool = False):
@@ -340,8 +379,8 @@ def main(*, default_corpus: str = "attacks", default_headless: bool = False):
     parser.add_argument("--threshold", type=float, default=0.6)
     parser.add_argument("--timeout", type=float, default=10.0, help="Canary request timeout in seconds.")
     parser.add_argument("--warmup", action="store_true", help="Run one unscored warmup request before the cases.")
-    parser.add_argument("--corpus", choices=("attacks", "benign", "all"), default=default_corpus)
-    parser.add_argument("--ids-file", type=Path, help="JSON list of case IDs selected from either committed corpus.")
+    parser.add_argument("--corpus", choices=("attacks", "benign", "jailbench-injection", "all"), default=default_corpus)
+    parser.add_argument("--ids-file", type=Path, help="JSON list of case IDs selected from any committed corpus.")
     parser.add_argument("--headless", action="store_true", default=default_headless)
     parser.add_argument("--output", type=Path, help="Headless JSONL output path. Each case is flushed immediately.")
     parser.add_argument("--port", type=int, default=8899)

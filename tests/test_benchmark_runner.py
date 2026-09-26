@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 from types import SimpleNamespace
@@ -164,6 +165,60 @@ def test_ids_file_selects_ordered_cases_from_both_corpora(tmp_path):
         load_cases("attacks", path)
 
 
+def test_jailbench_probe_has_unique_hashed_positive_control_pairs():
+    cases = load_cases("jailbench-injection")
+    by_id = {case["id"]: case for case in cases}
+
+    assert len(cases) == 10
+    assert len(load_cases("all")) == 220
+    assert len(by_id) == len(cases)
+    assert sum(not case["expected_safe"] for case in cases) == 5
+    assert sum(case["expected_safe"] for case in cases) == 5
+    for index in range(1, 6):
+        positive_id = f"jb-inj-{index:02d}"
+        control_id = f"benign_control-{positive_id}"
+        positive = by_id[positive_id]
+        control = by_id[control_id]
+        assert positive["adjudication"] == "positive"
+        assert positive["expected_safe"] is False
+        assert control["adjudication"] == "benign_control"
+        assert control["expected_safe"] is True
+        assert positive["paired_case_id"] == control_id
+        assert control["paired_case_id"] == positive_id
+        for case in (positive, control):
+            assert hashlib.sha256(case["prompt"].encode("utf-8")).hexdigest() == case["source_input_sha256"]
+        assert positive["source_expected_result"] == "REFUSED"
+        assert "source_expected_result" not in control
+
+
+def test_jailbench_ids_are_selectable_in_requested_order(tmp_path):
+    path = tmp_path / "ids.json"
+    path.write_text(json.dumps(["benign_control-jb-inj-02", "jb-inj-02"]))
+
+    assert [case["id"] for case in load_cases("all", path)] == [
+        "benign_control-jb-inj-02", "jb-inj-02"
+    ]
+
+    path.write_text(json.dumps(["c1-01", "jb-inj-02"]))
+    with pytest.raises(ValueError, match="Select the auxiliary JailBench probe separately"):
+        load_cases("all", path)
+
+
+def test_jailbench_summary_keeps_positive_and_control_counts_separate():
+    events = []
+    run_tests(FakePipeline(_verdict(safe=True)), load_cases("jailbench-injection"), sink=events.append)
+
+    summary = events[-1]["summary"]
+    assert summary["correct"] is None
+    assert summary["accuracy"] is None
+    assert summary["precision"] is None
+    assert summary["stealth"] == {}
+    assert summary["paired_probe"] == {
+        "positive": {"total": 5, "blocked": 0, "not_blocked": 5, "unscored": 0},
+        "benign_control": {"total": 5, "blocked": 0, "not_blocked": 5, "unscored": 0},
+    }
+
+
 def test_headless_model_only_uses_selected_model_and_writes_case_json(monkeypatch, tmp_path):
     instances = []
 
@@ -196,5 +251,6 @@ def test_headless_model_only_uses_selected_model_and_writes_case_json(monkeypatc
     events = [json.loads(line) for line in output_path.read_text().splitlines()]
     assert [event["type"] for event in events] == ["run", "result", "complete"]
     assert events[1]["id"] == "c1-01"
+    assert "source_case_id" not in events[1]
     assert events[1]["canary_blocked"] is True
     assert events[2]["summary"]["scored"] == 1
