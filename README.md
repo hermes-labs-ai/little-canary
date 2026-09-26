@@ -4,7 +4,7 @@
 
 <img src="assets/little-canary-header.jpg" alt="Little Canary — prompt injection sensing through a sacrificial model" width="760">
 
-**Catch prompt injection before your agent acts on it.**
+**Screen untrusted prompts for signs of injection before your agent acts.**
 
 Little Canary runs untrusted text through a powerless "canary" model first and watches what it does. A host integration can use the verdict to block the input or restrict downstream tool authority, depending on that host's capabilities.
 
@@ -20,7 +20,7 @@ Little Canary runs untrusted text through a powerless "canary" model first and w
 
 ## The problem
 
-A prompt injection looks like ordinary data — a web page, an email, a tool result — until your agent follows the instructions hidden inside it. Pattern-matching filters miss anything they haven't seen before. By the time you notice, the agent has already acted.
+A prompt injection looks like ordinary data — a web page, an email, a tool result — until your agent follows the instructions hidden inside it. Pattern-matching filters can miss attacks that do not match known patterns. By the time you notice, the agent has already acted.
 
 ## The idea
 
@@ -70,7 +70,7 @@ The service binds to loopback only and exposes `GET /health`. Your application r
 
 Python apps can skip HTTP and call `SecurityPipeline.check()` directly — see the [example integrations](examples/).
 
-The default canary remains `qwen2.5:1.5b`. To select another installed Ollama model, pass its exact tag to `serve --canary-model`, `demo --model`, or Python's `SecurityPipeline(canary_model=...)`. The Hermes Agent directory plugin reads `LITTLE_CANARY_MODEL` from its process environment. Locally exercised alternatives are `qwen3.5:2b-q4_K_M`, `LiquidAI/lfm2.5-1.2b-instruct:q4_k_m`, and `gemma3:1b`. Pull a model with `ollama pull <tag>` before selecting it. Little Canary does not bundle model weights; check each model's own license and terms before deployment. [Evaluation guidance](benchmarks/README.md) explains the limits of model comparisons.
+The default remains `qwen2.5:1.5b`. Select an installed model with `serve --canary-model`, `demo --model`, or Python's `SecurityPipeline(canary_model=...)`; the Hermes Agent plugin reads `LITTLE_CANARY_MODEL`. Locally exercised alternatives are `qwen3.5:2b-q4_K_M`, `LiquidAI/lfm2.5-1.2b-instruct:q4_k_m`, and `gemma3:1b`. Pull weights with `ollama pull <tag>` and check each model's license. These are selectable models, not performance guarantees; see the [evaluation guidance](benchmarks/README.md).
 
 ## Reading a verdict
 
@@ -84,7 +84,7 @@ The default canary remains `qwen2.5:1.5b`. To select another installed Ollama mo
 **Routing and coverage are separate.** A fail-open setup can let a turn continue while reporting degraded coverage. Don't mistake that for a behavioral pass.
 Failed canary coverage can include a `coverage_reason` in the layer result, such as `output_limit` or `timeout`; this diagnostic does not change the verdict.
 
-**Known false-block limitation:** a structural signature can also match an attack phrase quoted in a benign security newsletter or incident report. A harmless canary acknowledgement can also match a broad behavioral signal. In block mode these can produce `BLOCK`; Little Canary does not infer that quoted or organization-origin text is safe. Python and service callers can choose advisory routing and build an explicit review step in their host. Little Canary does not provide a universal pause-and-approve UI, and the [host capability matrix](docs/host-capability-matrix.md) identifies what each integration can actually enforce.
+**Known false-block limitation:** quoted attack phrases in security reports can trigger a structural `BLOCK`; harmless canary acknowledgements can also trigger behavioral rules. In block mode, legitimate work can be blocked. Little Canary has no built-in pause-and-approve UI; hosts can use advisory routing and implement review where their interception point allows it. See the [host capability matrix](docs/host-capability-matrix.md).
 
 ## Put it in front of your agent
 

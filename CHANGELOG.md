@@ -7,12 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
-## [0.4.0] - Unreleased
+## [0.3.9] - Unreleased
 
-This is an unpublished package candidate. The published 0.3.8 wheel still
-declares `requests` ranges that conflict with Hermes Agent's core pin; the
-0.4.0 candidate carries the compatible range and the focused directory plugin
-already admitted to the Nous Research catalog at its pinned source revision.
+This candidate makes the package's `requests` range compatible with Hermes
+Agent's core pin and includes the focused directory plugin admitted to the
+Nous Research catalog at its pinned source revision. It adds model selection
+and coverage diagnostics without changing the default canary or detector rules.
 
 ### Added
 
@@ -78,6 +78,8 @@ already admitted to the Nous Research catalog at its pinned source revision.
 - A degraded canary result is an inspection gap. Raising the output ceiling
   improved coverage on a small development screen but increased tail latency;
   no retry or shorter-answer policy is enabled by default.
+- The original external TensorTrust corpus has not been rerun across the new
+  model choices. This release does not establish a lower false-block rate.
 
 ## [0.3.8] - 2026-09-18
 
