@@ -135,6 +135,7 @@ def test_plugin_directory_is_self_contained() -> None:
     # needs must live under plugins/claude-code and must not reach above it.
     expected = {
         PLUGIN_ROOT / ".claude-plugin" / "plugin.json",
+        PLUGIN_ROOT / ".claude-plugin" / "icon.png",
         PLUGIN_ROOT / "plugin.json",
         PLUGIN_ROOT / "README.md",
         HOOKS_FILE,
