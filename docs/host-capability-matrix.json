@@ -127,7 +127,8 @@
         "shipped": false
       },
       "caveats": [
-        "The extension screens only input event text; it does not separately inspect prior conversation, tool outputs, file reads, or images.",
+        "The extension screens only input event text. Pi runs registered extension commands before input, while skill and prompt-template expansion happens afterward, so those paths or additions are not screened.",
+        "It does not separately inspect prior conversation, tool outputs, file reads, or images.",
         "The recommended advisory service policy flags without refusing input. Only an explicit unsafe verdict from a blocking service policy makes this extension handle the input before the model.",
         "Service errors, malformed verdicts, and over-limit request bodies pass through with a warning."
       ]

@@ -28,9 +28,12 @@ package does not include the Python service or model weights.
 
 ## Scope
 
-The extension uses Pi's `input` event. It checks submitted text, including Pi's
-interactive, RPC, and extension-sourced input, before agent processing. It does
-not inspect earlier conversation, files, or tool results. If screening is
-unavailable, Pi continues with a warning. A flag is a signal, not proof that
-the prompt is unsafe or safe. See the [host capability matrix](https://github.com/hermes-labs-ai/little-canary/blob/main/docs/host-capability-matrix.md)
+The extension uses Pi's `input` event. It checks submitted text from Pi's
+interactive, RPC, and extension-sourced input before agent processing. Pi runs
+registered extension commands before this event, so those commands bypass this
+check. Pi expands skills and prompt templates afterward; their added content
+is not screened. The extension also does not inspect earlier conversation,
+files, images, or tool results. If screening is unavailable, Pi continues with
+a warning. A flag is a signal, not proof that the prompt is unsafe or safe.
+See the [host capability matrix](https://github.com/hermes-labs-ai/little-canary/blob/main/docs/host-capability-matrix.md)
 for tested Pi versions and boundaries.

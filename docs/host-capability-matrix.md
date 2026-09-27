@@ -47,7 +47,10 @@ evidence using a synthetic verdict, not a live-model detection test.
 The recommended advisory service mode emits warnings and lets input continue.
 The Pi extension handles input only when the service explicitly returns an
 unsafe verdict. It does not separately screen prior conversation, files, tool
-results, or images. Service failures pass through with a warning.
+results, or images. Pi runs registered extension commands before the `input`
+event; those commands bypass this check. Skill and prompt-template expansion
+happens after the event, so added content is not screened. Service failures
+pass through with a warning.
 
 ## Codex CLI — what was and was not certified
 
