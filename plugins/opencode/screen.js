@@ -16,13 +16,13 @@ function loopbackUrl(value) {
   }
 }
 
-export async function screenMessage(text, {
+export async function checkText(text, {
   endpoint = process.env.LITTLE_CANARY_ENDPOINT || DEFAULT_ENDPOINT,
   fetchImpl = globalThis.fetch,
 } = {}) {
-  if (typeof text !== "string" || text.length === 0) return null;
+  if (typeof text !== "string" || text.length === 0) return "skip";
   const url = loopbackUrl(endpoint);
-  if (!url || typeof fetchImpl !== "function") return "Screening unavailable; OpenCode continued.";
+  if (!url || typeof fetchImpl !== "function") return "unavailable";
 
   try {
     const response = await fetchImpl(url, {
@@ -35,15 +35,22 @@ export async function screenMessage(text, {
     if (!response.ok) throw new Error("service error");
     const verdict = await response.json();
     if (typeof verdict?.safe !== "boolean") throw new Error("invalid verdict");
-    if (verdict.safe === false) {
-      return "Prompt rejected by the screening service; this OpenCode hook cannot block the turn.";
-    }
+    if (verdict.safe === false) return "block";
     if (verdict.degraded === true || verdict.canary_status !== "exercised") {
-      return "Screening coverage is incomplete; OpenCode continued.";
+      return "degraded";
     }
-    if (verdict.advisory?.flagged === true) return "Prompt flagged; OpenCode continued.";
-    return null;
+    if (verdict.advisory?.flagged === true) return "flag";
+    return "pass";
   } catch {
-    return "Screening unavailable; OpenCode continued.";
+    return "unavailable";
   }
+}
+
+export async function screenMessage(text, options) {
+  const result = await checkText(text, options);
+  if (result === "block") return "Prompt rejected by the screening service; this OpenCode hook cannot block the turn.";
+  if (result === "degraded") return "Screening coverage is incomplete; OpenCode continued.";
+  if (result === "flag") return "Prompt flagged; OpenCode continued.";
+  if (result === "unavailable") return "Screening unavailable; OpenCode continued.";
+  return null;
 }

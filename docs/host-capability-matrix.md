@@ -15,6 +15,8 @@ Two capabilities are tracked separately and must not be conflated:
 
 A host can have one without the other. The matrix tracks nine host surfaces;
 Little Canary ships an outbound tool gate for exactly one.
+OpenCode also has a separate text tool-result boundary described below: it
+runs after tool execution and before the next model request.
 
 The machine-readable source of truth for this page is
 [`host-capability-matrix.json`](host-capability-matrix.json), enforced by
@@ -37,18 +39,27 @@ The machine-readable source of truth for this page is
 ### OpenCode
 
 The [OpenCode package](../plugins/opencode) uses the 1.18.32 `chat.message`
-hook to send only the current user message's text parts to the Little Canary
-loopback service. In an isolated OpenCode 1.18.32 run, a synthetic flagged
-verdict produced one loopback request and a warning on stderr before the host
-reached its model call. Offline tests cover clean, flagged, unsafe, degraded,
-and unavailable responses. This certifies the host hook and warning route, not
-detector efficacy with a live model.
+hook to send the current user message's text parts to the Little Canary
+loopback service. In an isolated run, a synthetic flagged verdict produced a
+loopback request and a warning on stderr before the host reached its model
+call. The same package also uses `tool.execute.after` to screen string tool
+results. The five-file npm archive was installed in an isolated OpenCode
+1.18.32 profile. A local mock provider requested a synthetic file read; pass,
+unsafe, and unavailable service responses were exercised in separate runs.
+The next model request received the original text on pass and unavailable, and
+only a replacement notice on unsafe. Unavailable screening warned. This
+certifies those hook paths with synthetic verdicts, not detector efficacy.
 
 This stable hook has no typed input-rejection result. Even if a blocking
 Little Canary service returns an unsafe verdict, the plugin warns and OpenCode
-continues. It does not inspect earlier conversation, attachments, file reads,
-tool calls, or tool results. Service failures warn and continue. The separate
-OpenCode V2 plugin API is not covered by this 1.18.32 result.
+continues. A rejected string tool result can be withheld after the tool runs;
+the hook cannot undo that tool call. Earlier conversation, attachments, tool
+arguments, and non-text results are not screened. File text is screened only
+after a tool returns it. Raw MCP text items are covered by the adapter and
+OpenCode 1.18.32 source inspection, with an offline adapter test; this shape
+was not exercised in an installed-host run. Service failures and results over
+the server's 64 KiB request limit warn and continue with the original text. The
+separate OpenCode V2 plugin API is not covered by this 1.18.32 result.
 
 ### Pi
 
