@@ -154,6 +154,16 @@ def test_opencode_package_registers_an_advisory_input_hook():
     assert '"chat.message": async' in entry
 
 
+def test_pi_package_registers_the_declared_input_boundary():
+    pi = HOSTS["pi"]
+    assert pi["inbound"]["event"] == "input"
+    assert pi["inbound"]["deny_wire"] == '{"action": "handled"}'
+    package = json.loads((ROOT / "plugins" / "pi" / "package.json").read_text())
+    assert package["pi"]["extensions"] == ["./index.js"]
+    extension = (ROOT / "plugins" / "pi" / "index.js").read_text()
+    assert 'pi.on("input", createInputHandler())' in extension
+
+
 def test_hermes_agent_is_the_only_outbound_tool_gate():
     """Inbound screening and outbound tool blocking stay distinct."""
     shipping_outbound = [
