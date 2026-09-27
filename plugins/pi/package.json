@@ -1,5 +1,5 @@
 {
-  "name": "@hermes-labs-ai/little-canary-pi",
+  "name": "@hermes-labs/little-canary-pi",
   "version": "0.3.10",
   "type": "module",
   "description": "Screen Pi user input with a local Little Canary service",
