@@ -1,11 +1,19 @@
 {
-  "name": "little-canary-openclaw",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@hermes-labs-ai/little-canary-openclaw",
+  "version": "0.3.9",
   "type": "module",
-  "description": "OpenClaw pre-run prompt screening through the local Little Canary service",
+  "description": "Screen OpenClaw prompts with a local Little Canary service before supported agent runs",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hermes-labs-ai/little-canary.git",
+    "directory": "plugins/openclaw"
+  },
+  "homepage": "https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/openclaw",
+  "keywords": ["openclaw", "prompt-injection", "agent-security"],
+  "files": ["index.mjs", "screen.mjs", "openclaw.plugin.json", "README.md", "LICENSE"],
   "peerDependencies": {
-    "openclaw": ">=2026.9.5"
+    "openclaw": ">=2026.9.5 <2026.9.7"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
@@ -13,8 +21,12 @@
   "openclaw": {
     "extensions": ["./index.mjs"],
     "compat": {
-      "pluginApi": ">=2026.9.5",
+      "pluginApi": ">=2026.9.5 <2026.9.7",
       "minGatewayVersion": "2026.9.5"
+    },
+    "build": {
+      "openclawVersion": "2026.9.6",
+      "pluginSdkVersion": "2026.9.6"
     }
   }
 }

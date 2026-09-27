@@ -101,15 +101,22 @@ Run the local service above, then wire in the host you use. Not every host lets 
 <details>
 <summary>OpenClaw install</summary>
 
-From a Little Canary checkout:
+Install the native package from ClawHub after starting the local Little Canary
+service in block mode. Review and accept the hook capability requested during
+installation:
 
 ```bash
-openclaw plugins install ./plugins/openclaw --force
+openclaw plugins install clawhub:@hermes-labs-ai/little-canary-openclaw
 openclaw plugins enable little-canary-openclaw
 openclaw config set plugins.entries.little-canary-openclaw.hooks.allowConversationAccess true
 ```
 
-Review the conversation-access permission before enabling it.
+Review the conversation-access permission before enabling it. This package
+supports the tested OpenClaw 2026.9.5–2026.9.6 host range and screens only the
+current prompt on embedded and CLI agent runs. A source checkout can still use
+`openclaw plugins install ./plugins/openclaw --force`. The package's
+[install and boundary notes](plugins/openclaw/README.md) describe the fail-open
+behavior and unsupported paths.
 </details>
 
 ## What Little Canary is and isn't
