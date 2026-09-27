@@ -13,8 +13,8 @@ Two capabilities are tracked separately and must not be conflated:
 - **Outbound tool-execution blocking** — can the host let a plugin veto a
   tool call the model has already decided to make?
 
-A host can have one without the other. Little Canary ships inbound adapters for
-eight host surfaces and an outbound tool gate for exactly one.
+A host can have one without the other. The matrix tracks eight host surfaces;
+Little Canary ships an outbound tool gate for exactly one.
 
 The machine-readable source of truth for this page is
 [`host-capability-matrix.json`](host-capability-matrix.json), enforced by
