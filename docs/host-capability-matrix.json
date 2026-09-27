@@ -81,7 +81,7 @@
     {
       "id": "openclaw",
       "name": "OpenClaw",
-      "observed_version": "2026.9.5",
+      "observed_version": "2026.9.5 and 2026.9.6",
       "shipped_artifact": "plugins/openclaw",
       "doc_anchor": "### OpenClaw",
       "inbound": {
@@ -91,7 +91,7 @@
         "deny_channel": true,
         "deny_wire": "{ \"outcome\": \"block\", \"reason\": \"...\", \"message\": \"...\" }",
         "runtime_certified": true,
-        "runtime_evidence": "Verified with OpenClaw 2026.9.5 on Node 26.1.0: local-path plugin install and runtime inspection reported typedHooks.before_agent_run; `openclaw agent --local` blocked a synthetic unsafe response from a loopback test service before reaching a local fake model, while a benign response reached that fake model. No live canary/model was used. The isolated `agent exec` path bypassed this hook in the same runtime and is explicitly outside the tested coverage."
+        "runtime_evidence": "Verified with OpenClaw 2026.9.5 on Node 26.1.0: local-path plugin install and runtime inspection reported typedHooks.before_agent_run; `openclaw agent --local` blocked a synthetic unsafe response from a loopback test service before reaching a local fake model, while a benign response reached that fake model. OpenClaw 2026.9.6 on Node 24.21.0 installed the packed package in an isolated profile; runtime inspection reported one loaded before_agent_run hook after the documented conversation-access grant. Host-dispatched block made no fake-model call, while pass, degraded, and unavailable-service controls reached the fake model. These used deterministic loopback test services, not a live canary. The isolated `agent exec` path bypassed this hook in 2026.9.5 and is outside claimed coverage."
       },
       "outbound_tool_execution": {
         "host_deny_channel": true,
