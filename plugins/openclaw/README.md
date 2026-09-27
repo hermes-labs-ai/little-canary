@@ -3,7 +3,7 @@
 This native OpenClaw plugin screens the current prompt at `before_agent_run`,
 after OpenClaw builds the prompt and before supported embedded or CLI runners
 submit it to a model. It sends that prompt to a separately running Little
-Canary 0.3.9 service on loopback. An explicit unsafe verdict blocks the run.
+Canary 0.3.10 service on loopback. An explicit unsafe verdict blocks the run.
 
 ## Install
 
@@ -11,7 +11,7 @@ Use OpenClaw 2026.9.5 or 2026.9.6 on a supported Node runtime. Install and
 start the Python service first:
 
 ```sh
-python3 -m pip install little-canary==0.3.9
+python3 -m pip install little-canary==0.3.10
 ollama pull qwen2.5:1.5b
 little-canary serve --mode block --canary-model qwen2.5:1.5b
 ```
