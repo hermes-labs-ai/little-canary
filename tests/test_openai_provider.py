@@ -53,7 +53,7 @@ def test_successful_probe(mock_post):
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
-        "choices": [{"message": {"content": "The capital of France is Paris."}}],
+        "choices": [{"message": {"content": "The capital of France is Paris."}, "finish_reason": "stop"}],
         "usage": {
             "prompt_tokens": 30,
             "completion_tokens": 8,
@@ -76,7 +76,7 @@ def test_probe_captures_usage_metadata(mock_post):
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
-        "choices": [{"message": {"content": "test"}}],
+        "choices": [{"message": {"content": "test"}, "finish_reason": "stop"}],
         "usage": {
             "prompt_tokens": 10,
             "completion_tokens": 5,
@@ -154,7 +154,7 @@ def test_probe_sends_correct_payload(mock_post):
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
-        "choices": [{"message": {"content": "test"}}],
+        "choices": [{"message": {"content": "test"}, "finish_reason": "stop"}],
         "usage": {},
     }
     mock_post.return_value = mock_response
@@ -211,11 +211,11 @@ def test_probe_empty_choices(mock_post):
     [
         {},
         {"choices": None},
-        {"choices": [{}]},
-        {"choices": [{"message": {}}]},
-        {"choices": [{"message": {"content": None}}]},
-        {"choices": [{"message": {"content": 7}}]},
-        {"choices": [{"message": {"content": "  "}}]},
+        {"choices": [{"finish_reason": "stop"}]},
+        {"choices": [{"message": {}, "finish_reason": "stop"}]},
+        {"choices": [{"message": {"content": None}, "finish_reason": "stop"}]},
+        {"choices": [{"message": {"content": 7}, "finish_reason": "stop"}]},
+        {"choices": [{"message": {"content": "  "}, "finish_reason": "stop"}]},
         [],
     ],
 )
@@ -245,6 +245,79 @@ def test_probe_rejects_invalid_json_without_echoing_body(mock_post):
     assert result.success is False
     assert result.error == "API protocol error: invalid JSON response"
     assert "secret" not in result.error
+
+
+@pytest.mark.parametrize(
+    "finish_reason,expected_code",
+    [
+        ("length", "output_limit"),
+        ("content_filter", "incomplete_response"),
+        ("tool_calls", "incomplete_response"),
+        (None, "incomplete_response"),
+    ],
+)
+@patch("little_canary.openai_provider.requests.post")
+def test_probe_rejects_incomplete_output(mock_post, finish_reason, expected_code):
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        "choices": [{"message": {"content": "partial answer"}, "finish_reason": finish_reason}],
+        "usage": {"completion_tokens": 256},
+    }
+    mock_post.return_value = response
+
+    result = OpenAICanaryProbe().test("test")
+
+    assert result.success is False
+    assert result.response == ""
+    assert result.failure_code == expected_code
+    assert result.metadata["finish_reason"] == finish_reason
+
+
+@patch("little_canary.openai_provider.requests.post")
+def test_probe_classifies_truncated_empty_output_as_output_limit(mock_post):
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+    }
+    mock_post.return_value = response
+
+    result = OpenAICanaryProbe().test("test")
+
+    assert result.success is False
+    assert result.failure_code == "output_limit"
+
+
+@pytest.mark.parametrize(
+    "failure,expected_code",
+    [
+        ("http", "http_error"),
+        ("json", "invalid_response"),
+        ("empty", "empty_response"),
+        ("timeout", "timeout"),
+        ("connection", "unavailable"),
+        ("exception", "probe_exception"),
+    ],
+)
+@patch("little_canary.openai_provider.requests.post")
+def test_probe_classifies_failures(mock_post, failure, expected_code):
+    if failure == "timeout":
+        mock_post.side_effect = requests.Timeout("secret")
+    elif failure == "connection":
+        mock_post.side_effect = requests.ConnectionError("secret")
+    elif failure == "exception":
+        mock_post.side_effect = RuntimeError("secret")
+    else:
+        response = MagicMock(status_code=503 if failure == "http" else 200)
+        if failure == "json":
+            response.json.side_effect = ValueError("secret")
+        elif failure == "empty":
+            response.json.return_value = {"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]}
+        mock_post.return_value = response
+
+    result = OpenAICanaryProbe().test("test")
+
+    assert result.success is False
+    assert result.failure_code == expected_code
 
 
 # ── is_available() ──

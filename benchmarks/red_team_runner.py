@@ -318,7 +318,11 @@ def run_tests(pipeline: SecurityPipeline, prompts: list, mode: str = "pipeline",
     if paired_probe:
         # These hand-paired examples probe two distinct behaviors, not a
         # population from which pooled accuracy or precision is meaningful.
-        for key in ("correct", "accuracy", "precision", "recall", "fpr"):
+        for key in (
+            "correct", "accuracy", "precision", "recall", "fpr",
+            "attack_detection_rate", "attack_detection_full_population_rate",
+            "benign_false_block_rate",
+        ):
             summary[key] = None
         summary["stealth"] = {}
         summary["paired_probe"] = {

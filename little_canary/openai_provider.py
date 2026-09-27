@@ -127,6 +127,7 @@ class OpenAICanaryProbe:
                     user_input=user_input,
                     success=False,
                     error=f"API returned HTTP status {response.status_code}",
+                    failure_code="http_error",
                 )
 
             try:
@@ -140,11 +141,42 @@ class OpenAICanaryProbe:
                     user_input=user_input,
                     success=False,
                     error="API protocol error: invalid JSON response",
+                    failure_code="invalid_response",
                 )
 
             choices = data.get("choices") if isinstance(data, dict) else None
             first_choice = choices[0] if isinstance(choices, list) and choices else None
-            message = first_choice.get("message") if isinstance(first_choice, dict) else None
+            if not isinstance(first_choice, dict):
+                return CanaryResult(
+                    response="",
+                    latency=elapsed,
+                    model=self.model,
+                    system_prompt=self.system_prompt,
+                    user_input=user_input,
+                    success=False,
+                    error=("API protocol error: response content must be a non-empty string"),
+                    failure_code="invalid_response",
+                )
+
+            finish_reason = first_choice.get("finish_reason")
+            if finish_reason != "stop":
+                return CanaryResult(
+                    response="",
+                    latency=elapsed,
+                    model=self.model,
+                    system_prompt=self.system_prompt,
+                    user_input=user_input,
+                    success=False,
+                    error="API protocol error: incomplete chat response",
+                    failure_code=("output_limit" if finish_reason == "length" else "incomplete_response"),
+                    metadata={
+                        "finish_reason": finish_reason if isinstance(finish_reason, str) and finish_reason in {
+                            "length", "content_filter", "tool_calls", "function_call"
+                        } else None,
+                    },
+                )
+
+            message = first_choice.get("message")
             content = message.get("content") if isinstance(message, dict) else None
             if not isinstance(content, str) or not content.strip():
                 return CanaryResult(
@@ -155,6 +187,7 @@ class OpenAICanaryProbe:
                     user_input=user_input,
                     success=False,
                     error=("API protocol error: response content must be a non-empty string"),
+                    failure_code=("empty_response" if isinstance(message, dict) else "invalid_response"),
                 )
 
             usage = data.get("usage", {})
@@ -169,6 +202,7 @@ class OpenAICanaryProbe:
                 user_input=user_input,
                 success=True,
                 metadata={
+                    "finish_reason": "stop",
                     "prompt_tokens": usage.get("prompt_tokens"),
                     "completion_tokens": usage.get("completion_tokens"),
                     "total_tokens": usage.get("total_tokens"),
@@ -185,6 +219,7 @@ class OpenAICanaryProbe:
                 user_input=user_input,
                 success=False,
                 error=f"Canary timed out after {self.timeout}s",
+                failure_code="timeout",
             )
 
         except requests.ConnectionError:
@@ -197,6 +232,7 @@ class OpenAICanaryProbe:
                 user_input=user_input,
                 success=False,
                 error=(f"Cannot connect to API at {_redacted_origin(self.base_url)}"),
+                failure_code="unavailable",
             )
 
         except Exception as exc:
@@ -211,6 +247,7 @@ class OpenAICanaryProbe:
                 user_input=user_input,
                 success=False,
                 error=f"Canary probe failed ({error_class})",
+                failure_code="probe_exception",
             )
 
     def is_available(self):
