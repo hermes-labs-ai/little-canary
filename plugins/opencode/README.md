@@ -19,7 +19,7 @@ little-canary serve --mode advisory
 Install the plugin package from npm after publication:
 
 ```sh
-opencode plugin @hermes-labs-ai/little-canary-opencode@0.3.10
+opencode plugin @hermes-labs/little-canary-opencode@0.3.10
 ```
 
 The package contains the OpenCode adapter, not the Python service or model

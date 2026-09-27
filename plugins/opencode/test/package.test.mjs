@@ -9,10 +9,12 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 
 test("OpenCode package version matches the core release", () => {
+  assert.equal(manifest.name, "@hermes-labs/little-canary-opencode");
   const core = readFileSync(resolve(root, "../../little_canary/__init__.py"), "utf8");
   const version = core.match(/^__version__ = "([^"]+)"/m)?.[1];
   assert.equal(manifest.version, version);
-  assert.match(readFileSync(resolve(root, "README.md"), "utf8"), new RegExp(`@${version.replaceAll(".", "\\.")}`));
+  const readme = readFileSync(resolve(root, "README.md"), "utf8");
+  assert.ok(readme.includes(`opencode plugin ${manifest.name}@${version}`));
 });
 
 test("npm archive contains only the standalone OpenCode package", () => {

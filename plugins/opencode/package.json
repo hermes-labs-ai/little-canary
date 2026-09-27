@@ -1,5 +1,5 @@
 {
-  "name": "@hermes-labs-ai/little-canary-opencode",
+  "name": "@hermes-labs/little-canary-opencode",
   "version": "0.3.10",
   "type": "module",
   "description": "Flag submitted OpenCode prompts with a local Little Canary service",
