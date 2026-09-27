@@ -1,7 +1,7 @@
 """Host capability matrix acceptance tests (offline, no model call).
 
 The matrix in ``docs/host-capability-matrix.json`` is a set of claims about
-what eight hosts can do with an inbound prompt. These tests exist so that a
+what nine hosts can do with an inbound prompt. These tests exist so that a
 claim cannot drift away from the artifact that is supposed to back it: every
 row that says Little Canary ships an adapter has to point at a real file that
 registers the named event, every row that says a host cannot refuse a prompt
@@ -152,6 +152,13 @@ def test_opencode_package_registers_an_advisory_input_hook():
     assert package["exports"]["."] == "./index.js"
     entry = (ROOT / "plugins" / "opencode" / "index.js").read_text()
     assert '"chat.message": async' in entry
+    tool_result = host["tool_result"]
+    assert tool_result["shipped"] is True
+    assert tool_result["event"] == "tool.execute.after"
+    assert tool_result["can_withhold_text"] is True
+    assert tool_result["runtime_certified"] is True
+    assert tool_result["runtime_evidence"].strip()
+    assert '"tool.execute.after": async' in entry
 
 
 def test_pi_package_registers_the_declared_input_boundary():
