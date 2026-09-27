@@ -8,6 +8,8 @@
   },
   "homepage": "https://littlecanary.ai",
   "repository": "https://github.com/hermes-labs-ai/little-canary",
+  "documentationUrl": "https://github.com/hermes-labs-ai/little-canary/blob/main/plugins/claude-code/README.md",
+  "supportUrl": "https://github.com/hermes-labs-ai/little-canary/issues",
   "license": "Apache-2.0",
   "keywords": ["prompt-injection", "llm-security", "agent-security", "canary", "hooks"]
 }
