@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
+## [0.3.10] - 2026-09-26
+
+Patch release of the fixes reviewed and merged in [PR #112](https://github.com/hermes-labs-ai/little-canary/pull/112). The default canary, detector rules, and fail-open routing are unchanged.
+
+- The OpenAI-compatible canary adapter now marks length-limited and other incomplete responses as degraded coverage instead of treating them as complete. It reports bounded failure reasons for malformed, empty, timed-out, and failed calls. The Hermes Agent bundle carries the same behavior.
+- Paired benchmark summaries and the dashboard no longer present positive and benign-control cases as one pooled accuracy percentage; the separate case counts remain available.
+- The JailBench-derived probe points to its repository license file.
+
+This patch does not establish a new detection or false-block rate. The known limitations in 0.3.9 still apply.
+
 ## [0.3.9] - 2026-09-26
 
 This release makes the package's `requests` range compatible with Hermes
