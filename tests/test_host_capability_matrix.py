@@ -144,6 +144,16 @@ def test_no_copilot_artifact_is_shipped():
     assert not (ROOT / ".github" / "hooks").exists(), "a .github/hooks manifest would be a Copilot hook claim"
 
 
+def test_opencode_package_registers_an_advisory_input_hook():
+    host = HOSTS["opencode"]
+    assert host["inbound"]["event"] == "chat.message"
+    assert host["inbound"]["deny_channel"] is False
+    package = json.loads((ROOT / "plugins" / "opencode" / "package.json").read_text())
+    assert package["exports"]["."] == "./index.js"
+    entry = (ROOT / "plugins" / "opencode" / "index.js").read_text()
+    assert '"chat.message": async' in entry
+
+
 def test_pi_package_registers_the_declared_input_boundary():
     pi = HOSTS["pi"]
     assert pi["inbound"]["event"] == "input"

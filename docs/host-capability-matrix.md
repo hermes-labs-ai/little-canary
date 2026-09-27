@@ -13,7 +13,7 @@ Two capabilities are tracked separately and must not be conflated:
 - **Outbound tool-execution blocking** — can the host let a plugin veto a
   tool call the model has already decided to make?
 
-A host can have one without the other. The matrix tracks eight host surfaces;
+A host can have one without the other. The matrix tracks nine host surfaces;
 Little Canary ships an outbound tool gate for exactly one.
 
 The machine-readable source of truth for this page is
@@ -25,6 +25,7 @@ The machine-readable source of truth for this page is
 | Host | Observed version | Inbound event | Can refuse the prompt? | Little Canary ships it | Outbound tool veto shipped |
 |---|---|---|---|---|---|
 | Claude Code | 2.1.261 | `UserPromptSubmit` | **yes** — `{"decision":"block"}` | yes | no |
+| OpenCode | 1.18.32 | `chat.message` | **no** — warning only | yes | no |
 | Pi | 0.87.1 | `input` | **yes** — `{"action":"handled"}` | yes | no |
 | Codex CLI | 0.154.0 | `UserPromptSubmit` | **yes** — `{"decision":"block"}` | yes, install route certified; interception not observed | no |
 | Gemini CLI | 0.32.1 | `BeforeAgent` | **yes** — `{"decision":"deny"}` | yes | no |
@@ -32,6 +33,22 @@ The machine-readable source of truth for this page is
 | OpenAI Agents SDK | 0.22.0 | `InputGuardrail` | **yes** — tripwire | yes | no |
 | Hermes Agent | 0.21.4 | `pre_llm_call` | **no** — context injection only | yes, annotation only | **yes** — `pre_tool_call` |
 | GitHub Copilot CLI | 1.0.84-5 | `userPromptSubmitted` | **no** — rewrite/annotate only | **no artifact shipped** | no |
+
+### OpenCode
+
+The [OpenCode package](../plugins/opencode) uses the 1.18.32 `chat.message`
+hook to send only the current user message's text parts to the Little Canary
+loopback service. In an isolated OpenCode 1.18.32 run, a synthetic flagged
+verdict produced one loopback request and a warning on stderr before the host
+reached its model call. Offline tests cover clean, flagged, unsafe, degraded,
+and unavailable responses. This certifies the host hook and warning route, not
+detector efficacy with a live model.
+
+This stable hook has no typed input-rejection result. Even if a blocking
+Little Canary service returns an unsafe verdict, the plugin warns and OpenCode
+continues. It does not inspect earlier conversation, attachments, file reads,
+tool calls, or tool results. Service failures warn and continue. The separate
+OpenCode V2 plugin API is not covered by this 1.18.32 result.
 
 ### Pi
 
