@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
-## [0.3.9] - Unreleased
+## [0.3.9] - 2026-09-26
 
-This candidate makes the package's `requests` range compatible with Hermes
+This release makes the package's `requests` range compatible with Hermes
 Agent's core pin and includes the focused directory plugin admitted to the
 Nous Research catalog at its pinned source revision. It adds model selection
 and coverage diagnostics without changing the default canary or detector rules.

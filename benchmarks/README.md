@@ -1,6 +1,6 @@
 # Benchmarks and evaluation evidence
 
-This directory contains the current headless runner, regression corpora, and historical result artifacts. The `0.3.3` section below records a prior evaluation contract; it is not a current performance certificate for the unreleased `0.3.9` candidate.
+This directory contains the current headless runner, regression corpora, and historical result artifacts. The `0.3.3` section below records a prior evaluation contract; it is not a current performance certificate for the `0.3.9` release.
 
 ## Current claim boundary
 
