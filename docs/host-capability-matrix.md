@@ -13,8 +13,8 @@ Two capabilities are tracked separately and must not be conflated:
 - **Outbound tool-execution blocking** — can the host let a plugin veto a
   tool call the model has already decided to make?
 
-A host can have one without the other. Little Canary ships inbound adapters for
-seven host surfaces and an outbound tool gate for exactly one.
+A host can have one without the other. The matrix tracks eight host surfaces;
+Little Canary ships an outbound tool gate for exactly one.
 
 The machine-readable source of truth for this page is
 [`host-capability-matrix.json`](host-capability-matrix.json), enforced by
@@ -25,12 +25,32 @@ The machine-readable source of truth for this page is
 | Host | Observed version | Inbound event | Can refuse the prompt? | Little Canary ships it | Outbound tool veto shipped |
 |---|---|---|---|---|---|
 | Claude Code | 2.1.261 | `UserPromptSubmit` | **yes** — `{"decision":"block"}` | yes | no |
+| Pi | 0.87.1 | `input` | **yes** — `{"action":"handled"}` | yes | no |
 | Codex CLI | 0.154.0 | `UserPromptSubmit` | **yes** — `{"decision":"block"}` | yes, install route certified; interception not observed | no |
 | Gemini CLI | 0.32.1 | `BeforeAgent` | **yes** — `{"decision":"deny"}` | yes | no |
 | OpenClaw | 2026.9.5 and 2026.9.6 | `before_agent_run` | **yes** — `{ "outcome": "block" }` | yes, supported embedded/CLI runners | no |
 | OpenAI Agents SDK | 0.22.0 | `InputGuardrail` | **yes** — tripwire | yes | no |
 | Hermes Agent | 0.21.4 | `pre_llm_call` | **no** — context injection only | yes, annotation only | **yes** — `pre_tool_call` |
 | GitHub Copilot CLI | 1.0.84-5 | `userPromptSubmitted` | **no** — rewrite/annotate only | **no artifact shipped** | no |
+
+### Pi
+
+The [Pi package](../plugins/pi) registers `input`, which Pi calls after input
+arrives and before agent processing. It sends only that input's text to the
+Little Canary loopback service. Pi 0.87.1 loaded the package from a local path
+in an isolated profile. In a print-mode run, a loopback service returning
+`safe: false` caused the extension to return `{ "action": "handled" }`; Pi
+reported the block and exited without a model call. Offline tests cover clean,
+flagged, degraded, and unavailable-service results. This is host-dispatch
+evidence using a synthetic verdict, not a live-model detection test.
+
+The recommended advisory service mode emits warnings and lets input continue.
+The Pi extension handles input only when the service explicitly returns an
+unsafe verdict. It does not separately screen prior conversation, files, tool
+results, or images. Pi runs registered extension commands before the `input`
+event; those commands bypass this check. Skill and prompt-template expansion
+happens after the event, so added content is not screened. Service failures
+pass through with a warning.
 
 ## Codex CLI — what was and was not certified
 
