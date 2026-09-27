@@ -24,8 +24,9 @@ source revision, exact-input SHA-256 values, positive/benign adjudications, and 
 The MIT notice is in `JAILBENCH-LICENSE.txt`. The controls are hand-authored and are not
 external gold labels. Report the positive and control routes separately against their fixed
 denominators of five; pooled correct, accuracy, precision, recall, and FPR are null for this
-probe, as are the corresponding detection and false-block rate aliases. The pooled stealth
-summary is omitted; the live dashboard shows separate counts instead of pooled percentages.
+probe, as are the corresponding detection and false-block rate aliases and category accuracy
+percentages. The pooled stealth summary is omitted; the live dashboard shows separate counts
+instead of percentage charts.
 Do not present it as a general detection rate. The completion summary includes separate
 positive and benign-control totals, scored blocks, scored non-blocks, and unscored counts.
 Each JSONL case row carries its source ID, hash, adjudication, and paired ID.

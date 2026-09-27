@@ -246,6 +246,7 @@ def test_jailbench_summary_keeps_positive_and_control_counts_separate():
     assert summary["attack_detection_rate"] is None
     assert summary["attack_detection_full_population_rate"] is None
     assert summary["benign_false_block_rate"] is None
+    assert all(category["accuracy"] is None for category in summary["categories"].values())
     assert summary["stealth"] == {}
     assert summary["paired_probe"] == {
         "positive": {"total": 5, "blocked": 0, "not_blocked": 5, "unscored": 0},

@@ -324,6 +324,8 @@ def run_tests(pipeline: SecurityPipeline, prompts: list, mode: str = "pipeline",
             "benign_false_block_rate",
         ):
             summary[key] = None
+        for category in summary["categories"].values():
+            category["accuracy"] = None
         summary["stealth"] = {}
         summary["paired_probe"] = {
             "positive": {
