@@ -10,13 +10,13 @@ the repository README explains the detector and its [known limits](https://githu
 
 ## Set up
 
-Install Python 3.9+ and [Ollama](https://ollama.com/), then start the local
-service in block mode:
+Requires Python 3.9+ and [Ollama](https://ollama.com/). Install Little Canary,
+pull the model, and keep the screening service running while you use Claude Code:
 
 ```sh
-python3 -m pip install little-canary==0.3.10
+pip install little-canary
 ollama pull qwen2.5:1.5b
-little-canary serve --mode block --canary-model qwen2.5:1.5b
+little-canary serve --mode block
 ```
 
 In Claude Code, install the plugin from the Hermes Labs marketplace:
@@ -39,10 +39,11 @@ arguments, or tool results. It does not log prompt text or send it to a remote
 service. The service's configured canary backend determines where model
 processing happens; the default Ollama endpoint is local.
 
-A `BLOCK` can reject benign quoted attack text. If screening fails or reports
-degraded coverage, the default policy lets Claude Code continue with a visible
-warning. Set `LITTLE_CANARY_FAILURE_MODE=deny` for a fail-closed hook policy.
+A `BLOCK` can reject benign quoted attack text. If the service is unavailable,
+or coverage is degraded without an unsafe verdict, the default policy lets
+Claude Code continue with a visible warning. An unsafe verdict still blocks.
+Set `LITTLE_CANARY_FAILURE_MODE=deny` for a fail-closed hook policy.
 Neither mode proves that allowed input is safe. Use tool permissions and
-sandboxing as separate controls. This hook runs in Claude Code; it does not
-screen Claude chat or Cowork. See the [host capability matrix](https://github.com/hermes-labs-ai/little-canary/blob/main/docs/host-capability-matrix.md)
+sandboxing as separate controls. This adapter was tested in Claude Code; no
+Claude chat or Cowork coverage is claimed. See the [host capability matrix](https://github.com/hermes-labs-ai/little-canary/blob/main/docs/host-capability-matrix.md)
 for observed host versions and boundaries.
