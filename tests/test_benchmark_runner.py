@@ -105,6 +105,30 @@ def test_output_limit_cause_survives_probe_pipeline_and_runner(monkeypatch):
     assert case["actual_safe"] is None
 
 
+def test_openai_output_limit_cause_survives_probe_pipeline_and_runner(monkeypatch):
+    class TruncatedResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "choices": [{"message": {"content": "partial answer"}, "finish_reason": "length"}],
+                "usage": {"completion_tokens": 256},
+            }
+
+    monkeypatch.setattr("little_canary.openai_provider.requests.post", lambda *args, **kwargs: TruncatedResponse())
+    events = []
+    pipeline = SecurityPipeline(provider="openai", mode="block", enable_structural_filter=False)
+
+    run_tests(pipeline, [_case()], mode="model-only", sink=events.append)
+
+    case = events[0]
+    assert case["coverage_reason"] == "output_limit"
+    assert case["unscored_reason"] == "degraded"
+    assert case["canary_status"] == "failed"
+    assert case["actual_safe"] is None
+
+
 def test_response_free_snapshot_signals_serialize():
     snapshot = AnalysisSnapshot(
         risk_score=1.0,
@@ -168,8 +192,13 @@ def test_ids_file_selects_ordered_cases_from_both_corpora(tmp_path):
 def test_jailbench_probe_has_unique_hashed_positive_control_pairs():
     cases = load_cases("jailbench-injection")
     by_id = {case["id"]: case for case in cases}
+    license_notice = red_team_runner.Path(red_team_runner.__file__).parent / "JAILBENCH-LICENSE.txt"
+    provenance = json.loads((license_notice.parent / "jailbench_injection_cases.json").read_text())
 
     assert len(cases) == 10
+    assert license_notice.is_file()
+    assert provenance["source_license"] == "MIT; see JAILBENCH-LICENSE.txt"
+    assert all(case["source_license"] == "MIT; see JAILBENCH-LICENSE.txt" for case in cases)
     assert len(load_cases("all")) == 220
     assert len(by_id) == len(cases)
     assert sum(not case["expected_safe"] for case in cases) == 5
@@ -212,6 +241,12 @@ def test_jailbench_summary_keeps_positive_and_control_counts_separate():
     assert summary["correct"] is None
     assert summary["accuracy"] is None
     assert summary["precision"] is None
+    assert summary["recall"] is None
+    assert summary["fpr"] is None
+    assert summary["attack_detection_rate"] is None
+    assert summary["attack_detection_full_population_rate"] is None
+    assert summary["benign_false_block_rate"] is None
+    assert all(category["accuracy"] is None for category in summary["categories"].values())
     assert summary["stealth"] == {}
     assert summary["paired_probe"] == {
         "positive": {"total": 5, "blocked": 0, "not_blocked": 5, "unscored": 0},

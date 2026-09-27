@@ -383,12 +383,12 @@
     </div>
   </div>
   <div class="card">
-    <h2>Detection by Stealth Level</h2>
+    <h2 id="secondary-title">Detection by Stealth Level</h2>
     <div id="stealth-chart"></div>
   </div>
 </div>
 
-<div class="section-pad">
+<div class="section-pad" id="category-section">
   <div class="card" style="padding: 20px 24px;">
     <h2>Detection by Category</h2>
     <div id="category-chart"></div>
@@ -429,11 +429,14 @@ const state = {
   stealth: {},
   total: 0,
   complete: false,
+  pairedProbe: false,
+  summary: null,
 };
 
 function update(r) {
   state.results.push(r);
   state.total = r.total;
+  if (r.adjudication === 'positive' || r.adjudication === 'benign_control') state.pairedProbe = true;
 
   if (r.scored) {
     state.scored++;
@@ -463,6 +466,25 @@ function update(r) {
 
 function render() {
   const n = state.results.length;
+  const paired = state.pairedProbe || Boolean(state.summary && state.summary.paired_probe);
+  document.getElementById('stats-grid').style.display = paired ? 'none' : '';
+  document.getElementById('category-section').style.display = paired ? 'none' : '';
+  document.getElementById('secondary-title').textContent = paired ? 'Paired probe counts' : 'Detection by Stealth Level';
+  document.getElementById('progress').style.width = (100 * n / (state.total || 1)) + '%';
+  document.getElementById('status').textContent = `${n} / ${state.total} • ${state.unscored} unscored • ${state.complete ? 'Complete' : 'Running...'}`;
+  document.getElementById('tp').textContent = state.tp;
+  document.getElementById('tn').textContent = state.tn;
+  document.getElementById('fp').textContent = state.fp;
+  document.getElementById('fn').textContent = state.fn;
+
+  if (paired) {
+    const counts = state.summary && state.summary.paired_probe;
+    document.getElementById('stealth-chart').textContent = counts
+      ? `Positive: ${counts.positive.blocked} blocked, ${counts.positive.not_blocked} not blocked, ${counts.positive.unscored} unscored of ${counts.positive.total}. Benign control: ${counts.benign_control.blocked} blocked, ${counts.benign_control.not_blocked} not blocked, ${counts.benign_control.unscored} unscored of ${counts.benign_control.total}.`
+      : 'Positive and benign-control counts appear when the run completes; pooled rates are not reported.';
+    return;
+  }
+
   const correct = state.tp + state.tn;
   const acc = state.scored > 0 ? (100 * correct / state.scored).toFixed(1) : '—';
   const recall = (state.tn + state.fn) > 0 ? (100 * state.tn / (state.tn + state.fn)).toFixed(1) : '—';
@@ -473,14 +495,6 @@ function render() {
   document.getElementById('fpr').textContent = fpr === '—' ? '—' : fpr + '%';
   document.getElementById('correct-count').textContent = correct;
   document.getElementById('total-count').textContent = state.scored;
-  document.getElementById('progress').style.width = (100 * n / (state.total || 1)) + '%';
-  document.getElementById('status').textContent = `${n} / ${state.total} • ${state.unscored} unscored • ${state.complete ? 'Complete' : 'Running...'}`;
-
-  document.getElementById('tp').textContent = state.tp;
-  document.getElementById('tn').textContent = state.tn;
-  document.getElementById('fp').textContent = state.fp;
-  document.getElementById('fn').textContent = state.fn;
-
   // Stealth chart
   const stealthEl = document.getElementById('stealth-chart');
   let stealthHtml = '';
@@ -557,6 +571,7 @@ evtSource.onmessage = (event) => {
     update(data);
   } else if (data.type === 'complete') {
     state.complete = true;
+    state.summary = data.summary;
     render();
     document.getElementById('banner').style.display = 'block';
     document.getElementById('banner').className = 'complete-banner';
