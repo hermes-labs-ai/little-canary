@@ -1,0 +1,19 @@
+{
+  "name": "@hermes-labs-ai/little-canary-opencode",
+  "version": "0.3.10",
+  "type": "module",
+  "description": "Flag submitted OpenCode prompts with a local Little Canary service",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/opencode",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hermes-labs-ai/little-canary.git",
+    "directory": "plugins/opencode"
+  },
+  "keywords": ["opencode", "opencode-plugin", "prompt-injection", "agent-security"],
+  "engines": { "node": ">=22.19.0" },
+  "publishConfig": { "access": "public" },
+  "files": ["index.js", "screen.js", "README.md", "LICENSE"],
+  "exports": { ".": "./index.js" },
+  "scripts": { "test": "node --test test/*.test.mjs" }
+}

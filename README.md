@@ -93,6 +93,7 @@ Run the local service above, then wire in the host you use. Not every host lets 
 | Host | Integration | Can it block the turn? |
 | --- | --- | --- |
 | **Claude Code** | [Plugin](plugins/claude-code) screens `UserPromptSubmit` | Yes |
+| **OpenCode** | [Plugin](plugins/opencode) flags submitted `chat.message` text | No — advisory warning only |
 | **Gemini CLI** | Extension screens `BeforeAgent` | Yes — denies the run before the loop starts |
 | **OpenAI Agents SDK** | [Input guardrail](examples/openai_agents_example.py) maps verdicts to the SDK tripwire | Yes — before the first agent starts |
 | **OpenClaw** | [Native plugin](plugins/openclaw), install below | Yes — current prompt only, not history or tool results |

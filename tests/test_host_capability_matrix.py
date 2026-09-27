@@ -1,7 +1,7 @@
 """Host capability matrix acceptance tests (offline, no model call).
 
 The matrix in ``docs/host-capability-matrix.json`` is a set of claims about
-what seven hosts can do with an inbound prompt. These tests exist so that a
+what eight hosts can do with an inbound prompt. These tests exist so that a
 claim cannot drift away from the artifact that is supposed to back it: every
 row that says Little Canary ships an adapter has to point at a real file that
 registers the named event, every row that says a host cannot refuse a prompt
@@ -142,6 +142,16 @@ def test_no_copilot_artifact_is_shipped():
     assert copilot["inbound"]["shipped"] is False
     assert copilot["shipped_artifact"] is None
     assert not (ROOT / ".github" / "hooks").exists(), "a .github/hooks manifest would be a Copilot hook claim"
+
+
+def test_opencode_package_registers_an_advisory_input_hook():
+    host = HOSTS["opencode"]
+    assert host["inbound"]["event"] == "chat.message"
+    assert host["inbound"]["deny_channel"] is False
+    package = json.loads((ROOT / "plugins" / "opencode" / "package.json").read_text())
+    assert package["exports"]["."] == "./index.js"
+    entry = (ROOT / "plugins" / "opencode" / "index.js").read_text()
+    assert '"chat.message": async' in entry
 
 
 def test_hermes_agent_is_the_only_outbound_tool_gate():

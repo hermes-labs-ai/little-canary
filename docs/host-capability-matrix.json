@@ -1,7 +1,7 @@
 {
   "schema": "little-canary-host-capability-matrix/v1",
   "little_canary_version": "0.3.10",
-  "certified_on": "2026-09-23",
+  "certified_on": "2026-09-27",
   "note": "Inbound prompt screening and outbound tool-execution blocking are separate host capabilities. A host that intercepts a prompt does not necessarily allow refusing it, and a host that can refuse a tool call does not necessarily expose the prompt. Each field below records what the named host version can do, not what Little Canary wishes it could do.",
   "hosts": [
     {
@@ -27,6 +27,32 @@
       "caveats": [
         "Screens the submitted prompt only. Tool results, tool arguments, and file contents read during the turn are never screened.",
         "A request body over 64 KiB is rejected by the loopback server with HTTP 413 and is therefore not screened at all."
+      ]
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "observed_version": "1.18.32",
+      "shipped_artifact": "plugins/opencode",
+      "doc_anchor": "### OpenCode",
+      "inbound": {
+        "shipped": true,
+        "event": "chat.message",
+        "interception_point": "when a new user message is received, before the model request",
+        "deny_channel": false,
+        "deny_wire": null,
+        "runtime_certified": true,
+        "runtime_evidence": "OpenCode 1.18.32 loaded the local plugin in an isolated configuration. An `opencode run` invocation with a synthetic flagged verdict made one request to the loopback Little Canary test service and printed `Little Canary: Prompt flagged; OpenCode continued.` before the host's model request failed on a dummy API key. Offline package tests cover clean, flagged, unsafe, degraded, unavailable, and invalid-endpoint results. This certifies hook dispatch and warning delivery, not detector efficacy with a live model."
+      },
+      "outbound_tool_execution": {
+        "host_deny_channel": true,
+        "host_event": "tool.execute.before",
+        "shipped": false
+      },
+      "caveats": [
+        "The stable chat.message hook has no typed input-rejection result. An unsafe service verdict warns but cannot stop the OpenCode turn.",
+        "Only current user-message text parts are screened; earlier conversation, attachments, files, tool calls, and tool results are outside this adapter.",
+        "Service failures warn and continue. OpenCode V2 plugin APIs have not been certified for this package."
       ]
     },
     {
