@@ -1,7 +1,7 @@
 {
   "name": "little-canary",
   "version": "0.3.10",
-  "description": "Screens submitted prompts with a local Little Canary service. Advisory mode warns on flagged input while the turn continues.",
+  "description": "Screens submitted prompts with a local Little Canary service. Advisory mode flags suspicious input; block mode stops turns the service rejects.",
   "author": {
     "name": "Hermes Labs",
     "email": "roli@hermes-labs.ai"
