@@ -1,0 +1,19 @@
+{
+  "name": "@hermes-labs-ai/little-canary-pi",
+  "version": "0.3.10",
+  "type": "module",
+  "description": "Screen Pi user input with a local Little Canary service",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/pi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hermes-labs-ai/little-canary.git",
+    "directory": "plugins/pi"
+  },
+  "keywords": ["pi-package", "pi-extension", "prompt-injection", "agent-security"],
+  "engines": { "node": ">=22.19.0" },
+  "publishConfig": { "access": "public" },
+  "files": ["index.js", "screen.js", "README.md", "LICENSE"],
+  "pi": { "extensions": ["./index.js"] },
+  "scripts": { "test": "node --test test/*.test.mjs" }
+}

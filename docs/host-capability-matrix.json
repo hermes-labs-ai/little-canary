@@ -107,6 +107,32 @@
       ]
     },
     {
+      "id": "pi",
+      "name": "Pi",
+      "observed_version": "0.87.1",
+      "shipped_artifact": "plugins/pi",
+      "doc_anchor": "### Pi",
+      "inbound": {
+        "shipped": true,
+        "event": "input",
+        "interception_point": "after input is received and before agent processing",
+        "deny_channel": true,
+        "deny_wire": "{\"action\": \"handled\"}",
+        "runtime_certified": true,
+        "runtime_evidence": "Pi 0.87.1 loaded the local package in an isolated PI_CODING_AGENT_DIR profile. A `pi --print --no-session --offline` invocation with an HTTP loopback test service returning safe:false emitted the Little Canary block notice and exited without model output. Package unit tests cover pass, flagged advisory, degraded, unavailable-service, and invalid-endpoint controls. This certifies the host's input-handling boundary, not detector efficacy with a live model."
+      },
+      "outbound_tool_execution": {
+        "host_deny_channel": true,
+        "host_event": "tool_call",
+        "shipped": false
+      },
+      "caveats": [
+        "The extension screens only input event text; it does not separately inspect prior conversation, tool outputs, file reads, or images.",
+        "The recommended advisory service policy flags without refusing input. Only an explicit unsafe verdict from a blocking service policy makes this extension handle the input before the model.",
+        "Service errors, malformed verdicts, and over-limit request bodies pass through with a warning."
+      ]
+    },
+    {
       "id": "openai-agents-sdk",
       "name": "OpenAI Agents SDK",
       "observed_version": "0.22.0",
