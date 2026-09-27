@@ -1,5 +1,5 @@
 {
   "name": "little-canary",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "Blocks Gemini CLI agent runs when a local Little Canary server rejects the prompt."
 }

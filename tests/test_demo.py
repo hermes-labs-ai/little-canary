@@ -92,6 +92,8 @@ def _response(status, payload, text=""):
     response = MagicMock()
     response.status_code = status
     response.text = text
+    if status == 200 and isinstance(payload, dict) and "message" in payload:
+        payload = {"done": True, "done_reason": "stop", **payload}
     response.json.return_value = payload
     return response
 

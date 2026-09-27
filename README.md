@@ -4,9 +4,9 @@
 
 <img src="assets/little-canary-header.jpg" alt="Little Canary — prompt injection sensing through a sacrificial model" width="760">
 
-**Catch prompt injection before your agent acts on it.**
+**Screen untrusted prompts for signs of injection before your agent acts.**
 
-Little Canary runs untrusted text through a powerless "canary" model first and watches what it does. If the text hijacks the canary, your real agent never sees it.
+Little Canary runs untrusted text through a powerless "canary" model first and watches what it does. A host integration can use the verdict to block the input or restrict downstream tool authority, depending on that host's capabilities.
 
 [![PyPI](https://img.shields.io/pypi/v/little-canary)](https://pypi.org/project/little-canary/)
 [![Python 3.9+](https://img.shields.io/pypi/pyversions/little-canary)](https://pypi.org/project/little-canary/)
@@ -20,7 +20,7 @@ Little Canary runs untrusted text through a powerless "canary" model first and w
 
 ## The problem
 
-A prompt injection looks like ordinary data — a web page, an email, a tool result — until your agent follows the instructions hidden inside it. Pattern-matching filters miss anything they haven't seen before. By the time you notice, the agent has already acted.
+A prompt injection looks like ordinary data — a web page, an email, a tool result — until your agent follows the instructions hidden inside it. Pattern-matching filters can miss attacks that do not match known patterns. By the time you notice, the agent has already acted.
 
 ## The idea
 
@@ -28,7 +28,7 @@ Coal miners sent a canary in first. Little Canary does the same thing for agents
 
 1. **Send the untrusted text to a canary model** that has no tools, no credentials, and nothing to lose.
 2. **Inspect the canary's response** for signs the input changed its behavior.
-3. **Return a verdict** (`PASS`, `FLAG`, `BLOCK`) before your primary agent touches the input.
+3. **Return a verdict** (`PASS`, `FLAG`, `BLOCK`) for the host to enforce within its available interception points.
 
 Structural checks run alongside to catch known attack shapes. The canary can reveal attacks that no pattern check has catalogued yet.
 
@@ -70,16 +70,21 @@ The service binds to loopback only and exposes `GET /health`. Your application r
 
 Python apps can skip HTTP and call `SecurityPipeline.check()` directly — see the [example integrations](examples/).
 
+The default remains `qwen2.5:1.5b`. Select an installed model with `serve --canary-model`, `demo --model`, or Python's `SecurityPipeline(canary_model=...)`; the Hermes Agent plugin reads `LITTLE_CANARY_MODEL`. Locally exercised alternatives are `qwen3.5:2b-q4_K_M`, `LiquidAI/lfm2.5-1.2b-instruct:q4_k_m`, and `gemma3:1b`. Pull weights with `ollama pull <tag>` and check each model's license. These are selectable models, not performance guarantees; see the [evaluation guidance](benchmarks/README.md).
+
 ## Reading a verdict
 
 | Verdict | Meaning | What to do |
 | --- | --- | --- |
 | `PASS` | Inspection ran and found no covered compromise signal. | Proceed. |
 | `FLAG` | Suspicious behavior observed. | Log it, restrict tools, or ask a human. |
-| `BLOCK` | Configured policy rejects the input. | Don't forward it. |
+| `BLOCK` | Configured policy rejects the input. | Apply the host's documented blocking behavior. |
 | `DEGRADED` / `UNSCREENED` | Behavioral inspection didn't complete or didn't run. | Treat as unscreened, not as clean. |
 
 **Routing and coverage are separate.** A fail-open setup can let a turn continue while reporting degraded coverage. Don't mistake that for a behavioral pass.
+Failed canary coverage can include a `coverage_reason` in the layer result, such as `output_limit` or `timeout`; this diagnostic does not change the verdict.
+
+**Known false-block limitation:** quoted attack phrases in security reports can trigger a structural `BLOCK`; harmless canary acknowledgements can also trigger behavioral rules. In block mode, legitimate work can be blocked. Little Canary has no built-in pause-and-approve UI; hosts can use advisory routing and implement review where their interception point allows it. See the [host capability matrix](docs/host-capability-matrix.md).
 
 ## Put it in front of your agent
 

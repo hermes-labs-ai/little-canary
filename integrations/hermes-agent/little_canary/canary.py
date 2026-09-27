@@ -56,6 +56,7 @@ class CanaryResult:
     success: bool
     error: Optional[str] = None
     metadata: dict = field(default_factory=dict)
+    failure_code: Optional[str] = None
 
 
 class CanaryProbe:
@@ -114,6 +115,7 @@ class CanaryProbe:
                         {"role": "user", "content": user_input},
                     ],
                     "stream": False,
+                    "think": False,
                     "options": {
                         "num_predict": self.max_tokens,
                         "temperature": self.temperature,
@@ -134,6 +136,7 @@ class CanaryProbe:
                     user_input=user_input,
                     success=False,
                     error=f"Ollama returned HTTP status {response.status_code}",
+                    failure_code="http_error",
                 )
 
             try:
@@ -147,9 +150,37 @@ class CanaryProbe:
                     user_input=user_input,
                     success=False,
                     error="Ollama protocol error: invalid JSON response",
+                    failure_code="invalid_response",
                 )
 
-            message = data.get("message") if isinstance(data, dict) else None
+            if not isinstance(data, dict):
+                return CanaryResult(
+                    response="",
+                    latency=elapsed,
+                    model=self.model,
+                    system_prompt=self.system_prompt,
+                    user_input=user_input,
+                    success=False,
+                    error="Ollama protocol error: response content must be a non-empty string",
+                    failure_code="invalid_response",
+                )
+            message = data.get("message")
+            if data.get("done") is not True or data.get("done_reason") != "stop":
+                done_reason = data.get("done_reason")
+                return CanaryResult(
+                    response="",
+                    latency=elapsed,
+                    model=self.model,
+                    system_prompt=self.system_prompt,
+                    user_input=user_input,
+                    success=False,
+                    error="Ollama protocol error: incomplete chat response",
+                    failure_code=("output_limit" if done_reason == "length" else "incomplete_response"),
+                    metadata={
+                        "done_reason": done_reason if isinstance(done_reason, str) and done_reason in {"length", "stop", "unload"} else None,
+                        "eval_count": data.get("eval_count") if type(data.get("eval_count")) is int and data["eval_count"] >= 0 else None,
+                    },
+                )
             canary_response = message.get("content") if isinstance(message, dict) else None
             if not isinstance(canary_response, str) or not canary_response.strip():
                 return CanaryResult(
@@ -160,6 +191,7 @@ class CanaryProbe:
                     user_input=user_input,
                     success=False,
                     error=("Ollama protocol error: response content must be a non-empty string"),
+                    failure_code="empty_response",
                 )
 
             return CanaryResult(
@@ -170,7 +202,10 @@ class CanaryProbe:
                 user_input=user_input,
                 success=True,
                 metadata={
+                    "done_reason": "stop",
                     "total_duration": data.get("total_duration"),
+                    "load_duration": data.get("load_duration"),
+                    "prompt_eval_count": data.get("prompt_eval_count"),
                     "eval_count": data.get("eval_count"),
                     "eval_duration": data.get("eval_duration"),
                 },
@@ -186,6 +221,7 @@ class CanaryProbe:
                 user_input=user_input,
                 success=False,
                 error=f"Canary timed out after {self.timeout}s",
+                failure_code="timeout",
             )
 
         except requests.ConnectionError:
@@ -198,6 +234,7 @@ class CanaryProbe:
                 user_input=user_input,
                 success=False,
                 error=(f"Cannot connect to Ollama at {_redacted_origin(self.ollama_url)}"),
+                failure_code="unavailable",
             )
 
         except Exception as exc:
@@ -212,6 +249,7 @@ class CanaryProbe:
                 user_input=user_input,
                 success=False,
                 error=f"Canary probe failed ({error_class})",
+                failure_code="probe_exception",
             )
 
     def is_available(self) -> bool:
