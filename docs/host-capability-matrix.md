@@ -27,7 +27,7 @@ The machine-readable source of truth for this page is
 | Claude Code | 2.1.261 | `UserPromptSubmit` | **yes** — `{"decision":"block"}` | yes | no |
 | Codex CLI | 0.154.0 | `UserPromptSubmit` | **yes** — `{"decision":"block"}` | yes, install route certified; interception not observed | no |
 | Gemini CLI | 0.32.1 | `BeforeAgent` | **yes** — `{"decision":"deny"}` | yes | no |
-| OpenClaw | 2026.9.5 | `before_agent_run` | **yes** — `{ "outcome": "block" }` | yes, embedded/CLI runners | no |
+| OpenClaw | 2026.9.5 and 2026.9.6 | `before_agent_run` | **yes** — `{ "outcome": "block" }` | yes, supported embedded/CLI runners | no |
 | OpenAI Agents SDK | 0.22.0 | `InputGuardrail` | **yes** — tripwire | yes | no |
 | Hermes Agent | 0.21.4 | `pre_llm_call` | **no** — context injection only | yes, annotation only | **yes** — `pre_tool_call` |
 | GitHub Copilot CLI | 1.0.84-5 | `userPromptSubmitted` | **no** — rewrite/annotate only | **no artifact shipped** | no |
@@ -89,11 +89,15 @@ non-bundled plugin `hooks.allowConversationAccess`. Service errors, malformed
 results, degraded coverage, and request bodies over the service's 64 KiB limit
 pass through with a warning. We verified blocking and a benign control through
 `openclaw agent --local` on OpenClaw 2026.9.5 using a loopback test service and
-fake local model. In that same version, the isolated `openclaw agent exec`
-path bypassed plugin hooks; it is outside tested coverage. Runtime
+fake local model. On 2026.9.6, the packed package loaded one hook after the
+conversation-access grant; a host-dispatched block stopped before the fake
+model, while pass, degraded, and unavailable-service controls reached it. In
+2026.9.5, the isolated `openclaw agent exec` path bypassed plugin hooks; it
+is outside tested coverage. Runtime
 certification covers hook dispatch and adapter behavior only. It does not
 certify the detector against a live model or establish prompt-injection
-detection efficacy. The plugin requires OpenClaw 2026.9.5 or later.
+detection efficacy. The package supports the tested OpenClaw 2026.9.5–2026.9.6
+range; later host versions need a separate compatibility check.
 
 ## GitHub Copilot CLI — certified as unable to refuse a prompt
 
