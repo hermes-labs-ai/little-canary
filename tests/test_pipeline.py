@@ -79,6 +79,7 @@ def _failed_canary_result(user_input="Hello"):
         user_input=user_input,
         success=False,
         error="Canary unavailable",
+        failure_code="unavailable",
     )
 
 
@@ -444,7 +445,9 @@ def test_failed_canary_is_visible_degraded_fail_open(MockProbe):
     assert verdict.canary_risk_score is None
     assert verdict.layers[-1].status == "failed"
     assert verdict.layers[-1].passed is None
+    assert verdict.layers[-1].coverage_reason == "unavailable"
     assert verdict.to_dict()["layers"][-1]["passed"] is None
+    assert verdict.to_dict()["layers"][-1]["coverage_reason"] == "unavailable"
     assert "fail-open" in verdict.summary
     assert "not inspected-safe" in verdict.summary
     assert "passed all" not in verdict.summary

@@ -1,7 +1,7 @@
 ---
 name: little-canary
 description: Use when you need to screen inbound untrusted text before it reaches a primary model — detecting prompt injection by its behavioral effect on a sacrificial canary model, not just pattern matching — and want a block/flag/pass routing decision plus explicit behavioral-coverage state. Inbound preflight sensor, not a guarantee.
-license: MIT
+license: Apache-2.0
 compatibility: Requires Python 3.9+; installs via `pip install little-canary` or runs standalone via `uvx little-canary`. Live demo mode needs a local Ollama instance; replay mode needs no network.
 ---
 

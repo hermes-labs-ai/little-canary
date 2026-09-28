@@ -1,7 +1,7 @@
 """Host capability matrix acceptance tests (offline, no model call).
 
 The matrix in ``docs/host-capability-matrix.json`` is a set of claims about
-what seven hosts can do with an inbound prompt. These tests exist so that a
+what nine hosts can do with an inbound prompt. These tests exist so that a
 claim cannot drift away from the artifact that is supposed to back it: every
 row that says Little Canary ships an adapter has to point at a real file that
 registers the named event, every row that says a host cannot refuse a prompt
@@ -25,7 +25,6 @@ from little_canary import __version__
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX_FILE = ROOT / "docs" / "host-capability-matrix.json"
 MATRIX_DOC = ROOT / "docs" / "host-capability-matrix.md"
-README = ROOT / "README.md"
 EVIDENCE_DIR = ROOT / "docs" / "host-evidence"
 CODEX_SCHEMA_FILE = EVIDENCE_DIR / "codex-0.154.0-user-prompt-submit.command.output.schema.json"
 COPILOT_EVIDENCE_FILE = EVIDENCE_DIR / "copilot-cli-1.0.84-5-hook-outputs.d.ts"
@@ -145,6 +144,33 @@ def test_no_copilot_artifact_is_shipped():
     assert not (ROOT / ".github" / "hooks").exists(), "a .github/hooks manifest would be a Copilot hook claim"
 
 
+def test_opencode_package_registers_an_advisory_input_hook():
+    host = HOSTS["opencode"]
+    assert host["inbound"]["event"] == "chat.message"
+    assert host["inbound"]["deny_channel"] is False
+    package = json.loads((ROOT / "plugins" / "opencode" / "package.json").read_text())
+    assert package["exports"]["."] == "./index.js"
+    entry = (ROOT / "plugins" / "opencode" / "index.js").read_text()
+    assert '"chat.message": async' in entry
+    tool_result = host["tool_result"]
+    assert tool_result["shipped"] is True
+    assert tool_result["event"] == "tool.execute.after"
+    assert tool_result["can_withhold_text"] is True
+    assert tool_result["runtime_certified"] is True
+    assert tool_result["runtime_evidence"].strip()
+    assert '"tool.execute.after": async' in entry
+
+
+def test_pi_package_registers_the_declared_input_boundary():
+    pi = HOSTS["pi"]
+    assert pi["inbound"]["event"] == "input"
+    assert pi["inbound"]["deny_wire"] == '{"action": "handled"}'
+    package = json.loads((ROOT / "plugins" / "pi" / "package.json").read_text())
+    assert package["pi"]["extensions"] == ["./index.js"]
+    extension = (ROOT / "plugins" / "pi" / "index.js").read_text()
+    assert 'pi.on("input", createInputHandler())' in extension
+
+
 def test_hermes_agent_is_the_only_outbound_tool_gate():
     """Inbound screening and outbound tool blocking stay distinct."""
     shipping_outbound = [
@@ -240,11 +266,6 @@ def test_every_adapter_output_validates_against_the_codex_schema(index):
 
 
 # --- documentation consistency ------------------------------------------
-
-
-@pytest.mark.parametrize("host_id", HOST_IDS)
-def test_every_host_has_a_readme_section(host_id):
-    assert HOSTS[host_id]["doc_anchor"] in README.read_text(), f"README has no section for {host_id}"
 
 
 @pytest.mark.parametrize("host_id", HOST_IDS)

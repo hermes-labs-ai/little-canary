@@ -351,17 +351,17 @@
 
 <div class="grid" id="stats-grid">
   <div class="card">
-    <h2>Accuracy</h2>
+    <h2>Accuracy (scored only)</h2>
     <div class="big-number accent" id="accuracy">—</div>
-    <div class="big-label"><span id="correct-count">0</span> / <span id="total-count">0</span> correct</div>
+    <div class="big-label"><span id="correct-count">0</span> / <span id="total-count">0</span> scored cases correct</div>
   </div>
   <div class="card">
-    <h2>Block Recall</h2>
+    <h2>Block Recall (scored only)</h2>
     <div class="big-number green" id="recall">—</div>
     <div class="big-label">Of attacks, how many were caught</div>
   </div>
   <div class="card">
-    <h2>False Positive Rate</h2>
+    <h2>False Positive Rate (scored only)</h2>
     <div class="big-number red" id="fpr">—</div>
     <div class="big-label">Of safe inputs, wrongly blocked</div>
   </div>
@@ -383,12 +383,12 @@
     </div>
   </div>
   <div class="card">
-    <h2>Detection by Stealth Level</h2>
+    <h2 id="secondary-title">Detection by Stealth Level</h2>
     <div id="stealth-chart"></div>
   </div>
 </div>
 
-<div class="section-pad">
+<div class="section-pad" id="category-section">
   <div class="card" style="padding: 20px 24px;">
     <h2>Detection by Category</h2>
     <div id="category-chart"></div>
@@ -424,31 +424,40 @@
 const state = {
   results: [],
   tp: 0, tn: 0, fp: 0, fn: 0,
+  scored: 0, unscored: 0,
   categories: {},
   stealth: {},
   total: 0,
   complete: false,
+  pairedProbe: false,
+  summary: null,
 };
 
 function update(r) {
   state.results.push(r);
   state.total = r.total;
+  if (r.adjudication === 'positive' || r.adjudication === 'benign_control') state.pairedProbe = true;
 
-  if (r.expected_safe && r.actual_safe) state.tp++;
-  else if (!r.expected_safe && !r.actual_safe) state.tn++;
-  else if (r.expected_safe && !r.actual_safe) state.fp++;
-  else state.fn++;
+  if (r.scored) {
+    state.scored++;
+    if (r.expected_safe && r.actual_safe) state.tp++;
+    else if (!r.expected_safe && !r.actual_safe) state.tn++;
+    else if (r.expected_safe && !r.actual_safe) state.fp++;
+    else state.fn++;
+  } else state.unscored++;
 
   const cat = r.category;
-  if (!state.categories[cat]) state.categories[cat] = { total: 0, correct: 0, fn: 0, fp: 0 };
+  if (!state.categories[cat]) state.categories[cat] = { total: 0, scored: 0, correct: 0, fn: 0, fp: 0 };
   state.categories[cat].total++;
+  if (r.scored) state.categories[cat].scored++;
   if (r.correct) state.categories[cat].correct++;
-  if (r.expected_safe && !r.actual_safe) state.categories[cat].fp++;
-  if (!r.expected_safe && r.actual_safe) state.categories[cat].fn++;
+  if (r.scored && r.expected_safe && !r.actual_safe) state.categories[cat].fp++;
+  if (r.scored && !r.expected_safe && r.actual_safe) state.categories[cat].fn++;
 
   const sl = r.stealth;
-  if (!state.stealth[sl]) state.stealth[sl] = { total: 0, correct: 0 };
+  if (!state.stealth[sl]) state.stealth[sl] = { total: 0, scored: 0, correct: 0 };
   state.stealth[sl].total++;
+  if (r.scored) state.stealth[sl].scored++;
   if (r.correct) state.stealth[sl].correct++;
 
   render();
@@ -457,8 +466,27 @@ function update(r) {
 
 function render() {
   const n = state.results.length;
+  const paired = state.pairedProbe || Boolean(state.summary && state.summary.paired_probe);
+  document.getElementById('stats-grid').style.display = paired ? 'none' : '';
+  document.getElementById('category-section').style.display = paired ? 'none' : '';
+  document.getElementById('secondary-title').textContent = paired ? 'Paired probe counts' : 'Detection by Stealth Level';
+  document.getElementById('progress').style.width = (100 * n / (state.total || 1)) + '%';
+  document.getElementById('status').textContent = `${n} / ${state.total} • ${state.unscored} unscored • ${state.complete ? 'Complete' : 'Running...'}`;
+  document.getElementById('tp').textContent = state.tp;
+  document.getElementById('tn').textContent = state.tn;
+  document.getElementById('fp').textContent = state.fp;
+  document.getElementById('fn').textContent = state.fn;
+
+  if (paired) {
+    const counts = state.summary && state.summary.paired_probe;
+    document.getElementById('stealth-chart').textContent = counts
+      ? `Positive: ${counts.positive.blocked} blocked, ${counts.positive.not_blocked} not blocked, ${counts.positive.unscored} unscored of ${counts.positive.total}. Benign control: ${counts.benign_control.blocked} blocked, ${counts.benign_control.not_blocked} not blocked, ${counts.benign_control.unscored} unscored of ${counts.benign_control.total}.`
+      : 'Positive and benign-control counts appear when the run completes; pooled rates are not reported.';
+    return;
+  }
+
   const correct = state.tp + state.tn;
-  const acc = n > 0 ? (100 * correct / n).toFixed(1) : '—';
+  const acc = state.scored > 0 ? (100 * correct / state.scored).toFixed(1) : '—';
   const recall = (state.tn + state.fn) > 0 ? (100 * state.tn / (state.tn + state.fn)).toFixed(1) : '—';
   const fpr = (state.fp + state.tp) > 0 ? (100 * state.fp / (state.fp + state.tp)).toFixed(1) : '—';
 
@@ -466,29 +494,21 @@ function render() {
   document.getElementById('recall').textContent = recall === '—' ? '—' : recall + '%';
   document.getElementById('fpr').textContent = fpr === '—' ? '—' : fpr + '%';
   document.getElementById('correct-count').textContent = correct;
-  document.getElementById('total-count').textContent = n;
-  document.getElementById('progress').style.width = (100 * n / (state.total || 1)) + '%';
-  document.getElementById('status').textContent = `${n} / ${state.total} • ${state.complete ? 'Complete' : 'Running...'}`;
-
-  document.getElementById('tp').textContent = state.tp;
-  document.getElementById('tn').textContent = state.tn;
-  document.getElementById('fp').textContent = state.fp;
-  document.getElementById('fn').textContent = state.fn;
-
+  document.getElementById('total-count').textContent = state.scored;
   // Stealth chart
   const stealthEl = document.getElementById('stealth-chart');
   let stealthHtml = '';
   const stealthColors = { 1: '#4ade80', 2: '#38bdf8', 3: '#fbbf24', 4: '#fb923c', 5: '#f87171' };
   for (let i = 1; i <= 5; i++) {
-    const s = state.stealth[i] || { total: 0, correct: 0 };
-    const pct = s.total > 0 ? (100 * s.correct / s.total).toFixed(0) : 0;
+    const s = state.stealth[i] || { total: 0, scored: 0, correct: 0 };
+    const pct = s.scored > 0 ? (100 * s.correct / s.scored).toFixed(0) : 0;
     stealthHtml += `
       <div class="stealth-row">
         <div class="stealth-level">${'★'.repeat(i)}</div>
         <div class="stealth-bar-bg">
           <div class="stealth-bar-fill" style="width:${pct}%;background:${stealthColors[i]}"></div>
         </div>
-        <div class="stealth-pct">${s.total > 0 ? pct + '%' : '—'}</div>
+        <div class="stealth-pct">${s.scored > 0 ? pct + '%' : '—'}</div>
       </div>`;
   }
   stealthEl.innerHTML = stealthHtml;
@@ -497,19 +517,19 @@ function render() {
   const catEl = document.getElementById('category-chart');
   let catHtml = '';
   const cats = Object.entries(state.categories).sort((a, b) => {
-    const aAcc = a[1].total > 0 ? a[1].correct / a[1].total : 0;
-    const bAcc = b[1].total > 0 ? b[1].correct / b[1].total : 0;
+    const aAcc = a[1].scored > 0 ? a[1].correct / a[1].scored : 0;
+    const bAcc = b[1].scored > 0 ? b[1].correct / b[1].scored : 0;
     return aAcc - bAcc;
   });
   for (const [name, s] of cats) {
-    const pct = s.total > 0 ? (100 * s.correct / s.total).toFixed(0) : 0;
+    const pct = s.scored > 0 ? (100 * s.correct / s.scored).toFixed(0) : 0;
     const color = pct >= 90 ? 'var(--green)' : pct >= 70 ? 'var(--yellow)' : 'var(--red)';
     catHtml += `
       <div class="cat-row">
         <div class="cat-name">${name}</div>
         <div class="cat-bar-bg">
           <div class="cat-bar-fill" style="width:${pct}%;background:${color}"></div>
-          <div class="cat-bar-label">${pct}% (${s.correct}/${s.total}) ${s.fn > 0 ? '⚠ ' + s.fn + ' missed' : ''} ${s.fp > 0 ? '🚫 ' + s.fp + ' false+' : ''}</div>
+          <div class="cat-bar-label">${s.scored > 0 ? pct + '%' : '—'} (${s.correct}/${s.scored}) ${s.total - s.scored > 0 ? '• ' + (s.total - s.scored) + ' unscored' : ''} ${s.fn > 0 ? '⚠ ' + s.fn + ' missed' : ''} ${s.fp > 0 ? '🚫 ' + s.fp + ' false+' : ''}</div>
         </div>
       </div>`;
   }
@@ -519,7 +539,7 @@ function render() {
 function renderRow(r) {
   const tbody = document.getElementById('feed-body');
   const tr = document.createElement('tr');
-  tr.className = r.correct ? 'correct' : 'incorrect';
+  tr.className = r.scored ? (r.correct ? 'correct' : 'incorrect') : '';
 
   const signals = (r.signals || []).map(s => s.category).join(', ');
   const risk = r.risk_score !== null && r.risk_score !== undefined ? r.risk_score.toFixed(2) : '—';
@@ -529,8 +549,8 @@ function renderRow(r) {
     <td>${r.category}</td>
     <td>${r.goal}</td>
     <td>${'★'.repeat(r.stealth)}</td>
-    <td><span class="badge ${r.actual_safe ? 'safe' : 'blocked'}">${r.actual_safe ? 'SAFE' : 'BLOCK'}</span></td>
-    <td><span class="badge ${r.correct ? 'correct' : 'wrong'}">${r.correct ? '✓' : '✗'}</span></td>
+    <td>${r.scored ? `<span class="badge ${r.actual_safe ? 'safe' : 'blocked'}">${r.actual_safe ? 'SAFE' : 'BLOCK'}</span>` : 'UNKNOWN'}</td>
+    <td>${r.scored ? `<span class="badge ${r.correct ? 'correct' : 'wrong'}">${r.correct ? '✓' : '✗'}</span>` : '—'}</td>
     <td>${r.blocked_by || '—'}</td>
     <td>${risk}</td>
     <td>${r.latency_ms}</td>
@@ -551,6 +571,7 @@ evtSource.onmessage = (event) => {
     update(data);
   } else if (data.type === 'complete') {
     state.complete = true;
+    state.summary = data.summary;
     render();
     document.getElementById('banner').style.display = 'block';
     document.getElementById('banner').className = 'complete-banner';

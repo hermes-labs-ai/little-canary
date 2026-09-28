@@ -24,6 +24,8 @@ hermes plugins install hermes-labs-ai/little-canary/integrations/hermes-agent --
 hermes plugins enable little-canary
 ```
 
+Set `LITTLE_CANARY_MODEL` in the Hermes Agent process environment to an installed Ollama tag to select the sacrificial model, for example `LITTLE_CANARY_MODEL=gemma3:1b`. The default remains `qwen2.5:1.5b`. The model receives no tools; selecting a model does not grant it any host authority.
+
 The `pre_llm_call` hook screens the current user message once and can add a
 bounded warning. It cannot prevent the prompt from reaching the model. On a
 genuine BLOCK, `pre_tool_call` refuses downstream tools for that turn. If
