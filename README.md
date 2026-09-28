@@ -121,6 +121,28 @@ current prompt on embedded and CLI agent runs. A source checkout can still use
 behavior and unsupported paths.
 </details>
 
+<details>
+<summary>Hermes Agent install</summary>
+
+With Hermes Agent 0.21.3 or later and local Ollama, install the reviewed community
+catalog entry (pinned to `b67c7292679f202e6378e439307dea1f82cbf243`):
+
+```bash
+ollama pull qwen2.5:1.5b
+hermes plugins install little-canary
+hermes plugins enable little-canary
+hermes plugins list
+```
+
+The native plugin runs inside Hermes and does not need `little-canary serve`.
+A BLOCK removes downstream tool authority; the original prompt still reaches
+the model. If the catalog entry has not reached your client, use
+`hermes plugins install hermes-labs-ai/little-canary/integrations/hermes-agent --no-enable`
+and then enable it. See the [Hermes Agent guide](https://littlecanary.ai/docs/integrations/hermes-agent)
+for verification, cache fallback, model selection, and hook limits.
+
+</details>
+
 ## What Little Canary is and isn't
 
 - **It's a sensing layer.** It sits alongside tool policy, sandboxing, and human review — it doesn't replace them.
