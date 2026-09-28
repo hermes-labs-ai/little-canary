@@ -2,48 +2,63 @@
 
 # Little Canary
 
-<img src="assets/little-canary-header.jpg" alt="Little Canary — detection sensing through a sacrificial model" width="760">
+<img src="assets/little-canary-header.jpg" alt="Little Canary — prompt injection sensing through a sacrificial model" width="760">
 
-**See what untrusted text does to a powerless model before your agent acts on it.**
+**Screen untrusted prompts for signs of injection before your agent acts.**
 
-by [Hermes Labs](https://hermes-labs.ai)
+Little Canary runs untrusted text through a powerless "canary" model first and watches what it does. A host integration can use the verdict to block the input or restrict downstream tool authority, depending on that host's capabilities.
 
+[![PyPI](https://img.shields.io/pypi/v/little-canary)](https://pypi.org/project/little-canary/)
+[![Python 3.9+](https://img.shields.io/pypi/pyversions/little-canary)](https://pypi.org/project/little-canary/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-2ea44f)](LICENSE)
 
-[Website](https://littlecanary.ai) · [PyPI](https://pypi.org/project/little-canary/) · [Integrations](#put-it-in-front-of-an-agent) · [Research](https://hermes-labs.ai/research/behavioral-canarying)
+[Quick start](#quick-start-2-minutes) · [Integrations](#put-it-in-front-of-your-agent) · [How it works](#the-idea) · [Research](#research) · [Website](https://littlecanary.ai)
 
 </div>
 
-A prompt injection can look like ordinary task data until an agent follows it. Little Canary sends that input to a separate canary model with no application tools or credentials, then inspects its response for signs the input changed the model's behavior. Structural checks also catch known attack shapes. Your application gets a screening result before deciding what the primary agent may do.
+---
 
-<img src="assets/preview.png" alt="Little Canary screening output" width="760">
+## The problem
 
-## See the canary work
+A prompt injection looks like ordinary data — a web page, an email, a tool result — until your agent follows the instructions hidden inside it. Pattern-matching filters can miss attacks that do not match known patterns. By the time you notice, the agent has already acted.
 
-Install [Ollama](https://ollama.com/), start it locally, and pull the small model used by the live demo. Little Canary supports Python 3.9+.
+## The idea
+
+Coal miners sent a canary in first. Little Canary does the same thing for agents:
+
+1. **Send the untrusted text to a canary model** that has no tools, no credentials, and nothing to lose.
+2. **Inspect the canary's response** for signs the input changed its behavior.
+3. **Return a verdict** (`PASS`, `FLAG`, `BLOCK`) for the host to enforce within its available interception points.
+
+Structural checks run alongside to catch known attack shapes. The canary can reveal attacks that no pattern check has catalogued yet.
+
+<img src="assets/preview.png" alt="Little Canary screening output: clean input passes, injected input is blocked" width="760">
+
+Little Canary is developed by [Hermes Labs](https://hermes-labs.ai).
+
+## Quick start (2 minutes)
+
+Requires Python 3.9+ and a local [Ollama](https://ollama.com/) install.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install little-canary
-little-canary --version
+pip install little-canary
 ollama pull qwen2.5:1.5b
-little-canary demo --live --backend ollama --model qwen2.5:1.5b \
-  --endpoint http://127.0.0.1:11434
+little-canary demo --live --backend ollama --model qwen2.5:1.5b --endpoint http://127.0.0.1:11434
 ```
 
-The demo sends a fixed clean/attack pair through your local canary. Look for the two responses, the signals, and the resulting verdicts. The result tells you whether the canary followed the attack and whether Little Canary detected it. Live outcomes depend on the model and setup you run.
+The demo sends one clean input and one injected input through your local canary and prints both responses, the signals it found, and the verdict for each. You'll see whether the canary followed the attack and whether Little Canary caught it.
+
+> Results depend on the canary model you run.
 
 ## Screen your own input
 
-Run the local screening service in one terminal:
+Start the local screening service:
 
 ```bash
-little-canary serve --mode block --canary-model qwen2.5:1.5b \
-  --ollama-url http://127.0.0.1:11434
+little-canary serve --mode block --canary-model qwen2.5:1.5b --ollama-url http://127.0.0.1:11434
 ```
 
-Then call it from another:
+Send it anything untrusted:
 
 ```bash
 curl -sS http://127.0.0.1:18421/check \
@@ -51,65 +66,102 @@ curl -sS http://127.0.0.1:18421/check \
   -d '{"text":"untrusted text"}'
 ```
 
-The service binds to loopback and also exposes `GET /health`. Your application decides how to handle its result before forwarding the input. A clean verdict means no covered compromise signal was found in this inspection, not that the input is safe under every circumstance.
+The service binds to loopback only and exposes `GET /health`. Your application reads the verdict and decides what to do before forwarding the input.
 
-Python applications can call `SecurityPipeline.check()` directly; see the [example integrations](examples/) for an application-level wiring pattern.
+Python apps can skip HTTP and call `SecurityPipeline.check()` directly — see the [example integrations](examples/).
 
-## Put it in front of an agent
+The default remains `qwen2.5:1.5b`. Select an installed model with `serve --canary-model`, `demo --model`, or Python's `SecurityPipeline(canary_model=...)`; the Hermes Agent plugin reads `LITTLE_CANARY_MODEL`. Locally exercised alternatives are `qwen3.5:2b-q4_K_M`, `LiquidAI/lfm2.5-1.2b-instruct:q4_k_m`, and `gemma3:1b`. Pull weights with `ollama pull <tag>` and check each model's license. These are selectable models, not performance guarantees; see the [evaluation guidance](benchmarks/README.md).
 
-Start with the local HTTP service above. Host integrations can then put that screening step at the right boundary. Their capabilities differ by host; the [host capability matrix](docs/host-capability-matrix.md) records what each one can actually intercept and block.
+## Reading a verdict
 
-### Claude Code
+| Verdict | Meaning | What to do |
+| --- | --- | --- |
+| `PASS` | Inspection ran and found no covered compromise signal. | Proceed. |
+| `FLAG` | Suspicious structural or behavioral evidence was observed. | Log it, restrict tools, or ask a human. |
+| `BLOCK` | Configured policy rejects the input. | Apply the host's documented blocking behavior. |
+| `DEGRADED` / `UNSCREENED` | Behavioral inspection didn't complete or didn't run. | Treat as unscreened, not as clean. |
 
-The [repository plugin](plugins/claude-code) uses `UserPromptSubmit` to screen an inbound turn through the local service and can refuse it on a block.
+**Routing and coverage are separate.** A fail-open setup can let a turn continue while reporting degraded coverage. Don't mistake that for a behavioral pass.
+Failed canary coverage can include a `coverage_reason` in the layer result, such as `output_limit` or `timeout`; this diagnostic does not change the verdict.
 
-### Codex CLI
+**Known false-block limitation:** quoted attack phrases in security reports can trigger a structural `BLOCK`; harmless canary acknowledgements can also trigger behavioral rules. In block mode, legitimate work can be blocked. Little Canary has no built-in pause-and-approve UI; hosts can use advisory routing and implement review where their interception point allows it. See the [host capability matrix](docs/host-capability-matrix.md).
 
-The same plugin has an install route, but prompt interception has not been certified in the recorded headless run. Codex requires interactive hook trust approval; verify screening before depending on it.
+## Put it in front of your agent
 
-### Gemini CLI
+Run the local service above, then wire in the host you use. Not every host lets a plugin refuse a prompt; the [host capability matrix](docs/host-capability-matrix.md) records exactly what each one can intercept and block.
 
-The repository extension screens `BeforeAgent` and can deny the agent run before its loop starts.
+| Host | Integration | Can it block the turn? |
+| --- | --- | --- |
+| **Claude Code** | [Plugin](plugins/claude-code) screens `UserPromptSubmit` | Yes |
+| **OpenCode** | [Plugin](plugins/opencode) flags submitted `chat.message` text | No — advisory warning only |
+| **Pi** | [Extension](plugins/pi) screens submitted `input` | Yes — when the service returns an unsafe verdict |
+| **Gemini CLI** | Extension screens `BeforeAgent` | Yes — denies the run before the loop starts |
+| **OpenAI Agents SDK** | [Input guardrail](examples/openai_agents_example.py) maps verdicts to the SDK tripwire | Yes — before the first agent starts |
+| **OpenClaw** | [Native plugin](plugins/openclaw), install below | Yes — current prompt only, not history or tool results |
+| **Hermes Agent** | [Native plugin](integrations/hermes-agent/README.md) screens the user turn | No — a block removes downstream tool authority instead |
 
-### OpenAI Agents SDK
+<details>
+<summary>OpenClaw install</summary>
 
-The optional [input guardrail](examples/openai_agents_example.py) maps a Little Canary verdict to the SDK tripwire before the first agent starts.
-
-### Hermes Agent
-
-The [native plugin](integrations/hermes-agent/README.md) screens the user turn. Its inbound hook cannot refuse prompt delivery, so a block removes downstream tool authority instead.
-
-### OpenClaw
-
-Start the service above and, from a Little Canary checkout, install the [native plugin](plugins/openclaw):
+Install the native package from ClawHub after starting the local Little Canary
+service in block mode. Review and accept the hook capability requested during
+installation:
 
 ```bash
-openclaw plugins install ./plugins/openclaw --force
+openclaw plugins install clawhub:@hermes-labs-ai/little-canary-openclaw
 openclaw plugins enable little-canary-openclaw
 openclaw config set plugins.entries.little-canary-openclaw.hooks.allowConversationAccess true
 ```
 
-The adapter covers the current prompt in supported embedded and CLI runs, not previous history or tool results. Review its conversation-access permission before enabling it.
+Review the conversation-access permission before enabling it. This package
+supports the tested OpenClaw 2026.9.5–2026.9.6 host range and screens only the
+current prompt on embedded and CLI agent runs. A source checkout can still use
+`openclaw plugins install ./plugins/openclaw --force`. The package's
+[install and boundary notes](plugins/openclaw/README.md) describe the fail-open
+behavior and unsupported paths.
+</details>
 
-### GitHub Copilot CLI
+<details>
+<summary>Hermes Agent install</summary>
 
-No Copilot CLI artifact is shipped. Its inbound hook cannot deny a prompt; a separate outbound tool-call hook is a different capability.
+With Hermes Agent 0.21.3 or later and local Ollama, install the reviewed community
+catalog entry (pinned to `b67c7292679f202e6378e439307dea1f82cbf243`):
 
-## How to read a result
+```bash
+ollama pull qwen2.5:1.5b
+hermes plugins install little-canary
+hermes plugins enable little-canary
+hermes plugins list
+```
 
-| Result | Meaning |
-| --- | --- |
-| `PASS` | Inspection ran and found no covered compromise signal. |
-| `FLAG` | Suspicious behavior was observed. |
-| `BLOCK` | The configured policy rejects the input. |
-| `DEGRADED` or `UNSCREENED` | Required behavioral inspection did not complete or did not run. |
+The native plugin runs inside Hermes and does not need `little-canary serve`.
+A BLOCK removes downstream tool authority; the original prompt still reaches
+the model. If the catalog entry has not reached your client, use
+`hermes plugins install hermes-labs-ai/little-canary/integrations/hermes-agent --no-enable`
+and then enable it. See the [Hermes Agent guide](https://littlecanary.ai/docs/integrations/hermes-agent)
+for verification, cache fallback, model selection, and hook limits.
 
-Routing and coverage are separate. If the model is unavailable, a fail-open configuration may let a turn continue while reporting degraded coverage; that must not be mistaken for a behavioral pass. The canary is powerless at the application layer, not isolated by an operating-system sandbox. Little Canary is a sensing layer alongside tool policy and other controls, not a promise to catch every attack.
+</details>
 
-[Security](SECURITY.md) · [Host capability matrix](docs/host-capability-matrix.md) · [Benchmarks and methodology](benchmarks/README.md) · [Contributing](CONTRIBUTING.md) · [Releases](https://github.com/hermes-labs-ai/little-canary/releases)
+## What Little Canary is and isn't
+
+- **It's a sensing layer.** It sits alongside tool policy, sandboxing, and human review — it doesn't replace them.
+- **The canary is powerless at the application layer,** not isolated by an OS sandbox.
+- **A `PASS` means no covered signal was found in this inspection.** It doesn't mean the input is safe under every circumstance.
+- **Detection rates depend on your model, your policy, and the attack.** [Benchmarks and methodology](benchmarks/README.md) show how we measure it and where it misses.
+
+We'd rather you know the edges than find them in production.
+
+## Research
+
+The [behavioral canarying technical note](https://hermes-labs.ai/research/behavioral-canarying) explains the powerless-model probe and why a routing decision must stay separate from whether inspection actually ran.
+
+## Contributing
+
+Found an injection that got through? [Open an issue](https://github.com/hermes-labs-ai/little-canary/issues) with a safe reproducer and the observed result. For fixes or integrations, run the offline tests and Ruff, then open a pull request. The [contributor guide](CONTRIBUTING.md) has setup and submission details.
+
+[Benchmarks](benchmarks/README.md) · [Host capability matrix](docs/host-capability-matrix.md) · [Security policy](SECURITY.md) · [Releases](https://github.com/hermes-labs-ai/little-canary/releases)
 
 ## License
 
-Apache-2.0
-
-The source version is in `pyproject.toml`; compare `little-canary --version` with [GitHub Releases](https://github.com/hermes-labs-ai/little-canary/releases) and [PyPI](https://pypi.org/project/little-canary/) for the published build. [Hermes Labs](https://hermes-labs.ai) builds agentic infrastructure for autonomous systems.
+Apache-2.0. The source version lives in `pyproject.toml`; compare `little-canary --version` against [GitHub Releases](https://github.com/hermes-labs-ai/little-canary/releases) and [PyPI](https://pypi.org/project/little-canary/) for the published build.

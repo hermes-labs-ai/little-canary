@@ -7,10 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
-## Next version
+## [0.3.10] - 2026-09-26
+
+Patch release of the fixes reviewed and merged in [PR #112](https://github.com/hermes-labs-ai/little-canary/pull/112). The default canary, detector rules, and fail-open routing are unchanged.
+
+- The OpenAI-compatible canary adapter now marks length-limited and other incomplete responses as degraded coverage instead of treating them as complete. It reports bounded failure reasons for malformed, empty, timed-out, and failed calls. The Hermes Agent bundle carries the same behavior.
+- Paired benchmark summaries and the dashboard no longer present positive and benign-control cases as one pooled accuracy percentage; the separate case counts remain available.
+- The JailBench-derived probe points to its repository license file.
+
+This patch does not establish a new detection or false-block rate. The known limitations in 0.3.9 still apply.
+
+## [0.3.9] - 2026-09-26
+
+This release makes the package's `requests` range compatible with Hermes
+Agent's core pin and includes the focused directory plugin admitted to the
+Nous Research catalog at its pinned source revision. It adds model selection
+and coverage diagnostics without changing the default canary or detector rules.
 
 ### Added
 
+- Local exercise of Qwen3.5 2B, Liquid LFM2.5 1.2B, and Gemma 3 1B through
+  the CLI, Python pipeline, and Hermes Agent model-selection paths. The
+  default remains `qwen2.5:1.5b`.
+- Case-level headless benchmark runs with fixed IDs, independent pipeline,
+  model-only, and structural-only modes, coverage-aware denominators, and
+  separate layer latency. The auxiliary JailBench-derived five-pair regression
+  probe is selected explicitly and keeps its positive and benign-control
+  results separate from the original corpus.
+- Bounded `coverage_reason` diagnostics for failed canary or analysis coverage,
+  including output-limit and timeout failures, without changing fail-open
+  routing or treating incomplete calls as clean.
 - Native OpenClaw plugin (`plugins/openclaw`) using the typed
   `before_agent_run` gate on supported embedded and CLI runners. It sends only
   the current prompt to the existing loopback HTTP adapter, blocks only an
@@ -52,6 +78,18 @@ Benchmark and latency figures in entries before `0.3.3` are historical release n
   keeping a bounded upper limit.
 - README and plugin descriptions now distinguish installed host support from
   observed runtime interception.
+
+### Known limitations
+
+- The default canary, analyzer rules, structural rules, and 256-token output
+  ceiling are unchanged. Quoted attack phrases in security reports can still
+  block, and a benign canary acknowledgement can still match `persona_shift`.
+  Proposed exceptions failed independent attack checks and were not adopted.
+- A degraded canary result is an inspection gap. Raising the output ceiling
+  improved coverage on a small development screen but increased tail latency;
+  no retry or shorter-answer policy is enabled by default.
+- The original external TensorTrust corpus has not been rerun across the new
+  model choices. This release does not establish a lower false-block rate.
 
 ## [0.3.8] - 2026-09-18
 

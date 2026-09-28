@@ -13,8 +13,10 @@ Two capabilities are tracked separately and must not be conflated:
 - **Outbound tool-execution blocking** — can the host let a plugin veto a
   tool call the model has already decided to make?
 
-A host can have one without the other. Little Canary ships inbound adapters for
-seven host surfaces and an outbound tool gate for exactly one.
+A host can have one without the other. The matrix tracks nine host surfaces;
+Little Canary ships an outbound tool gate for exactly one.
+OpenCode also has a separate text tool-result boundary described below: it
+runs after tool execution and before the next model request.
 
 The machine-readable source of truth for this page is
 [`host-capability-matrix.json`](host-capability-matrix.json), enforced by
@@ -25,12 +27,58 @@ The machine-readable source of truth for this page is
 | Host | Observed version | Inbound event | Can refuse the prompt? | Little Canary ships it | Outbound tool veto shipped |
 |---|---|---|---|---|---|
 | Claude Code | 2.1.261 | `UserPromptSubmit` | **yes** — `{"decision":"block"}` | yes | no |
+| OpenCode | 1.18.32 | `chat.message` | **no** — warning only | yes | no |
+| Pi | 0.87.1 | `input` | **yes** — `{"action":"handled"}` | yes | no |
 | Codex CLI | 0.154.0 | `UserPromptSubmit` | **yes** — `{"decision":"block"}` | yes, install route certified; interception not observed | no |
 | Gemini CLI | 0.32.1 | `BeforeAgent` | **yes** — `{"decision":"deny"}` | yes | no |
-| OpenClaw | 2026.9.5 | `before_agent_run` | **yes** — `{ "outcome": "block" }` | yes, embedded/CLI runners | no |
+| OpenClaw | 2026.9.5 and 2026.9.6 | `before_agent_run` | **yes** — `{ "outcome": "block" }` | yes, supported embedded/CLI runners | no |
 | OpenAI Agents SDK | 0.22.0 | `InputGuardrail` | **yes** — tripwire | yes | no |
 | Hermes Agent | 0.21.4 | `pre_llm_call` | **no** — context injection only | yes, annotation only | **yes** — `pre_tool_call` |
 | GitHub Copilot CLI | 1.0.84-5 | `userPromptSubmitted` | **no** — rewrite/annotate only | **no artifact shipped** | no |
+
+### OpenCode
+
+The [OpenCode package](../plugins/opencode) uses the 1.18.32 `chat.message`
+hook to send the current user message's text parts to the Little Canary
+loopback service. In an isolated run, a synthetic flagged verdict produced a
+loopback request and a warning on stderr before the host reached its model
+call. The same package also uses `tool.execute.after` to screen string tool
+results. The five-file npm archive was installed in an isolated OpenCode
+1.18.32 profile. A local mock provider requested a synthetic file read; pass,
+unsafe, and unavailable service responses were exercised in separate runs.
+The next model request received the original text on pass and unavailable, and
+only a replacement notice on unsafe. Unavailable screening warned. This
+certifies those hook paths with synthetic verdicts, not detector efficacy.
+
+This stable hook has no typed input-rejection result. Even if a blocking
+Little Canary service returns an unsafe verdict, the plugin warns and OpenCode
+continues. A rejected string tool result can be withheld after the tool runs;
+the hook cannot undo that tool call. Earlier conversation, attachments, tool
+arguments, and non-text results are not screened. File text is screened only
+after a tool returns it. Raw MCP text items are covered by the adapter and
+OpenCode 1.18.32 source inspection, with an offline adapter test; this shape
+was not exercised in an installed-host run. Service failures and results over
+the server's 64 KiB request limit warn and continue with the original text. The
+separate OpenCode V2 plugin API is not covered by this 1.18.32 result.
+
+### Pi
+
+The [Pi package](../plugins/pi) registers `input`, which Pi calls after input
+arrives and before agent processing. It sends only that input's text to the
+Little Canary loopback service. Pi 0.87.1 loaded the package from a local path
+in an isolated profile. In a print-mode run, a loopback service returning
+`safe: false` caused the extension to return `{ "action": "handled" }`; Pi
+reported the block and exited without a model call. Offline tests cover clean,
+flagged, degraded, and unavailable-service results. This is host-dispatch
+evidence using a synthetic verdict, not a live-model detection test.
+
+The recommended advisory service mode emits warnings and lets input continue.
+The Pi extension handles input only when the service explicitly returns an
+unsafe verdict. It does not separately screen prior conversation, files, tool
+results, or images. Pi runs registered extension commands before the `input`
+event; those commands bypass this check. Skill and prompt-template expansion
+happens after the event, so added content is not screened. Service failures
+pass through with a warning.
 
 ## Codex CLI — what was and was not certified
 
@@ -89,11 +137,15 @@ non-bundled plugin `hooks.allowConversationAccess`. Service errors, malformed
 results, degraded coverage, and request bodies over the service's 64 KiB limit
 pass through with a warning. We verified blocking and a benign control through
 `openclaw agent --local` on OpenClaw 2026.9.5 using a loopback test service and
-fake local model. In that same version, the isolated `openclaw agent exec`
-path bypassed plugin hooks; it is outside tested coverage. Runtime
+fake local model. On 2026.9.6, the packed package loaded one hook after the
+conversation-access grant; a host-dispatched block stopped before the fake
+model, while pass, degraded, and unavailable-service controls reached it. In
+2026.9.5, the isolated `openclaw agent exec` path bypassed plugin hooks; it
+is outside tested coverage. Runtime
 certification covers hook dispatch and adapter behavior only. It does not
 certify the detector against a live model or establish prompt-injection
-detection efficacy. The plugin requires OpenClaw 2026.9.5 or later.
+detection efficacy. The package supports the tested OpenClaw 2026.9.5–2026.9.6
+range; later host versions need a separate compatibility check.
 
 ## GitHub Copilot CLI — certified as unable to refuse a prompt
 

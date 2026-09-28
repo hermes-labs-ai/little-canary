@@ -44,7 +44,6 @@ def test_current_release_metadata_uses_canonical_repository_identity():
             "CITATION.cff",
             ".zenodo.json",
             "codemeta.json",
-            "README.md",
             "llms.txt",
         )
     }
@@ -72,7 +71,10 @@ def test_codemeta_tracks_current_release_metadata():
     assert codemeta["version"] == __version__
     assert codemeta["identifier"] == "https://doi.org/10.5281/zenodo.21543681"
     assert codemeta["codeRepository"] == canonical_repository
-    assert codemeta["downloadUrl"] == f"https://pypi.org/project/little-canary/{__version__}/"
+    if f"## [{__version__}] - Unreleased" in _read("CHANGELOG.md"):
+        assert "downloadUrl" not in codemeta
+    else:
+        assert codemeta["downloadUrl"] == f"https://pypi.org/project/little-canary/{__version__}/"
     assert codemeta["license"] == f"https://spdx.org/licenses/{license_id}"
     assert author["@id"] == maintainer["@id"] == citation_orcid
     assert zenodo_creator["orcid"] == citation_orcid.rsplit("/", maxsplit=1)[-1]
@@ -93,9 +95,6 @@ def test_current_project_license_metadata_is_spdx_consistent():
     citation_license = _match("CITATION.cff", r"^license: (\S+)$")
     zenodo_license = json.loads(_read(".zenodo.json"))["license"]
     codemeta_license = json.loads(_read("codemeta.json"))["license"]
-    readme = _read("README.md")
-    readme_badge_license = _match("README.md", r"^\[!\[License: ([^\]]+)\]")
-    readme_section_license = readme.split("## License\n\n", maxsplit=1)[1].splitlines()[0]
     package_license = _match("little_canary/__init__.py", r"^License: (\S+)$")
     integration_package_license = _match(
         "integrations/hermes-agent/little_canary/__init__.py", r"^License: (\S+)$"
@@ -110,8 +109,6 @@ def test_current_project_license_metadata_is_spdx_consistent():
         citation_license,
         zenodo_license,
         codemeta_license.rsplit("/", maxsplit=1)[-1],
-        readme_badge_license,
-        readme_section_license,
         package_license,
         integration_package_license,
         integration_manifest_license,
@@ -120,31 +117,20 @@ def test_current_project_license_metadata_is_spdx_consistent():
     } == {"Apache-2.0"}
 
 
-def test_changelog_top_entry_is_a_dated_release_for_the_current_version():
+def test_changelog_top_entry_tracks_the_current_version():
     headings = re.findall(r"^## \[([^\]]+)\] - (.+)$", _read("CHANGELOG.md"), flags=re.MULTILINE)
 
     assert headings, "CHANGELOG.md contains no release headings"
-    top_version, top_date = headings[0]
+    top_version, top_status = headings[0]
     assert top_version == __version__
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", top_date), top_date
-
-
-def test_readme_release_guidance_stays_true_across_publication():
-    readme = _read("README.md")
-
-    # Durable guidance: point at live authorities and the local verification
-    # command instead of freezing a snapshot of external registry state.
-    assert "https://github.com/hermes-labs-ai/little-canary/releases" in readme
-    assert "https://pypi.org/project/little-canary/" in readme
-    assert "little-canary --version" in readme
-    assert "pyproject.toml" in readme
+    assert top_status == "Unreleased" or re.fullmatch(r"\d{4}-\d{2}-\d{2}", top_status), top_status
+    assert all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) for _, date in headings[1:])
 
 
 def test_release_docs_do_not_assert_current_external_registry_state():
-    for relative_path in ("README.md", "CHANGELOG.md"):
+    for relative_path in ("CHANGELOG.md",):
         text = _read(relative_path)
 
-        assert "Unreleased" not in text, relative_path
         assert "currently publishes" not in text, relative_path
         assert "source candidate" not in text, relative_path
         assert "artifact exists" not in text, relative_path

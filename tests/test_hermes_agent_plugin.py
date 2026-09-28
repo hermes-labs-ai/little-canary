@@ -455,6 +455,13 @@ class TestDiscovery:
         assert ctx.hooks[HOOK_PRE_TOOL_CALL] == [plugin.pre_tool_call]
         assert ctx.hooks[HOOK_ON_SESSION_END] == [plugin.on_session_end]
 
+    def test_register_uses_selected_canary_model(self, monkeypatch):
+        monkeypatch.setenv("LITTLE_CANARY_MODEL", "gemma3:1b")
+        plugin = register(FakeContext())
+        checker = plugin._resolve_checker()
+        assert plugin.canary_model == "gemma3:1b"
+        assert checker.canary_probe.model == "gemma3:1b"
+
     def test_registered_hook_names_are_upstream_valid_hooks(self):
         # Names present in hermes-agent 0.21.3 hermes_cli/plugins.py VALID_HOOKS.
         upstream_valid = {"pre_llm_call", "pre_tool_call", "on_session_end"}

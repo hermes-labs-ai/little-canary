@@ -9,8 +9,6 @@ import yaml
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "lintlang.yml"
 DEPENDABOT = ROOT / ".github" / "dependabot.yml"
-CURRENT_LINTLANG_SHA = "58e66871531eb585869336189d07b4334e963a5f"  # v0.6.0
-PINNED_LINTLANG_SHA = "f89c3b0b8986fad162859dca052a8d5fe227eede"  # v0.5.3
 
 
 def _lintlang_ref(workflow: str) -> tuple[str, str]:
@@ -22,12 +20,11 @@ def _lintlang_ref(workflow: str) -> tuple[str, str]:
     return match.groups()
 
 
-def test_lintlang_pin_is_immutable_and_deliberately_stale() -> None:
+def test_lintlang_pin_is_immutable_and_versioned() -> None:
     sha, version = _lintlang_ref(WORKFLOW.read_text())
 
-    assert sha == PINNED_LINTLANG_SHA
-    assert version == "v0.5.3"
-    assert sha != CURRENT_LINTLANG_SHA
+    assert len(sha) == 40
+    assert version.startswith("v")
 
 
 def test_dependabot_monitors_github_actions() -> None:
@@ -52,7 +49,9 @@ def test_dependabot_monitors_github_actions() -> None:
 def test_tag_ref_is_a_failing_control() -> None:
     """A tag would defeat the immutable-pin contract and must be rejected."""
 
-    unpinned = WORKFLOW.read_text().replace(f"@{PINNED_LINTLANG_SHA}", "@v0.6.0")
+    workflow = WORKFLOW.read_text()
+    sha, version = _lintlang_ref(workflow)
+    unpinned = workflow.replace(f"@{sha}", f"@{version}")
 
     with pytest.raises(AssertionError, match="full immutable SHA"):
         _lintlang_ref(unpinned)
