@@ -66,7 +66,7 @@ curl -sS http://127.0.0.1:18421/check \
   -d '{"text":"untrusted text"}'
 ```
 
-The service binds to loopback only and exposes `GET /health`. Your application reads the verdict and decides what to do before forwarding the input.
+The service binds to loopback only and exposes `GET /health`. Its JSON response exposes `safe`, `degraded`, `canary_status`, `analysis_status`, and optional `advisory` data. Read those fields before forwarding input; the disposition labels below summarize CLI and host behavior rather than a JSON `Result` field.
 
 Python apps can skip HTTP and call `SecurityPipeline.check()` directly — see the [example integrations](examples/).
 
@@ -77,7 +77,7 @@ The default remains `qwen2.5:1.5b`. Select an installed model with `serve --cana
 | Verdict | Meaning | What to do |
 | --- | --- | --- |
 | `PASS` | Inspection ran and found no covered compromise signal. | Proceed. |
-| `FLAG` | Suspicious behavior observed. | Log it, restrict tools, or ask a human. |
+| `FLAG` | Suspicious structural or behavioral evidence was observed. | Log it, restrict tools, or ask a human. |
 | `BLOCK` | Configured policy rejects the input. | Apply the host's documented blocking behavior. |
 | `DEGRADED` / `UNSCREENED` | Behavioral inspection didn't complete or didn't run. | Treat as unscreened, not as clean. |
 
