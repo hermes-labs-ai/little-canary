@@ -66,7 +66,7 @@ curl -sS http://127.0.0.1:18421/check \
   -d '{"text":"untrusted text"}'
 ```
 
-The service binds to loopback only and exposes `GET /health`. Your application reads the verdict and decides what to do before forwarding the input.
+The service binds to loopback only and exposes `GET /health`. Its JSON response exposes `safe`, `degraded`, `canary_status`, `analysis_status`, and optional `advisory` data. Read those fields before forwarding input; the disposition labels below summarize CLI and host behavior rather than a JSON `Result` field.
 
 Python apps can skip HTTP and call `SecurityPipeline.check()` directly — see the [example integrations](examples/).
 
