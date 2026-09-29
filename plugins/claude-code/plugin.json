@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "little-canary",
-  "version": "0.3.10",
+  "version": "0.4.0",
   "description": "Screens submitted prompts with a local Little Canary service. Advisory mode flags suspicious input; block mode stops turns the service rejects. On Codex CLI, trust the hook before it screens.",
   "author": {
     "name": "Hermes Labs",

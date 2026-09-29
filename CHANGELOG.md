@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
-## [Unreleased]
+## [0.4.0] - 2026-09-29
+
+Minor release. Bare `little-canary demo` now works out of the box with a
+packaged offline replay fixture (no Ollama, no model pull), and the canary
+timeout is configurable with a default that CPU-only hardware can actually
+meet. No changes to the default canary, detector rules, or fail-open routing.
 
 ### Added
 
