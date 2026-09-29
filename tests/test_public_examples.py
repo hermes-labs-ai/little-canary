@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -102,6 +103,10 @@ def test_replay_example_output_claims_match_demo_run():
     assert "`risk 1.0`, verdict `BLOCK`" in text
     for signal in set(cases["c1-05"]["signals"]):
         assert f"`{signal}`" in text
+    assert cases["c1-05"]["signals"].count("canary_compromise") == 2 and "(twice)" in text
+    assert result["egress"] == "none" and "`egress: none`" in text
+    fixture = _load("little_canary/data/demo_replay.json")
+    assert fixture["capture"]["runtime_version"].replace("little-canary ", "`little-canary ") + "`" in text
     assert cases["clean"]["verdict"] == "PASS" and cases["clean"]["risk"] == 0.0
     assert "risk `0.0`, verdict `PASS`" in text
 
@@ -110,6 +115,8 @@ def test_jailbench_example_output_claims_match_structural_run():
     text = (EXAMPLES / "02-jailbench-sandwich-pair.md").read_text(encoding="utf-8")
     assert "Direct injection (instruction override); Injection: fake system prompt update" in text
     assert text.count("| `block` |") == 2
+    for case_id in ("jb-inj-01", "benign_control-jb-inj-01"):
+        assert f"| `{case_id}` | `block` |" in text
     assert "same two reasons" in text and "`skipped_after_block`" in text
 
 
@@ -127,13 +134,14 @@ def test_batch_example_output_claims_match_offline_screen_run(tmp_path):
     assert run.returncode == 2 and "Exit status `2`" in text
     assert result["counts"]["block"] == 1 and result["counts"]["degraded"] == 1
     assert result["counts"]["pass"] == 0 and "`block 1`, `degraded 1`, `pass 0`" in text
-    assert items["clean"]["state"] == "degraded"
-    assert items["clean"]["verdict"]["canary_status"] == "failed"
-    assert "Input allowed by fail-open policy because behavioral coverage failed; not inspected-safe" in (
-        items["clean"]["verdict"]["summary"]
-    )
-    assert items["jb-inj-01"]["state"] == "block"
-    assert items["jb-inj-01"]["verdict"]["canary_status"] == "skipped_after_block"
+    clean, inj = items["clean"], items["jb-inj-01"]
+    assert clean["state"] == "degraded" and "`clean` → `degraded`" in text
+    assert clean["verdict"]["canary_status"] == "failed" and "`canary_status` is `failed`" in text
+    quoted = "Input allowed by fail-open policy because behavioral coverage failed; not inspected-safe"
+    assert quoted in clean["verdict"]["summary"] and quoted in text
+    assert inj["state"] == "block" and "`jb-inj-01` → `block` by the structural filter (canary skipped)" in text
+    assert inj["verdict"]["canary_status"] == "skipped_after_block"
+    assert inj["verdict"]["blocked_by"] == "structural_filter"
     assert "France" not in run.stdout and "cooking" not in run.stdout
     assert "Unreleased" in text
 
@@ -142,6 +150,8 @@ def test_copilot_example_output_claims_match_matrix():
     matrix = _load("docs/host-capability-matrix.json")
     host = next(h for h in matrix["hosts"] if h["id"] == "github-copilot")
     text = (EXAMPLES / "04-copilot-cannot-refuse.md").read_text(encoding="utf-8")
+    versions = re.findall(r"1\.0\.\d+-\d+", text)
+    assert len(versions) >= 2 and set(versions) == {host["observed_version"]}
     assert f"`deny_channel: {str(host['inbound']['deny_channel']).lower()}`" in text
     assert f"`shipped: {str(host['inbound']['shipped']).lower()}`" in text
     assert host["outbound_tool_execution"]["host_deny_channel"] is True
