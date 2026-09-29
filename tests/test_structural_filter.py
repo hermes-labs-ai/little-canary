@@ -339,3 +339,36 @@ def test_safe_technical_question_passes():
     f = StructuralFilter()
     r = f.check("Explain quantum computing in simple terms.")
     assert r.blocked is False
+
+
+# ── Type validation ──
+
+
+def test_check_rejects_none():
+    f = StructuralFilter()
+    try:
+        f.check(None)
+        raise AssertionError("expected TypeError")
+    except TypeError as exc:
+        assert "text must be a str" in str(exc)
+        assert "NoneType" in str(exc)
+
+
+def test_check_rejects_int():
+    f = StructuralFilter()
+    try:
+        f.check(123)
+        raise AssertionError("expected TypeError")
+    except TypeError as exc:
+        assert "text must be a str" in str(exc)
+        assert "int" in str(exc)
+
+
+def test_check_rejects_bytes():
+    f = StructuralFilter()
+    try:
+        f.check(b"hello")
+        raise AssertionError("expected TypeError")
+    except TypeError as exc:
+        assert "text must be a str" in str(exc)
+        assert "bytes" in str(exc)
