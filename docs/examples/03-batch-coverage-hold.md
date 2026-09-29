@@ -1,6 +1,6 @@
 # 03 — Batch coverage hold (unreleased, source install only)
 
-> **Unreleased.** `little-canary screen` is not in the published `0.4.0`. Install from source: `pip install "git+https://github.com/hermes-labs-ai/little-canary.git"`.
+> **Unreleased.** `little-canary screen` is not in the `0.4.0` package published on PyPI; it exists only on `main` after that release. Install from source: `pip install "git+https://github.com/hermes-labs-ai/little-canary.git"`.
 
 **Evidence:** executed offline against this repository's `screen` command with the Ollama URL pointed at a closed port and `--timeout 1`.
 

@@ -11,4 +11,4 @@ Every output below is one of: **recorded** (captured earlier from a live model, 
 | [03 Batch coverage hold](03-batch-coverage-hold.md) | offline-executed, **unreleased** | `degraded` and exit `2` when the canary model is unreachable |
 | [04 Copilot cannot refuse a prompt](04-copilot-cannot-refuse.md) | quoted upstream SDK types | why the same screening cannot stop a prompt on one host |
 
-The facts quoted here are pinned to their sources by `tests/test_public_examples.py`.
+`tests/test_public_examples.py` checks the quoted inputs against their source files and re-runs the offline commands (`demo --json`, the structural filter, `screen`) to check the stated outputs. The recorded capture itself is not re-run; that is why it is labelled recorded.
