@@ -21,6 +21,7 @@ import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Optional
 
+from .cli import DEFAULT_CANARY_TIMEOUT
 from .pipeline import SecurityPipeline
 
 logger = logging.getLogger("little_canary.server")
@@ -143,6 +144,7 @@ def create_server(
     mode: str = "advisory",
     canary_model: str = "qwen2.5:1.5b",
     ollama_url: str = "http://127.0.0.1:11434",
+    canary_timeout: float = DEFAULT_CANARY_TIMEOUT,
 ) -> HTTPServer:
     """Create and return an HTTPServer (without starting it).
 
@@ -154,6 +156,7 @@ def create_server(
         canary_model=canary_model,
         ollama_url=ollama_url,
         mode=mode,
+        canary_timeout=canary_timeout,
     )
     return HTTPServer(("127.0.0.1", port), _CanaryHandler)
 
@@ -163,6 +166,7 @@ def run_server(
     mode: str = "advisory",
     canary_model: str = "qwen2.5:1.5b",
     ollama_url: str = "http://127.0.0.1:11434",
+    canary_timeout: float = DEFAULT_CANARY_TIMEOUT,
 ) -> None:
     """Start the Little Canary HTTP detection server (blocking).
 
@@ -176,6 +180,8 @@ def run_server(
         Ollama model tag for the sacrificial canary probe.
     ollama_url : str
         Explicit Ollama origin (loopback by default).
+    canary_timeout : float
+        Seconds to wait for one canary model call (default DEFAULT_CANARY_TIMEOUT).
     """
     logging.basicConfig(
         level=logging.INFO,
@@ -187,6 +193,7 @@ def run_server(
         mode=mode,
         canary_model=canary_model,
         ollama_url=ollama_url,
+        canary_timeout=canary_timeout,
     )
 
     assert _pipeline is not None

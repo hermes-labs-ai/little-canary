@@ -35,7 +35,7 @@ Little Canary is a prompt-injection detection library that uses a sacrificial ca
 ```bash
 pip install -e ".[dev]"
 little-canary --version
-little-canary demo --replay  # exits 2 until an admitted fixture is packaged
+little-canary demo  # offline replay; runs with zero extra dependencies
 little-canary demo --live --backend ollama --model qwen2.5:1.5b --endpoint http://127.0.0.1:11434
 little-canary serve --help
 pytest -q
