@@ -1,12 +1,16 @@
 # CLAUDE.md — Agent Context for Little Canary
 
+Priority order: preserve security and coverage semantics; preserve public API behavior;
+then minimize the diff. Treat each user request as an independent task and carry prior
+task state forward only when the user explicitly asks.
+
 ## Project Overview
 
 Little Canary is a prompt injection detection library that uses a small, sacrificial LLM as a behavioral probe. Instead of classifying inputs, it feeds user input to a sandboxed canary model and analyzes the canary's response for signs of compromise. Three deployment modes: block, advisory, full. Runs locally via Ollama.
 
 ## Tech Stack
 
-- **Language:** Python 3.8+
+- **Language:** Python 3.9+ (tested on 3.9–3.13)
 - **Dependencies:** `requests` (only runtime dependency)
 - **Optional:** `anthropic` (benchmarks only), `pytest` (dev)
 - **LLM Runtime:** Ollama (local inference, any model)
@@ -93,7 +97,7 @@ All error paths (Ollama down, timeout, HTTP error, parse failure) return `should
 - **Do not add dependencies** beyond `requests` to the core package
 - **Do not modify benchmark prompt files** (`prompts.json`, `prompts_fp_realistic.json`) without re-running benchmarks
 - **Ollama API format** is hardcoded — the `/api/chat` endpoint with `options` dict. No abstraction layer exists yet
-- **Python 3.8 compatibility** is required (no walrus operator, no `match` statements, no `|` union types)
+- **Python 3.9 compatibility** is required (no `match` statements, no runtime `X | Y` union types)
 - The `PipelineVerdict.to_dict()` method intentionally omits the raw `input` field for security
 
 ## Common Tasks

@@ -53,8 +53,8 @@ Open a [feature request](https://github.com/hermes-labs-ai/little-canary/issues/
 - Include a description of what changed and why
 - If adding detection patterns, include example inputs that trigger them
 - If changing scoring or mode logic, include before/after benchmark results
-- Maintain source/next-release Python 3.9–3.13 support; published `0.3.3`
-  metadata advertises Python 3.9–3.12 until a new release is published
+- Maintain Python 3.9–3.13 support (`requires-python = ">=3.9"`); the published
+  `0.4.0` metadata and the source both advertise Python 3.9–3.13
 
 ### Repository Quality Gate
 
