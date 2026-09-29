@@ -1,6 +1,8 @@
 """A local documentation agent whose fetch tool screens text before returning it.
 
-Install the source package with [openai-agents], run Ollama, and pull qwen2.5:1.5b plus qwen3.5:4b.
+Install the source package with [openai-agents] and run Ollama. Pull the model
+configured by --model and --context-model; both default to qwen3.5:4b, so the
+default example needs only `ollama pull qwen3.5:4b`.
 Run: python examples/document_agent.py --url https://raw.githubusercontent.com/psf/requests/main/README.md \
     --question 'What does this manual say?' --endpoint http://127.0.0.1:11435
 The caller fixes the URL; the agent cannot fetch another address. This example

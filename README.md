@@ -190,14 +190,17 @@ is unchanged. `inspect_document` returns metadata if your application needs
 to show the decision before acting.
 
 Documents are checked in overlapping 3,500-character chunks, up to 24,000
-characters by default. All chunks must pass before any text is returned.
+characters and at most eight inspection calls by default. `max_chunks` sets
+the call budget; if the derived chunk count exceeds it, the whole document is
+held before any pipeline or classifier call. All chunks must pass before any text is returned.
 Oversized documents are held without truncation. Chunk overlap preserves local
 context but cannot guarantee detection of instructions spread across distant
 sections. This gates the text your tool returns; a browser that separately
 feeds DOM, images, or screenshots to its model needs those paths addressed too.
 
 From the source checkout, this example uses the existing optional Agents SDK
-and local Ollama for both the agent and canary, with no hosted API key:
+and local Ollama with no hosted API key. Its `--model` and `--context-model`
+both default to `qwen3.5:4b`, so only that model must be pulled for this example:
 
 ```bash
 python -m pip install ".[openai-agents]"

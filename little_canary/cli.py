@@ -136,8 +136,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         from little_canary import SecurityPipeline
         from little_canary.demo import validate_loopback_endpoint
 
-        if args.context_model and not args.document:
-            parser.error("--context-model requires --document")
+        if args.context_model is not None:
+            if not args.context_model.strip():
+                parser.error("--context-model requires a nonempty model name")
+            if not args.document:
+                parser.error("--context-model requires --document")
         try:
             endpoint = validate_loopback_endpoint(args.endpoint)
             if not 1 <= args.timeout <= 300:

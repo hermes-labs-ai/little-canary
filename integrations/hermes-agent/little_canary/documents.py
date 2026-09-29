@@ -76,6 +76,7 @@ def inspect_document(
     chunk_chars: int = 3500,
     overlap: int = 500,
     max_chars: int = 24000,
+    max_chunks: int = 8,
     context_model: str | None = None,
 ) -> DocumentInspection:
     """Check the entire supplied text, stopping on a block or failed inspection.
@@ -83,7 +84,8 @@ def inspect_document(
     Overlap preserves local context across chunk boundaries; it is not a claim
     that arbitrary cross-document or widely separated attacks are detected.
     A maximum size is a work budget: exceeding it holds the whole document,
-    never silently truncates it or labels it malicious. With context_model,
+    never silently truncates it or labels it malicious. max_chunks bounds the
+    number of pipeline/classifier calls before any inspection starts. With context_model,
     each chunk is classified as reference information or agent-directed
     instructions instead of using the user-input pipeline. This allows quoted
     security examples to be considered in context. The method is explicit in
@@ -100,6 +102,8 @@ def inspect_document(
     if (not isinstance(chunk_chars, int) or not isinstance(overlap, int)
             or not isinstance(max_chars, int) or not 0 <= overlap < chunk_chars <= max_chars):
         raise ValueError("require 0 <= overlap < chunk_chars <= max_chars")
+    if not isinstance(max_chunks, int) or max_chunks < 1:
+        raise ValueError("max_chunks must be a positive integer")
     if chunk_chars > pipeline.structural_filter.max_input_length:
         raise ValueError("chunk_chars must not exceed the pipeline's max_input_length")
     if not isinstance(text, str) or not text.strip():
@@ -109,10 +113,15 @@ def inspect_document(
             "INSUFFICIENTLY INSPECTED", "NOT RUN", 0, 0, 0,
             f"Document exceeds the {max_chars}-character inspection budget; nothing was forwarded",
         )
-    # Do not add a redundant chunk containing only the overlap at the end.
-    starts = [0]
-    while starts[-1] + chunk_chars < len(text):
-        starts.append(starts[-1] + chunk_chars - overlap)
+    # Compute work before allocating chunks or calling either inspection path.
+    stride = chunk_chars - overlap
+    chunks_total = 1 + max(0, (len(text) - chunk_chars + stride - 1) // stride)
+    if chunks_total > max_chunks:
+        return report(
+            "INSUFFICIENTLY INSPECTED", "NOT RUN", 0, chunks_total, 0,
+            f"Document requires {chunks_total} chunks, exceeding the {max_chunks}-chunk inspection budget; nothing was forwarded",
+        )
+    starts = range(0, chunks_total * stride, stride)
     inspected = 0
     for index, start in enumerate(starts, 1):
         if context_model:
