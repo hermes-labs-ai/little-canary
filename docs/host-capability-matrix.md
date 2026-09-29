@@ -55,9 +55,12 @@ Little Canary service returns an unsafe verdict, the plugin warns and OpenCode
 continues. A rejected string tool result can be withheld after the tool runs;
 the hook cannot undo that tool call. Earlier conversation, attachments, tool
 arguments, and non-text results are not screened. File text is screened only
-after a tool returns it. Raw MCP text items are covered by the adapter and
-OpenCode 1.18.32 source inspection, with an offline adapter test; this shape
-was not exercised in an installed-host run. Service failures and results over
+after a tool returns it. Text items and embedded `resource.text` in raw MCP
+results are screened; rejected resource text is replaced while its URI and
+non-text content are preserved. Known advisory flags remain visible alongside
+degraded-coverage warnings. These MCP and mixed-warning paths have offline
+adapter tests backed by OpenCode 1.18.32 source inspection; they were not
+exercised in an installed-host run. Service failures and results over
 the server's 64 KiB request limit warn and continue with the original text. The
 separate OpenCode V2 plugin API is not covered by this 1.18.32 result.
 

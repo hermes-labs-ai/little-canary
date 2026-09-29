@@ -28,7 +28,10 @@ export const LittleCanaryPlugin = async ({ client }) => ({
   "tool.execute.after": async (_input, output) => {
     const resultText = typeof output?.output === "string" ? output.output : "";
     const contentText = Array.isArray(output?.content)
-      ? output.content.filter((part) => part?.type === "text" && typeof part.text === "string" && part.text)
+      ? output.content.flatMap((part) => {
+          const target = part?.type === "resource" ? part.resource : part?.type === "text" ? part : null;
+          return typeof target?.text === "string" && target.text ? [target] : [];
+        })
       : [];
     const text = [resultText, ...contentText.map((part) => part.text)].filter(Boolean).join("\n");
     if (!text) return;
@@ -38,6 +41,8 @@ export const LittleCanaryPlugin = async ({ client }) => ({
       if (resultText) output.output = notice;
       for (const part of contentText) part.text = notice;
       await warn(client, "Tool result withheld before OpenCode sent it to the model.");
+    } else if (result === "flag-degraded") {
+      await warn(client, "Tool result flagged; screening coverage is incomplete; OpenCode continued.");
     } else if (result === "flag") {
       await warn(client, "Tool result flagged; OpenCode continued.");
     } else if (result === "degraded") {

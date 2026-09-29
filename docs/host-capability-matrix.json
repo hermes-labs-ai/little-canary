@@ -59,7 +59,7 @@
       },
       "caveats": [
         "The stable chat.message hook has no typed input-rejection result. An unsafe service verdict warns but cannot stop the OpenCode turn.",
-        "Current user-message text parts, string tool results, and text items in raw MCP results are screened. The MCP content path is backed by OpenCode 1.18.32 source and an offline adapter test, not an installed-host run. Earlier conversation, attachments, tool arguments, and non-text results are outside this adapter. A file read is screened only after the tool returns its text.",
+        "Current user-message text parts, string tool results, and text items or embedded resource.text in raw MCP results are screened. Known advisory flags remain visible when screening coverage is degraded. The MCP content path is backed by OpenCode 1.18.32 source and an offline adapter test, not an installed-host run. Earlier conversation, attachments, tool arguments, and non-text results are outside this adapter. A file read is screened only after the tool returns its text.",
         "The tool-result hook cannot undo tool execution. Rejected string results are replaced before the next model request; service failures and bodies over the server's 64 KiB limit warn and continue with the original text. OpenCode V2 plugin APIs have not been certified for this package."
       ]
     },

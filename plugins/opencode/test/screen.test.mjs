@@ -48,3 +48,12 @@ test("invalid endpoint cannot send a prompt to a remote host", async () => {
 test("empty text does not call the screening service", async () => {
   assert.equal(await screenMessage("", { fetchImpl: async () => { throw new Error("called"); } }), null);
 });
+
+
+test("degraded coverage preserves known advisory flag", async () => {
+  const warning = await screenMessage("inspect this", { endpoint: DEFAULT_ENDPOINT, fetchImpl: async () => reply({
+    safe: true, degraded: true, canary_status: "failed", advisory: { flagged: true },
+  }) });
+  assert.match(warning, /flagged/);
+  assert.match(warning, /coverage is incomplete/);
+});
