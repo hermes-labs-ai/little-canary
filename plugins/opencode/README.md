@@ -32,10 +32,13 @@ another HTTP loopback `/check` URL if needed.
 ## Scope
 
 The adapter checks text parts of the current user message, string tool output,
-and text items in MCP tool results at `tool.execute.after`. It does not inspect
-prior conversation, attachments, tool arguments, or non-text results. It screens
+and text items or embedded `resource.text` in MCP tool results at
+`tool.execute.after`. Rejected resource text is replaced while its URI is
+preserved. It does not inspect prior conversation, attachments, tool arguments,
+or non-text content such as images and binary resources. It screens
 file text only when a tool returns it as text; it cannot undo a tool call. The
-TUI shows a warning on flags and unavailable screening; CLI runs also print it
+TUI shows warnings on flags and unavailable or degraded screening, retaining a
+known flag alongside incomplete-coverage warnings; CLI runs also print them
 to stderr.
 Unavailable screening leaves the original text in place. The local server
 rejects bodies over 64 KiB, so those results also pass through with a warning.
