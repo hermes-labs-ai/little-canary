@@ -525,3 +525,111 @@ def test_live_json_emits_pre_call_disclosure_then_stable_result():
     assert result["model_call"] is True
     assert result["analysis_method"] == "regex"
     assert result["configuration"]["structural_filter"] == "disabled"
+
+
+def test_packaged_replay_fixture_exists_and_validates():
+    from little_canary.demo import DEFAULT_REPLAY_FIXTURE, load_replay_fixture
+
+    assert DEFAULT_REPLAY_FIXTURE.is_file(), "offline replay fixture must be packaged"
+    fixture = load_replay_fixture()
+    assert fixture["schema"] == REPLAY_SCHEMA
+    assert [case["id"] for case in fixture["cases"]] == ["clean", "c1-05"]
+    expected_blocks = [case["expected"]["block"] for case in fixture["cases"]]
+    assert expected_blocks == [False, True]
+
+
+def test_packaged_replay_shows_clean_pass_and_injected_block():
+    output = io.StringIO()
+    exit_code = run_replay(stdout=output)
+
+    assert exit_code == 0
+    text = output.getvalue()
+    assert "REPLAY     VERIFIED" in text
+    assert "CASE       clean" in text
+    assert "CASE       c1-05" in text
+    clean_section = text.split("CASE       clean")[1].split("CASE       c1-05")[0]
+    attack_section = text.split("CASE       c1-05")[1]
+    assert "VERDICT    PASS" in clean_section
+    assert "VERDICT    BLOCK" in attack_section
+    assert "CANARY     NOT EXERCISED THIS RUN" in text
+
+
+def test_live_unreachable_ollama_names_the_fix():
+    output = io.StringIO()
+
+    with patch(
+        "little_canary.demo.requests.get",
+        side_effect=requests.ConnectionError("refused"),
+    ):
+        exit_code = run_live(
+            endpoint="http://127.0.0.1:11434",
+            stdout=output,
+            stderr=io.StringIO(),
+        )
+
+    assert exit_code == 2
+    text = output.getvalue()
+    assert "LIVE       DEGRADED / UNEXERCISED" in text
+    assert "ollama serve" in text
+    assert "ollama pull qwen2.5:1.5b" in text
+    assert "ollama.com" in text
+
+
+def test_live_missing_model_names_the_pull():
+    output = io.StringIO()
+    inventory = _response(200, {"models": [{"name": "other:1b", "digest": "x"}]})
+
+    with (
+        patch("little_canary.demo.requests.get", return_value=inventory),
+        patch("little_canary.canary.requests.post") as post,
+    ):
+        exit_code = run_live(
+            endpoint="http://127.0.0.1:11434",
+            stdout=output,
+            stderr=io.StringIO(),
+        )
+
+    assert exit_code == 2
+    assert "ollama pull qwen2.5:1.5b" in output.getvalue()
+    post.assert_not_called()
+
+
+def test_live_default_timeout_is_cpu_capable():
+    import inspect
+
+    from little_canary.cli import DEFAULT_CANARY_TIMEOUT
+    from little_canary.demo import run_live
+
+    assert DEFAULT_CANARY_TIMEOUT >= 60.0
+    default = inspect.signature(run_live).parameters["timeout"].default
+    assert default == DEFAULT_CANARY_TIMEOUT
+
+
+def test_live_canary_timeout_degraded_names_the_knob():
+    output = io.StringIO()
+    inventory = _response(
+        200,
+        {"models": [{"name": "qwen2.5:1.5b", "digest": "digest"}]},
+    )
+
+    with (
+        patch("little_canary.demo.requests.get", return_value=inventory),
+        patch(
+            "little_canary.canary.requests.post",
+            side_effect=requests.Timeout("slow cpu"),
+        ),
+    ):
+        exit_code = run_live(
+            endpoint="http://127.0.0.1:11434",
+            stdout=output,
+            stderr=io.StringIO(),
+            timeout=45.0,
+        )
+
+    assert exit_code == 2
+    text = output.getvalue()
+    assert "LIVE       DEGRADED / INCOMPLETE" in text
+    assert "VERDICT    DEGRADED" in text
+    assert "Canary timed out after 45.0s" in text
+    assert "--timeout" in text
+    assert "LITTLE_CANARY_TIMEOUT" in text

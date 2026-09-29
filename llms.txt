@@ -9,7 +9,8 @@ Use this repo when you need to:
 
 Primary entry points:
 - Python API via `SecurityPipeline`
-- explicit replay-admission and live mechanism gates via `little-canary demo --replay|--live`
+- offline replay demo via `little-canary demo` (no model, no network; ships a packaged recorded capture)
+- loopback live contrast via `little-canary demo --live` (requires Ollama + a pulled canary model)
 - local server via `little-canary serve`
 
 Expected output:
@@ -21,8 +22,8 @@ Do not use this repo as:
 - a benchmark suite
 
 Evidence rules:
-- `REPLAY` verifies analyzer behavior only when admitted response bytes are packaged; otherwise it exits unavailable
-- replay does not call a model, and unavailable replay is never evidence that input is safe
+- `REPLAY` verifies analyzer behavior against the packaged recorded capture; it makes no model or network call
+- replay does not call a model, and an integrity failure is never evidence that input is safe
 - `LIVE` binds the observed result to one backend, model digest, runtime, and configuration
 - `MOCK` and `STATIC_ONLY` validate logic but do not prove live integration
 - remote backends receive raw input; a configured judge receives raw input plus canary output

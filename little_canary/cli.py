@@ -6,17 +6,59 @@ Entry point: ``little-canary`` (installed via pyproject.toml console_scripts).
 Sub-commands
 ------------
 serve   Start the persistent HTTP detection server.
-demo    Run an explicit replay-admission or loopback live contrast.
+demo    Run the offline replay demo (default) or a loopback live contrast.
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
+import os
 from collections.abc import Sequence
 
 MIN_PORT = 0
 MAX_PORT = 65535
+
+#: Default per-call canary timeout (seconds) for the CLI demo and server.
+#: Worst single call measured on CPU-only hardware was ~383 s for a full
+#: 256-token canary response; 600 s leaves headroom while staying bounded.
+#: Operators on faster hardware can lower it with --timeout / LITTLE_CANARY_TIMEOUT.
+DEFAULT_CANARY_TIMEOUT = 600.0
+
+#: Environment variable that overrides the default canary timeout when the
+#: corresponding --timeout flag is not given.
+TIMEOUT_ENV_VAR = "LITTLE_CANARY_TIMEOUT"
+
+
+def _default_timeout() -> float:
+    raw = os.environ.get(TIMEOUT_ENV_VAR)
+    if raw is None or not raw.strip():
+        return DEFAULT_CANARY_TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        raise SystemExit(
+            f"error: {TIMEOUT_ENV_VAR}={raw!r} is not a valid number of seconds"
+        ) from None
+    if value <= 0:
+        raise SystemExit(
+            f"error: {TIMEOUT_ENV_VAR} must be a positive number of seconds"
+        )
+    return value
+
+
+def timeout_type(value: str) -> float:
+    """argparse type: a positive number of seconds."""
+    try:
+        timeout = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid timeout: {value!r} is not a number of seconds"
+        ) from None
+    if timeout <= 0:
+        raise argparse.ArgumentTypeError(
+            f"invalid timeout: {timeout} must be a positive number of seconds"
+        )
+    return timeout
 
 
 def port_type(value: str) -> int:
@@ -76,17 +118,32 @@ def build_parser() -> argparse.ArgumentParser:
         default="http://127.0.0.1:11434",
         help="Explicit Ollama origin (default: http://127.0.0.1:11434)",
     )
+    serve_parser.add_argument(
+        "--timeout",
+        type=timeout_type,
+        default=None,
+        help=(
+            "Seconds to wait for one canary model call "
+            f"(default: {TIMEOUT_ENV_VAR} or {DEFAULT_CANARY_TIMEOUT:g})"
+        ),
+    )
 
     # -- demo ---------------------------------------------------------------
     demo_parser = subparsers.add_parser(
         "demo",
-        help="Run a replay-admission or loopback live behavioral contrast",
+        help=(
+            "Run the offline replay demo (default), "
+            "or an explicit loopback live contrast"
+        ),
     )
     run_kind = demo_parser.add_mutually_exclusive_group()
     run_kind.add_argument(
         "--replay",
         action="store_true",
-        help="Verify an admitted packaged capture without egress; fail unavailable if absent",
+        help=(
+            "Verify an admitted packaged capture without egress "
+            "(this is also the default when neither flag is given)"
+        ),
     )
     run_kind.add_argument(
         "--live",
@@ -110,6 +167,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Literal loopback Ollama origin (default: http://127.0.0.1:11434)",
     )
     demo_parser.add_argument(
+        "--timeout",
+        type=timeout_type,
+        default=None,
+        help=(
+            "Seconds to wait for one live canary model call "
+            f"(default: {TIMEOUT_ENV_VAR} or {DEFAULT_CANARY_TIMEOUT:g})"
+        ),
+    )
+    demo_parser.add_argument(
         "--json",
         action="store_true",
         help="Emit the stable little-canary-demo/v1 result as JSON",
@@ -125,35 +191,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "serve":
         from little_canary.server import run_server
 
+        timeout = args.timeout if args.timeout is not None else _default_timeout()
         run_server(
             port=args.port,
             mode=args.mode,
             canary_model=args.canary_model,
             ollama_url=args.ollama_url,
+            canary_timeout=timeout,
         )
         return 0
 
     if args.command == "demo":
         from little_canary.demo import run_live, run_replay
 
-        if args.replay:
-            return run_replay(output_json=args.json)
         if args.live:
+            timeout = args.timeout if args.timeout is not None else _default_timeout()
             return run_live(
                 endpoint=args.endpoint,
                 backend=args.backend,
                 model=args.model,
                 output_json=args.json,
+                timeout=timeout,
             )
-        print(
-            "usage: little-canary demo (--replay | --live) [--json] [--model MODEL] [--endpoint LOOPBACK_ORIGIN]",
-            file=sys.stderr,
-        )
-        print(
-            "\nChoose exactly one run kind: --replay or --live. No mode is inferred.",
-            file=sys.stderr,
-        )
-        return 2
+        # Bare `little-canary demo` and `demo --replay` both run the offline
+        # replay: no model, no network, no extra dependencies.
+        return run_replay(output_json=args.json)
 
     parser.print_help()
     return 1

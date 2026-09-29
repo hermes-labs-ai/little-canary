@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import json
-import re
 import subprocess
 import sys
 from io import BytesIO
@@ -21,29 +20,11 @@ ROOT = Path(__file__).resolve().parents[1]
 MARKETPLACE_FILE = ROOT / ".claude-plugin" / "marketplace.json"
 PLUGIN_ROOT = ROOT / "plugins" / "claude-code"
 PLUGIN_MANIFEST = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
-AGENT_PLUGIN_MANIFEST = PLUGIN_ROOT / "plugin.json"
 HOOKS_FILE = PLUGIN_ROOT / "hooks" / "hooks.json"
 HOOK_SCRIPT = PLUGIN_ROOT / "scripts" / "little_canary_user_prompt_submit.py"
 sys.path.insert(0, str(HOOK_SCRIPT.parent))
 
 from little_canary_user_prompt_submit import DIRECT_OPENER, evaluate  # noqa: E402
-
-# Agent Plugins v1.0.0 manifest contract, as enforced by the awesome-copilot intake gates
-# (github/awesome-copilot eng/external-plugin-quality-gates.mjs, eng/agent-plugin-schema.mjs).
-AGENT_PLUGIN_SPEC_URL = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
-AGENT_PLUGIN_ALLOWED_FIELDS = {
-    "$schema",
-    "name",
-    "version",
-    "description",
-    "author",
-    "homepage",
-    "repository",
-    "license",
-    "keywords",
-    "extensions",
-}
-AGENT_PLUGIN_NAME_PATTERN = re.compile(r"^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
 
 
 class _Response:
@@ -136,53 +117,25 @@ def test_plugin_directory_is_self_contained() -> None:
     expected = {
         PLUGIN_ROOT / ".claude-plugin" / "plugin.json",
         PLUGIN_ROOT / ".claude-plugin" / "icon.png",
-        PLUGIN_ROOT / "plugin.json",
         PLUGIN_ROOT / "README.md",
         HOOKS_FILE,
         HOOK_SCRIPT,
     }
     actual = {path for path in PLUGIN_ROOT.rglob("*") if path.is_file() and "__pycache__" not in path.parts}
     assert actual == expected
-    for path in (PLUGIN_MANIFEST, AGENT_PLUGIN_MANIFEST, HOOKS_FILE):
+    for path in (PLUGIN_MANIFEST, HOOKS_FILE):
         assert ".." not in path.read_text()
 
 
-def test_agent_plugin_manifest_satisfies_the_v1_specification() -> None:
-    # Claude Code resolves .claude-plugin/plugin.json and ignores this file; hosts that follow the
-    # Agent Plugins specification only look at the plugin root, so the plugin ships both.
-    manifest = json.loads(AGENT_PLUGIN_MANIFEST.read_text())
-
-    assert manifest["$schema"] == AGENT_PLUGIN_SPEC_URL
-    assert set(manifest) <= AGENT_PLUGIN_ALLOWED_FIELDS
-    assert AGENT_PLUGIN_NAME_PATTERN.fullmatch(manifest["name"]) is not None
-    assert 1 <= len(manifest["name"]) <= 64
-    for field in ("version", "description"):
-        assert isinstance(manifest[field], str) and manifest[field].strip()
-    for field in ("homepage", "repository", "license"):
-        assert isinstance(manifest[field], str)
-    assert set(manifest["author"]) <= {"name", "email", "url"}
-    assert all(isinstance(value, str) for value in manifest["author"].values())
-    assert all(isinstance(keyword, str) for keyword in manifest["keywords"])
-    assert manifest["version"] == __version__
-
-
-def test_plugin_manifests_share_metadata_and_codex_trust_caveat() -> None:
-    # The root manifest is also used by Codex CLI, where installing the hook is
-    # insufficient until the user trusts it. Keep the core description shared
-    # while making that prerequisite explicit in cross-host listings.
-    claude = json.loads(PLUGIN_MANIFEST.read_text())
-    agent = json.loads(AGENT_PLUGIN_MANIFEST.read_text())
+def test_marketplace_description_matches_the_canonical_manifest() -> None:
+    # Single canonical manifest: plugins/claude-code/.claude-plugin/plugin.json.
+    # The directory listing must not promise host coverage the bundle does not have.
+    manifest = json.loads(PLUGIN_MANIFEST.read_text())
     marketplace = json.loads(MARKETPLACE_FILE.read_text())
-
-    shared = set(agent) - {"$schema"}
-    assert shared == set(claude) & AGENT_PLUGIN_ALLOWED_FIELDS
-    for field in sorted(shared):
-        if field == "description":
-            assert agent[field] == claude[field] + " On Codex CLI, trust the hook before it screens."
-        else:
-            assert agent[field] == claude[field], field
-    assert marketplace["plugins"][0]["description"] == agent["description"]
-    assert {"name", "version", "description", "license"} <= shared
+    assert marketplace["plugins"][0]["name"] == manifest["name"]
+    assert marketplace["plugins"][0]["description"] == manifest["description"]
+    for text in (manifest["description"], marketplace["plugins"][0]["description"]):
+        assert "Codex" not in text
 
 
 def test_hook_script_depends_only_on_the_standard_library() -> None:

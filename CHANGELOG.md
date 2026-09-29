@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
+## [0.4.0] - 2026-09-29
+
+Minor release. Bare `little-canary demo` now works out of the box with a
+packaged offline replay fixture (no Ollama, no model pull), and the canary
+timeout is configurable with a default that CPU-only hardware can actually
+meet. No changes to the default canary, detector rules, or fail-open routing.
+
+### Added
+
+- Packaged offline replay fixture (`little_canary/data/demo_replay.json`): bare
+  `little-canary demo` now runs the offline demo (clean → PASS, injected →
+  BLOCK) with zero extra dependencies — no Ollama, no model pull. Recorded
+  from a loopback Ollama run of `qwen2.5:1.5b` (temperature 0.0, seed 42);
+  integrity-checked at load, never presented as a current live-model result.
+- `--timeout` flag (seconds) on `demo --live` and `serve`, plus the
+  `LITTLE_CANARY_TIMEOUT` environment variable. The default per-call canary
+  timeout is now 600 s (was a hardcoded 10 s), so `demo --live` can complete
+  on CPU-only hardware where a single canary call takes minutes.
+- Ollama-unreachable demo errors now name the fix: install command, `ollama
+  serve`, and the exact `ollama pull <model>` to run.
+
+### Changed
+
+- README quick start leads with the offline demo; the Ollama install +
+  `ollama pull` path is documented as the "go live" upgrade with exact
+  commands. All relative repo links are now absolute GitHub URLs so every link
+  resolves for the PyPI stranger.
+- `little-canary serve` accepts `--timeout` and passes it through as the
+  pipeline's canary timeout.
+- A timeout-induced DEGRADED now names the knob to turn: the `demo --live`
+  case detail and the `serve` `/check` canary-layer details cite `--timeout`
+  / `LITTLE_CANARY_TIMEOUT` (or `canary_timeout` on `SecurityPipeline`) and
+  the configured per-call timeout seconds.
+
 ## [0.3.10] - 2026-09-26
 
 Patch release of the fixes reviewed and merged in [PR #112](https://github.com/hermes-labs-ai/little-canary/pull/112). The default canary, detector rules, and fail-open routing are unchanged.

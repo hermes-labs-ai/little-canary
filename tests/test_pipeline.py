@@ -659,3 +659,32 @@ def test_layers_have_individual_latency(MockProbe):
     verdict = pipeline.check("test")
     for layer in verdict.layers:
         assert layer.latency >= 0
+
+
+@patch("little_canary.pipeline.CanaryProbe")
+def test_canary_timeout_layer_details_name_the_knob(MockProbe):
+    timed_out = CanaryResult(
+        response="",
+        latency=31.0,
+        model="qwen2.5:1.5b",
+        system_prompt=DEFAULT_CANARY_SYSTEM_PROMPT,
+        user_input="test",
+        success=False,
+        error="Canary timed out after 30.0s",
+        failure_code="timeout",
+    )
+    MockProbe.return_value.test.return_value = timed_out
+    MockProbe.return_value.timeout = 30.0
+
+    pipeline = SecurityPipeline(mode="advisory")
+    verdict = pipeline.check("test")
+
+    assert verdict.safe is True  # fail-open
+    assert verdict.degraded is True
+    canary_layer = next(
+        layer for layer in verdict.layers if layer.layer_name == "canary_probe"
+    )
+    assert canary_layer.coverage_reason == "timeout"
+    assert "30s" in canary_layer.details
+    assert "--timeout" in canary_layer.details
+    assert "LITTLE_CANARY_TIMEOUT" in canary_layer.details

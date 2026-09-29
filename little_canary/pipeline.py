@@ -559,6 +559,19 @@ class SecurityPipeline:
                 details = failure_details or (
                     "Canary probe failed; fail-open routing applies."
                 )
+                if canary_result is not None and canary_result.failure_code == "timeout":
+                    probe_seconds = getattr(self.canary_probe, "timeout", None)
+                    exceeded = (
+                        f" (the canary model call exceeded the {probe_seconds:g}s per-call timeout"
+                        if isinstance(probe_seconds, (int, float))
+                        else " (the canary model call exceeded the per-call canary timeout"
+                    )
+                    details += (
+                        exceeded
+                        + "); raise it with `little-canary serve --timeout SECONDS` "
+                        "(or the LITTLE_CANARY_TIMEOUT environment variable), "
+                        "or the `canary_timeout` argument on SecurityPipeline."
+                    )
                 layers.append(
                     LayerResult(
                         layer_name="canary_probe",

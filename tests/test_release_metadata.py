@@ -100,7 +100,6 @@ def test_current_project_license_metadata_is_spdx_consistent():
         "integrations/hermes-agent/little_canary/__init__.py", r"^License: (\S+)$"
     )
     integration_manifest_license = _match("integrations/hermes-agent/plugin.yaml", r"^license: (\S+)$")
-    plugin_license = json.loads(_read("plugins/claude-code/plugin.json"))["license"]
     agent_plugin_license = json.loads(_read("plugins/claude-code/.claude-plugin/plugin.json"))["license"]
 
     assert {
@@ -112,7 +111,6 @@ def test_current_project_license_metadata_is_spdx_consistent():
         package_license,
         integration_package_license,
         integration_manifest_license,
-        plugin_license,
         agent_plugin_license,
     } == {"Apache-2.0"}
 

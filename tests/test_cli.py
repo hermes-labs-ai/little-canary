@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from little_canary import __version__
-from little_canary.cli import main
+from little_canary.cli import DEFAULT_CANARY_TIMEOUT, TIMEOUT_ENV_VAR, main
 
 
 def test_version_is_discoverable(capsys):
@@ -16,22 +16,31 @@ def test_version_is_discoverable(capsys):
     assert capsys.readouterr().out.strip() == f"little-canary {__version__}"
 
 
-def test_bare_demo_requires_explicit_run_kind(capsys):
+def test_bare_demo_defaults_to_offline_replay():
     with (
-        patch("little_canary.demo.run_replay") as replay,
+        patch("little_canary.demo.run_replay", return_value=0) as replay,
         patch("little_canary.demo.run_live") as live,
     ):
         exit_code = main(["demo"])
 
-    assert exit_code == 2
-    replay.assert_not_called()
+    assert exit_code == 0
+    replay.assert_called_once_with(output_json=False)
     live.assert_not_called()
-    error = capsys.readouterr().err
-    assert "--replay or --live" in error
-    assert "No mode is inferred" in error
 
 
-def test_demo_replay_dispatches_without_live_arguments():
+def test_bare_demo_replay_honors_json_flag():
+    with (
+        patch("little_canary.demo.run_replay", return_value=0) as replay,
+        patch("little_canary.demo.run_live") as live,
+    ):
+        exit_code = main(["demo", "--json"])
+
+    assert exit_code == 0
+    replay.assert_called_once_with(output_json=True)
+    live.assert_not_called()
+
+
+def test_demo_replay_flag_still_selects_replay():
     with (
         patch("little_canary.demo.run_replay", return_value=7) as replay,
         patch("little_canary.demo.run_live") as live,
@@ -68,8 +77,47 @@ def test_demo_live_dispatches_explicit_backend_model_and_endpoint():
         backend="ollama",
         model="model:tag",
         output_json=True,
+        timeout=DEFAULT_CANARY_TIMEOUT,
     )
     replay.assert_not_called()
+
+
+def test_demo_live_timeout_flag_overrides_default():
+    with patch("little_canary.demo.run_live", return_value=0) as live:
+        exit_code = main(["demo", "--live", "--timeout", "45"])
+
+    assert exit_code == 0
+    assert live.call_args.kwargs["timeout"] == 45.0
+
+
+def test_demo_live_timeout_rejects_non_positive():
+    with pytest.raises(SystemExit) as exc_info:
+        main(["demo", "--live", "--timeout", "0"])
+    assert exc_info.value.code == 2
+
+
+def test_demo_live_timeout_from_env(monkeypatch):
+    monkeypatch.setenv(TIMEOUT_ENV_VAR, "30")
+    with patch("little_canary.demo.run_live", return_value=0) as live:
+        exit_code = main(["demo", "--live"])
+
+    assert exit_code == 0
+    assert live.call_args.kwargs["timeout"] == 30.0
+
+
+def test_demo_live_timeout_flag_beats_env(monkeypatch):
+    monkeypatch.setenv(TIMEOUT_ENV_VAR, "30")
+    with patch("little_canary.demo.run_live", return_value=0) as live:
+        main(["demo", "--live", "--timeout", "90"])
+
+    assert live.call_args.kwargs["timeout"] == 90.0
+
+
+def test_demo_live_invalid_env_timeout_errors(monkeypatch):
+    monkeypatch.setenv(TIMEOUT_ENV_VAR, "soon")
+    with pytest.raises(SystemExit) as exc_info:
+        main(["demo", "--live"])
+    assert exc_info.value.code != 0
 
 
 def test_demo_modes_are_mutually_exclusive():
@@ -101,7 +149,25 @@ def test_serve_passes_explicit_ollama_origin():
         mode="full",
         canary_model="model:tag",
         ollama_url="http://127.0.0.1:9999",
+        canary_timeout=DEFAULT_CANARY_TIMEOUT,
     )
+
+
+def test_serve_timeout_flag_overrides_default():
+    with patch("little_canary.server.run_server") as run_server:
+        exit_code = main(["serve", "--timeout", "75"])
+
+    assert exit_code == 0
+    assert run_server.call_args.kwargs["canary_timeout"] == 75.0
+
+
+def test_serve_timeout_from_env(monkeypatch):
+    monkeypatch.setenv(TIMEOUT_ENV_VAR, "33")
+    with patch("little_canary.server.run_server") as run_server:
+        exit_code = main(["serve"])
+
+    assert exit_code == 0
+    assert run_server.call_args.kwargs["canary_timeout"] == 33.0
 
 
 @pytest.mark.parametrize("port", ["-1", "65536"])

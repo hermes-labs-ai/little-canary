@@ -451,17 +451,36 @@ def _live_preamble(
     stdout.flush()
 
 
+def _ollama_fix_hint(model: str) -> str:
+    """Point at the exact commands that make the loopback Ollama path work."""
+    return (
+        "fix: install Ollama (https://ollama.com/download, or "
+        "`curl -fsSL https://ollama.com/install.sh | sh`), "
+        "start it with `ollama serve`, "
+        f"then pull the canary model with `ollama pull {model}`"
+    )
+
+
 def _preflight_ollama(endpoint: str, model: str, timeout: float) -> str:
     try:
         response = requests.get(f"{endpoint}/api/tags", timeout=min(timeout, 5.0))
     except requests.Timeout:
-        raise DemoUnavailable("Ollama model inventory timed out") from None
+        raise DemoUnavailable(
+            f"Ollama model inventory timed out at {endpoint}; {_ollama_fix_hint(model)}"
+        ) from None
     except requests.ConnectionError:
-        raise DemoUnavailable("Ollama loopback endpoint is unavailable") from None
+        raise DemoUnavailable(
+            f"Ollama loopback endpoint is unavailable at {endpoint}; {_ollama_fix_hint(model)}"
+        ) from None
     except requests.RequestException:
-        raise DemoUnavailable("Ollama model inventory request failed") from None
+        raise DemoUnavailable(
+            f"Ollama model inventory request failed at {endpoint}; {_ollama_fix_hint(model)}"
+        ) from None
     if response.status_code != 200:
-        raise DemoUnavailable(f"Ollama model inventory returned HTTP status {response.status_code}")
+        raise DemoUnavailable(
+            f"Ollama model inventory at {endpoint} returned HTTP status {response.status_code}; "
+            f"{_ollama_fix_hint(model)}"
+        )
     try:
         data = response.json()
     except ValueError:
@@ -478,7 +497,10 @@ def _preflight_ollama(endpoint: str, model: str, timeout: float) -> str:
         None,
     )
     if entry is None:
-        raise DemoUnavailable("configured Ollama model is unavailable")
+        raise DemoUnavailable(
+            f"model {model!r} is not available in Ollama; "
+            f"pull it with `ollama pull {model}` (after `ollama serve` is running)"
+        )
     digest = entry.get("digest")
     if not isinstance(digest, str) or not digest.strip():
         raise DemoUnavailable("configured Ollama model digest is unavailable")
@@ -489,8 +511,16 @@ def _live_case_record(
     case_id: str,
     user_input: str,
     probe_result: CanaryResult,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
     if not probe_result.success:
+        error = probe_result.error or "canary probe failed"
+        if probe_result.failure_code == "timeout":
+            error += (
+                f" (per-call timeout was {timeout:g}s); raise it with "
+                "`little-canary demo --live --timeout SECONDS` or the "
+                "LITTLE_CANARY_TIMEOUT environment variable"
+            )
         return {
             "id": case_id,
             "input": user_input,
@@ -501,7 +531,7 @@ def _live_case_record(
             "canary_status": "failed",
             "analysis_method": "none",
             "analysis_status": "not_applicable",
-            "error": probe_result.error,
+            "error": error,
         }
     try:
         record, _analysis = _analysis_record(
@@ -535,7 +565,7 @@ def run_live(
     backend: str = "ollama",
     model: str = "qwen2.5:1.5b",
     output_json: bool = False,
-    timeout: float = 10.0,
+    timeout: float = 600.0,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -616,7 +646,7 @@ def run_live(
     records: list[dict[str, Any]] = []
     for case_id, user_input in DEMO_CASES:
         result["model_call"] = True
-        record = _live_case_record(case_id, user_input, probe.test(user_input))
+        record = _live_case_record(case_id, user_input, probe.test(user_input), timeout=timeout)
         records.append(record)
         if record["canary_status"] == "failed" or record["analysis_status"] == "failed":
             break

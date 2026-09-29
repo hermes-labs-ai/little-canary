@@ -9,7 +9,7 @@
     {
       "name": "little-canary",
       "source": "./plugins/claude-code",
-      "description": "Screens submitted prompts with a local Little Canary service. Advisory mode flags suspicious input; block mode stops turns the service rejects. On Codex CLI, trust the hook before it screens.",
+      "description": "Pairs with a separately-installed local Little Canary service to screen submitted prompts. Advisory mode flags suspicious input; block mode stops turns the service rejects.",
       "category": "security",
       "homepage": "https://littlecanary.ai"
     }
