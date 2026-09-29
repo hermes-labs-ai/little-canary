@@ -37,6 +37,8 @@ MAX_LABEL_CHARS = 256
 # characters escape as 12-char surrogate pairs each; add room for keys, quotes and braces.
 _LINE_SLACK_CHARS = 2 * 12 * MAX_LABEL_CHARS + 1024
 
+_RAW_TEXT_KEYS = frozenset({"input", "safe_input"})
+
 STATE_BLOCK = "block"
 STATE_FLAG = "flag"
 STATE_PASS = "pass"
@@ -90,10 +92,7 @@ class ItemResult:
             "state": self.state,
         }
         if self.verdict is not None:
-            verdict = dict(self.verdict)
-            for key in ("input", "safe_input"):  # never re-emit untrusted text
-                verdict.pop(key, None)
-            out["verdict"] = verdict
+            out["verdict"] = dict(self.verdict)
         if self.error is not None:
             out["error"] = self.error
         return out
@@ -125,9 +124,15 @@ class Checker(Protocol):
     def check(self, user_input: str) -> PipelineVerdict: ...
 
 
-def check_limit(name: str, value: Any) -> None:
+#: Ceiling for ``max_item_bytes``; keeps the derived line cap within ``readline``'s index range.
+MAX_ITEM_BYTES_CEILING = 64 * 1024 * 1024
+
+
+def check_limit(name: str, value: Any, *, maximum: int | None = None) -> None:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ValueError(f"{name} must be a non-negative integer")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{name} must not exceed {maximum}")
 
 
 def max_line_chars(max_item_bytes: int) -> int:
@@ -165,6 +170,12 @@ def coerce_item(raw: Any, index: int = 0, *, max_item_bytes: int = DEFAULT_MAX_I
             raise ValueError(f"item {index}: '{label}' must be a string")
         if len(value) > MAX_LABEL_CHARS:
             raise ValueError(f"item {index}: '{label}' exceeds {MAX_LABEL_CHARS} characters")
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError(
+                f"item {index}: '{label}' is not valid Unicode (lone surrogate)"
+            ) from None
     return item
 
 
@@ -184,7 +195,7 @@ def screen_batch(
     reading stops at the first violation.
     """
     check_limit("max_items", max_items)
-    check_limit("max_item_bytes", max_item_bytes)
+    check_limit("max_item_bytes", max_item_bytes, maximum=MAX_ITEM_BYTES_CEILING)
     check_limit("max_total_bytes", max_total_bytes)
     prepared: list[BatchItem] = []
     digests: list[str] = []
@@ -207,7 +218,9 @@ def screen_batch(
         try:
             verdict = pipeline.check(item.text)
             state = classify(verdict)
-            payload = verdict.to_dict()
+            payload = {
+                k: v for k, v in verdict.to_dict().items() if k not in _RAW_TEXT_KEYS
+            }  # redacted at construction: the in-memory result never retains raw text
         except Exception as exc:
             logger.error("Batch item %d check failed (%s)", index, type(exc).__name__)
             result.items.append(

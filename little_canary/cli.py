@@ -231,6 +231,7 @@ def _run_screen(args) -> int:
     import sys
 
     from little_canary.batch import (
+        MAX_ITEM_BYTES_CEILING,
         STATE_BLOCK,
         STATE_DEGRADED,
         STATE_FLAG,
@@ -256,7 +257,7 @@ def _run_screen(args) -> int:
             "max_total_bytes": args.max_total_bytes,
         }
         for name, value in limits.items():
-            check_limit(name, value)
+            check_limit(name, value, maximum=MAX_ITEM_BYTES_CEILING if name == "max_item_bytes" else None)
         # Items are consumed lazily and lines read in bounded chunks, so any limit
         # stops reading at the first violation without allocating the excess.
         line_cap = max_line_chars(args.max_item_bytes)

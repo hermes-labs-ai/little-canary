@@ -362,3 +362,30 @@ def test_worst_case_escaped_labels_fit_line_cap():
     assert len(line) <= max_line_chars(100)
     items = list(read_jsonl(io.StringIO(line + "\n"), max_line=max_line_chars(100)))
     assert screen_batch(FakePipeline(), items, max_item_bytes=100).counts["pass"] == 1
+
+
+@pytest.mark.parametrize("label", ["id", "source"])
+def test_lone_surrogate_in_label_rejected_before_any_check(label):
+    p = _Counting()
+    bad = json.loads('"\\ud800"')
+    with pytest.raises(ValueError, match=f"'{label}'.*surrogate"):
+        screen_batch(p, ["ok", {"text": "t", label: bad}])
+    assert p.calls == 0
+
+
+def test_python_result_never_retains_raw_text():
+    result = screen_batch(FakePipeline(), ["SECRET-RAW-TEXT"])
+    verdict = result.items[0].verdict
+    assert "safe_input" not in verdict and "input" not in verdict
+    assert "SECRET-RAW-TEXT" not in repr(result.items)
+
+
+def test_huge_max_item_bytes_rejected_not_overflow(capsys):
+    from little_canary.batch import MAX_ITEM_BYTES_CEILING
+
+    with pytest.raises(ValueError, match="must not exceed"):
+        screen_batch(_Counting(), [], max_item_bytes=MAX_ITEM_BYTES_CEILING + 1)
+    code, out = _run_cli(["screen", "--max-item-bytes", str(10**30)], '"a"\n', capsys)
+    assert code == 2 and out.out == "" and "must not exceed" in out.err
+    code, out = _run_cli(["screen", "--max-item-bytes", str(MAX_ITEM_BYTES_CEILING)], '"a"\n', capsys)
+    assert code == 0
