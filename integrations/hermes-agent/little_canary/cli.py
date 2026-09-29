@@ -7,6 +7,7 @@ Sub-commands
 ------------
 serve   Start the persistent HTTP detection server.
 demo    Run the offline replay demo (default) or a loopback live contrast.
+screen  Pre-screen a JSONL batch of documents/messages, one verdict per item.
 """
 
 from __future__ import annotations
@@ -180,7 +181,62 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit the stable little-canary-demo/v1 result as JSON",
     )
+
+    # -- screen -------------------------------------------------------------
+    screen_parser = subparsers.add_parser(
+        "screen",
+        help="Pre-screen a JSONL batch (each line a JSON string or {id, source, text})",
+    )
+    screen_parser.add_argument(
+        "input",
+        nargs="?",
+        default="-",
+        help="JSONL file to read, or - for stdin (default: -)",
+    )
+    screen_parser.add_argument(
+        "--mode", choices=["block", "advisory", "full"], default="full",
+        help="Pipeline mode (default: full)",
+    )
+    screen_parser.add_argument("--canary-model", default="qwen2.5:1.5b")
+    screen_parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
+    screen_parser.add_argument("--timeout", type=timeout_type, default=None)
+    screen_parser.add_argument(
+        "--max-items", type=int, default=1000,
+        help="Refuse batches larger than this instead of truncating (default: 1000)",
+    )
     return parser
+
+
+def _run_screen(args) -> int:
+    """Exit 0: every item pass; 1: any block/flag; 2: any degraded/unexercised or bad input."""
+    import json
+    import sys
+
+    from little_canary.batch import STATE_BLOCK, STATE_FLAG, STATE_PASS, read_jsonl, screen_batch
+    from little_canary.pipeline import SecurityPipeline
+
+    try:
+        if args.input == "-":
+            items = list(read_jsonl(sys.stdin))
+        else:
+            with open(args.input, encoding="utf-8") as handle:
+                items = list(read_jsonl(handle))
+        timeout = args.timeout if args.timeout is not None else _default_timeout()
+        pipeline = SecurityPipeline(
+            canary_model=args.canary_model,
+            ollama_url=args.ollama_url,
+            mode=args.mode,
+            canary_timeout=timeout,
+        )
+        result = screen_batch(pipeline, items, max_items=args.max_items)
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(result.to_dict()))
+    counts = result.counts
+    if counts[STATE_BLOCK] or counts[STATE_FLAG]:
+        return 1
+    return 0 if counts[STATE_PASS] == len(result.items) else 2
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -216,6 +272,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Bare `little-canary demo` and `demo --replay` both run the offline
         # replay: no model, no network, no extra dependencies.
         return run_replay(output_json=args.json)
+
+    if args.command == "screen":
+        return _run_screen(args)
 
     parser.print_help()
     return 1

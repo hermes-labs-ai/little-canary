@@ -86,6 +86,17 @@ Python apps can skip HTTP and call `SecurityPipeline.check()` directly — see t
 
 The default remains `qwen2.5:1.5b`. Select an installed model with `serve --canary-model`, `demo --model`, or Python's `SecurityPipeline(canary_model=...)`; the Hermes Agent plugin reads `LITTLE_CANARY_MODEL`. Locally exercised alternatives are `qwen3.5:2b-q4_K_M`, `LiquidAI/lfm2.5-1.2b-instruct:q4_k_m`, and `gemma3:1b`. Pull weights with `ollama pull <tag>` and check each model's license. These are selectable models, not performance guarantees; see the [evaluation guidance](https://github.com/hermes-labs-ai/little-canary/blob/main/benchmarks/README.md).
 
+## Pre-screen a batch of documents or messages
+
+`little-canary screen` (or `little_canary.batch.screen_batch`) runs the same pipeline once per item — nothing is aggregated into a batch-level "safe" verdict.
+
+```bash
+printf '%s\n' '{"id":"m1","source":"inbox","text":"Quarterly numbers attached."}' \
+  | little-canary screen --mode full
+```
+
+Input is JSONL: each line is a JSON string or `{"text", "id"?, "source"?}`. Output is one `little-canary-batch/v1` JSON document with per-item `state` (`pass`, `flag`, `block`, `degraded`, `unexercised`), provenance (`index`, `id`, `source`, `sha256`, `length`) and the standard verdict. Item text is never echoed. An item whose check raises is `degraded`, never `pass`. Malformed lines or oversized batches (`--max-items`, default 1000) are rejected, not truncated. Exit status: `0` every item `pass`, `1` any `block`/`flag`, `2` any `degraded`/`unexercised` or invalid input. Screening is advisory input-risk sensing with the same coverage limits as a single check.
+
 ## Reading a verdict
 
 | Verdict | Meaning | What to do |
