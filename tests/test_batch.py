@@ -140,3 +140,9 @@ def test_cli_bad_input_exit_2(capsys):
     assert code == 2 and "malformed JSON" in out.err
     code, out = _run_cli(["screen", "/nonexistent/file.jsonl"], "", capsys)
     assert code == 2
+
+
+def test_cli_empty_input_is_not_clean(capsys):
+    code, out = _run_cli(["screen"], "\n", capsys)
+    assert code == 2
+    assert json.loads(out.out)["total"] == 0

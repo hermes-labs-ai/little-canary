@@ -208,7 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _run_screen(args) -> int:
-    """Exit 0: every item pass; 1: any block/flag; 2: any degraded/unexercised or bad input."""
+    """Exit 0: at least one item and all pass; 1: any block/flag; 2: else (degraded/unexercised, empty, bad input)."""
     import json
     import sys
 
@@ -236,6 +236,8 @@ def _run_screen(args) -> int:
     counts = result.counts
     if counts[STATE_BLOCK] or counts[STATE_FLAG]:
         return 1
+    if not result.items:
+        return 2  # nothing was screened: not a clean result
     return 0 if counts[STATE_PASS] == len(result.items) else 2
 
 
