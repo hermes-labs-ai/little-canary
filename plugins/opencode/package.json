@@ -2,6 +2,7 @@
   "name": "@hermes-labs/little-canary-opencode",
   "version": "0.3.10",
   "type": "module",
+  "main": "./index.js",
   "description": "Flag OpenCode prompts and screen text tool results with Little Canary",
   "license": "Apache-2.0",
   "homepage": "https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/opencode",

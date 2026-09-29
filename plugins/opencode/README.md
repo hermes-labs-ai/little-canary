@@ -18,6 +18,16 @@ ollama pull qwen2.5:1.5b
 little-canary serve --mode advisory
 ```
 
+Advisory mode warns and forwards detected tool text. To enable tool-result
+withholding, stop that service and run the blocking configuration instead:
+
+```sh
+little-canary serve --mode block
+```
+
+Block mode lets the plugin replace tool text when the service returns
+`safe: false`. It still cannot block a submitted prompt or undo a tool call.
+
 Install the plugin package from npm:
 
 ```sh
