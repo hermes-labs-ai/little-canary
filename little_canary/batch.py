@@ -121,6 +121,10 @@ def coerce_item(raw: Any, index: int = 0) -> BatchItem:
         raise ValueError(f"item {index}: must be a string or object with 'text'")
     if not isinstance(item.text, str) or item.text == "":
         raise ValueError(f"item {index}: 'text' must be a non-empty string")
+    try:
+        item.text.encode("utf-8")  # rejects lone surrogates before any check runs
+    except UnicodeEncodeError:
+        raise ValueError(f"item {index}: 'text' is not valid Unicode (lone surrogate)") from None
     for label in ("id", "source"):
         value = getattr(item, label)
         if value is not None and not isinstance(value, str):

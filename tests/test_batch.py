@@ -210,3 +210,22 @@ def test_cli_mixed_block_and_degraded_exits_2_but_reports_both(capsys):
 def test_cli_unexercised_analysis_exits_2(capsys):
     code, _ = _run_cli(["screen"], '"NOANALYSIS"\n', capsys)
     assert code == 2
+
+
+def test_lone_surrogate_rejected_before_any_check():
+    calls = []
+
+    class Counting:
+        def check(self, text):
+            calls.append(text)
+            return _verdict(text)
+
+    bad = json.loads('"\\ud800"')
+    with pytest.raises(ValueError, match="surrogate"):
+        screen_batch(Counting(), ["ok", "fine", bad])
+    assert calls == []
+
+
+def test_cli_lone_surrogate_exits_2_with_no_output(capsys):
+    code, out = _run_cli(["screen"], '"ok"\n"\\ud800"\n', capsys)
+    assert code == 2 and out.out == "" and "surrogate" in out.err
