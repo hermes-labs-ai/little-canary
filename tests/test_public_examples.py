@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -84,6 +85,13 @@ def test_copilot_example_matches_matrix_and_host_evidence():
     assert "1.0.84-5" in text
 
 
+def _closed_port() -> int:
+    """A loopback port that was free a moment ago, so nothing is listening on it."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
 def _fenced_jsonl(text: str) -> str:
     block = text.split("```json\n", 1)[1].split("```", 1)[0]
     return block
@@ -136,7 +144,7 @@ def test_batch_example_output_claims_match_offline_screen_run(tmp_path):
     batch.write_text(fenced, encoding="utf-8")
     run = subprocess.run(
         [sys.executable, "-m", "little_canary.cli", "screen", str(batch),
-         "--ollama-url", "http://127.0.0.1:9", "--timeout", "1"],
+         "--ollama-url", f"http://127.0.0.1:{_closed_port()}", "--timeout", "1"],
         capture_output=True, text=True, cwd=ROOT,
     )
     result = json.loads(run.stdout)
