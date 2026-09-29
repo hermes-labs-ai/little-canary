@@ -87,6 +87,7 @@ class LayerResult:
     details: str
     raw_result: Any = None
     status: str = "passed"
+    coverage_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -234,6 +235,7 @@ class PipelineVerdict:
                     "status": lr.status,
                     "latency": round(lr.latency, 4),
                     "details": lr.details,
+                    **({"coverage_reason": lr.coverage_reason} if lr.coverage_reason else {}),
                 }
                 for lr in self.layers
             ],
@@ -565,6 +567,10 @@ class SecurityPipeline:
                         details=details,
                         raw_result=_analysis_snapshot(analysis),
                         status="failed",
+                        coverage_reason=(
+                            canary_result.failure_code if canary_result is not None
+                            else "probe_exception"
+                        ) or "probe_failed",
                     )
                 )
             elif analysis is None:
@@ -582,6 +588,7 @@ class SecurityPipeline:
                             or "Canary analysis failed; fail-open routing applies."
                         ),
                         status="failed",
+                        coverage_reason="analysis_failed",
                     )
                 )
             else:
@@ -610,6 +617,7 @@ class SecurityPipeline:
                             details=_analysis_details(snapshot, failed=True),
                             raw_result=snapshot,
                             status="failed",
+                            coverage_reason="analysis_failed",
                         )
                     )
                 else:

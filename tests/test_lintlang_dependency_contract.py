@@ -9,8 +9,10 @@ import yaml
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "lintlang.yml"
 DEPENDABOT = ROOT / ".github" / "dependabot.yml"
-CURRENT_LINTLANG_SHA = "58e66871531eb585869336189d07b4334e963a5f"  # v0.6.0
-PINNED_LINTLANG_SHA = "f89c3b0b8986fad162859dca052a8d5fe227eede"  # v0.5.3
+# Reviewed release pair for the workflow's intentional one-release-behind policy.
+# Update these together when approving a new Dependabot proposal.
+PINNED_LINTLANG_REF = ("6aace2a175483757c64d7aa2105346d1cc34b857", "v0.7.1")
+CURRENT_LINTLANG_REF = ("c0cab00048220286858f227aaf4b13cc043f718b", "v0.8.0")
 
 
 def _lintlang_ref(workflow: str) -> tuple[str, str]:
@@ -22,12 +24,33 @@ def _lintlang_ref(workflow: str) -> tuple[str, str]:
     return match.groups()
 
 
-def test_lintlang_pin_is_immutable_and_deliberately_stale() -> None:
-    sha, version = _lintlang_ref(WORKFLOW.read_text())
+def _assert_approved_stale_pin(workflow: str) -> None:
+    ref = _lintlang_ref(workflow)
+    assert ref != CURRENT_LINTLANG_REF, "LintLang must remain intentionally one release behind"
+    assert ref == PINNED_LINTLANG_REF, "LintLang must use the approved SHA and version pair"
 
-    assert sha == PINNED_LINTLANG_SHA
-    assert version == "v0.5.3"
-    assert sha != CURRENT_LINTLANG_SHA
+
+def test_lintlang_pin_is_immutable_and_deliberately_stale() -> None:
+    _assert_approved_stale_pin(WORKFLOW.read_text())
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        CURRENT_LINTLANG_REF,
+        ("0" * 40, PINNED_LINTLANG_REF[1]),
+        (PINNED_LINTLANG_REF[0], CURRENT_LINTLANG_REF[1]),
+    ],
+)
+def test_unapproved_pin_is_a_failing_control(replacement: tuple[str, str]) -> None:
+    """Well-formed pins must still satisfy the approved stale-release policy."""
+    workflow = WORKFLOW.read_text()
+    sha, version = _lintlang_ref(WORKFLOW.read_text())
+    unapproved = workflow.replace(f"@{sha} # {version}", f"@{replacement[0]} # {replacement[1]}")
+    assert _lintlang_ref(unapproved) == replacement
+
+    with pytest.raises(AssertionError, match="intentionally one release behind|approved SHA"):
+        _assert_approved_stale_pin(unapproved)
 
 
 def test_dependabot_monitors_github_actions() -> None:
@@ -52,7 +75,9 @@ def test_dependabot_monitors_github_actions() -> None:
 def test_tag_ref_is_a_failing_control() -> None:
     """A tag would defeat the immutable-pin contract and must be rejected."""
 
-    unpinned = WORKFLOW.read_text().replace(f"@{PINNED_LINTLANG_SHA}", "@v0.6.0")
+    workflow = WORKFLOW.read_text()
+    sha, version = _lintlang_ref(workflow)
+    unpinned = workflow.replace(f"@{sha}", f"@{version}")
 
     with pytest.raises(AssertionError, match="full immutable SHA"):
         _lintlang_ref(unpinned)

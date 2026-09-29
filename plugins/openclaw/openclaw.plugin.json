@@ -2,6 +2,8 @@
   "id": "little-canary-openclaw",
   "name": "Little Canary",
   "description": "Screen the current prompt before supported OpenClaw runners submit it to a model.",
+  "categories": ["security"],
+  "activation": {"onCapabilities": ["hook"]},
   "configSchema": {
     "type": "object",
     "properties": {

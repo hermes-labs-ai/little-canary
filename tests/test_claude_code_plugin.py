@@ -135,7 +135,9 @@ def test_plugin_directory_is_self_contained() -> None:
     # needs must live under plugins/claude-code and must not reach above it.
     expected = {
         PLUGIN_ROOT / ".claude-plugin" / "plugin.json",
+        PLUGIN_ROOT / ".claude-plugin" / "icon.png",
         PLUGIN_ROOT / "plugin.json",
+        PLUGIN_ROOT / "README.md",
         HOOKS_FILE,
         HOOK_SCRIPT,
     }
@@ -164,17 +166,22 @@ def test_agent_plugin_manifest_satisfies_the_v1_specification() -> None:
     assert manifest["version"] == __version__
 
 
-def test_both_plugin_manifests_stay_in_agreement() -> None:
-    # Two manifests describe one plugin, so they must never drift: an edit to either one that the
-    # other does not mirror fails here rather than shipping two different answers to the same host.
+def test_plugin_manifests_share_metadata_and_codex_trust_caveat() -> None:
+    # The root manifest is also used by Codex CLI, where installing the hook is
+    # insufficient until the user trusts it. Keep the core description shared
+    # while making that prerequisite explicit in cross-host listings.
     claude = json.loads(PLUGIN_MANIFEST.read_text())
     agent = json.loads(AGENT_PLUGIN_MANIFEST.read_text())
+    marketplace = json.loads(MARKETPLACE_FILE.read_text())
 
     shared = set(agent) - {"$schema"}
-    # "$schema" is the only field the Agent Plugins manifest is allowed to carry on its own.
     assert shared == set(claude) & AGENT_PLUGIN_ALLOWED_FIELDS
     for field in sorted(shared):
-        assert agent[field] == claude[field], field
+        if field == "description":
+            assert agent[field] == claude[field] + " On Codex CLI, trust the hook before it screens."
+        else:
+            assert agent[field] == claude[field], field
+    assert marketplace["plugins"][0]["description"] == agent["description"]
     assert {"name", "version", "description", "license"} <= shared
 
 

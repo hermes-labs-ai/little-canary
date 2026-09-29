@@ -13,9 +13,9 @@ The repository has already accepted this exact provider path: Dependabot's
 `hermes-labs-ai/lintlang` from v0.5.0 to v0.5.3 by changing the `uses:` SHA in
 `.github/workflows/lintlang.yml`.
 
-The workflow currently pins v0.5.3 at
-`f89c3b0b8986fad162859dca052a8d5fe227eede`. The known newer release is v0.6.0
-at `58e66871531eb585869336189d07b4334e963a5f`. The next scheduled Dependabot
+The workflow intentionally pins one release behind: v0.7.1 at
+`6aace2a175483757c64d7aa2105346d1cc34b857`. The known newer release is v0.8.0
+at `c0cab00048220286858f227aaf4b13cc043f718b`. The next scheduled Dependabot
 run should therefore surface the same kind of versioned update for review.
 
 To inspect the provider's live result and verify the exact action reference:
@@ -27,7 +27,14 @@ gh pr diff <DEPENDABOT_PR> -R hermes-labs-ai/little-canary
 gh pr checks <DEPENDABOT_PR> -R hermes-labs-ai/little-canary
 ```
 
-The expected update is a single workflow-line change to
-`hermes-labs-ai/lintlang@58e66871531eb585869336189d07b4334e963a5f # v0.6.0`.
+The expected proposal changes the workflow reference to
+`hermes-labs-ai/lintlang@c0cab00048220286858f227aaf4b13cc043f718b # v0.8.0`.
+That proposal demonstrates Dependabot discovery; do not accept v0.8.0 while it
+is the latest release if retaining the intentionally one-release-behind policy.
+Once a newer release is available, verify both release SHAs and approve the
+workflow update together with `PINNED_LINTLANG_REF` and `CURRENT_LINTLANG_REF`
+in `tests/test_lintlang_dependency_contract.py`: the pinned pair must identify
+the approved release immediately before the current pair. Update this guide
+to match those reviewed pairs.
 Do not replace the SHA with `@main` or a release tag; the test suite includes a
 failing tag-ref control for that regression.

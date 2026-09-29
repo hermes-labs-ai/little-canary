@@ -1,7 +1,7 @@
 {
   "schema": "little-canary-host-capability-matrix/v1",
-  "little_canary_version": "0.3.8",
-  "certified_on": "2026-09-23",
+  "little_canary_version": "0.3.10",
+  "certified_on": "2026-09-27",
   "note": "Inbound prompt screening and outbound tool-execution blocking are separate host capabilities. A host that intercepts a prompt does not necessarily allow refusing it, and a host that can refuse a tool call does not necessarily expose the prompt. Each field below records what the named host version can do, not what Little Canary wishes it could do.",
   "hosts": [
     {
@@ -27,6 +27,40 @@
       "caveats": [
         "Screens the submitted prompt only. Tool results, tool arguments, and file contents read during the turn are never screened.",
         "A request body over 64 KiB is rejected by the loopback server with HTTP 413 and is therefore not screened at all."
+      ]
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "observed_version": "1.18.32",
+      "shipped_artifact": "plugins/opencode",
+      "doc_anchor": "### OpenCode",
+      "inbound": {
+        "shipped": true,
+        "event": "chat.message",
+        "interception_point": "when a new user message is received, before the model request",
+        "deny_channel": false,
+        "deny_wire": null,
+        "runtime_certified": true,
+        "runtime_evidence": "OpenCode 1.18.32 loaded the local plugin in an isolated configuration. An `opencode run` invocation with a synthetic flagged verdict made one request to the loopback Little Canary test service and printed `Little Canary: Prompt flagged; OpenCode continued.` before the host's model request failed on a dummy API key. Offline package tests cover clean, flagged, unsafe, degraded, unavailable, and invalid-endpoint results. This certifies hook dispatch and warning delivery, not detector efficacy with a live model."
+      },
+      "tool_result": {
+        "shipped": true,
+        "event": "tool.execute.after",
+        "interception_point": "after a tool runs, before its text result reaches the next model request",
+        "can_withhold_text": true,
+        "runtime_certified": true,
+        "runtime_evidence": "The five-file npm package archive was installed in an isolated OpenCode 1.18.32 profile. A local mock provider requested a read of a synthetic file, and a local screening service returned pass, unsafe, and unavailable outcomes in separate runs. Each run reached a second model request. Pass and unavailable forwarded the original read text; unsafe forwarded only the replacement notice. Unavailable emitted a warning. This proves string-result hook dispatch and transformation for this host version, not detector efficacy or other tool-result shapes."
+      },
+      "outbound_tool_execution": {
+        "host_deny_channel": true,
+        "host_event": "tool.execute.before",
+        "shipped": false
+      },
+      "caveats": [
+        "The stable chat.message hook has no typed input-rejection result. An unsafe service verdict warns but cannot stop the OpenCode turn.",
+        "Current user-message text parts, string tool results, and text items in raw MCP results are screened. The MCP content path is backed by OpenCode 1.18.32 source and an offline adapter test, not an installed-host run. Earlier conversation, attachments, tool arguments, and non-text results are outside this adapter. A file read is screened only after the tool returns its text.",
+        "The tool-result hook cannot undo tool execution. Rejected string results are replaced before the next model request; service failures and bodies over the server's 64 KiB limit warn and continue with the original text. OpenCode V2 plugin APIs have not been certified for this package."
       ]
     },
     {
@@ -81,7 +115,7 @@
     {
       "id": "openclaw",
       "name": "OpenClaw",
-      "observed_version": "2026.9.5",
+      "observed_version": "2026.9.5 and 2026.9.6",
       "shipped_artifact": "plugins/openclaw",
       "doc_anchor": "### OpenClaw",
       "inbound": {
@@ -91,7 +125,7 @@
         "deny_channel": true,
         "deny_wire": "{ \"outcome\": \"block\", \"reason\": \"...\", \"message\": \"...\" }",
         "runtime_certified": true,
-        "runtime_evidence": "Verified with OpenClaw 2026.9.5 on Node 26.1.0: local-path plugin install and runtime inspection reported typedHooks.before_agent_run; `openclaw agent --local` blocked a synthetic unsafe response from a loopback test service before reaching a local fake model, while a benign response reached that fake model. No live canary/model was used. The isolated `agent exec` path bypassed this hook in the same runtime and is explicitly outside the tested coverage."
+        "runtime_evidence": "Verified with OpenClaw 2026.9.5 on Node 26.1.0: local-path plugin install and runtime inspection reported typedHooks.before_agent_run; `openclaw agent --local` blocked a synthetic unsafe response from a loopback test service before reaching a local fake model, while a benign response reached that fake model. OpenClaw 2026.9.6 on Node 24.21.0 installed the packed package in an isolated profile; runtime inspection reported one loaded before_agent_run hook after the documented conversation-access grant. Host-dispatched block made no fake-model call, while pass, degraded, and unavailable-service controls reached the fake model. These used deterministic loopback test services, not a live canary. The isolated `agent exec` path bypassed this hook in 2026.9.5 and is outside claimed coverage."
       },
       "outbound_tool_execution": {
         "host_deny_channel": true,
@@ -104,6 +138,33 @@
         "Requires the operator to run the Little Canary loopback service. The plugin passes through when service checks fail or report degraded coverage.",
         "The service rejects HTTP request bodies over 64 KiB; this plugin passes those runs through unscreened.",
         "The non-bundled plugin needs hooks.allowConversationAccess enabled for its entry."
+      ]
+    },
+    {
+      "id": "pi",
+      "name": "Pi",
+      "observed_version": "0.87.1",
+      "shipped_artifact": "plugins/pi",
+      "doc_anchor": "### Pi",
+      "inbound": {
+        "shipped": true,
+        "event": "input",
+        "interception_point": "after input is received and before agent processing",
+        "deny_channel": true,
+        "deny_wire": "{\"action\": \"handled\"}",
+        "runtime_certified": true,
+        "runtime_evidence": "Pi 0.87.1 loaded the local package in an isolated PI_CODING_AGENT_DIR profile. A `pi --print --no-session --offline` invocation with an HTTP loopback test service returning safe:false emitted the Little Canary block notice and exited without model output. Package unit tests cover pass, flagged advisory, degraded, unavailable-service, and invalid-endpoint controls. This certifies the host's input-handling boundary, not detector efficacy with a live model."
+      },
+      "outbound_tool_execution": {
+        "host_deny_channel": true,
+        "host_event": "tool_call",
+        "shipped": false
+      },
+      "caveats": [
+        "The extension screens only input event text. Pi runs registered extension commands before input, while skill and prompt-template expansion happens afterward, so those paths or additions are not screened.",
+        "It does not separately inspect prior conversation, tool outputs, file reads, or images.",
+        "The recommended advisory service policy flags without refusing input. Only an explicit unsafe verdict from a blocking service policy makes this extension handle the input before the model.",
+        "Service errors, malformed verdicts, and over-limit request bodies pass through with a warning."
       ]
     },
     {
