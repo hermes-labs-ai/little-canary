@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
@@ -85,11 +86,12 @@ def test_copilot_example_matches_matrix_and_host_evidence():
     assert "1.0.84-5" in text
 
 
-def _closed_port() -> int:
-    """A loopback port that was free a moment ago, so nothing is listening on it."""
+@contextlib.contextmanager
+def _refusing_port():
+    """Hold a bound, non-listening loopback port: connects are refused and no other process can take it."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+        yield sock.getsockname()[1]
 
 
 def _fenced_jsonl(text: str) -> str:
@@ -142,11 +144,12 @@ def test_batch_example_output_claims_match_offline_screen_run(tmp_path):
     assert hashlib.sha256(rows[1]["text"].encode("utf-8")).hexdigest() == jailbench["source_input_sha256"]
     batch = tmp_path / "batch.jsonl"
     batch.write_text(fenced, encoding="utf-8")
-    run = subprocess.run(
-        [sys.executable, "-m", "little_canary.cli", "screen", str(batch),
-         "--ollama-url", f"http://127.0.0.1:{_closed_port()}", "--timeout", "1"],
-        capture_output=True, text=True, cwd=ROOT,
-    )
+    with _refusing_port() as port:
+        run = subprocess.run(
+            [sys.executable, "-m", "little_canary.cli", "screen", str(batch),
+             "--ollama-url", f"http://127.0.0.1:{port}", "--timeout", "1"],
+            capture_output=True, text=True, cwd=ROOT,
+        )
     result = json.loads(run.stdout)
     items = {i["id"]: i for i in result["items"]}
     assert run.returncode == 2 and "Exit status `2`" in text
