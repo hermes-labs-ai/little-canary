@@ -85,6 +85,7 @@ test("tool results stay intact on pass, flag, degraded, and unavailable outcomes
       [{ safe: true, degraded: false, canary_status: "exercised" }, null],
       [{ safe: true, degraded: false, canary_status: "exercised", advisory: { flagged: true } }, /flagged/],
       [{ safe: true, degraded: true, canary_status: "failed" }, /incomplete/],
+      [{ safe: true, degraded: true, canary_status: "failed", advisory: { flagged: true } }, /flagged; screening coverage is incomplete/],
     ];
     for (const [verdict, warning] of cases) {
       globalThis.fetch = async () => ({ ok: true, json: async () => verdict });
@@ -111,9 +112,11 @@ test("tool results stay intact on pass, flag, degraded, and unavailable outcomes
 
 test("raw MCP text content is screened and replaced on an unsafe verdict", async () => {
   const originalFetch = globalThis.fetch;
+  const originalEndpoint = process.env.LITTLE_CANARY_ENDPOINT;
   const originalWrite = process.stderr.write;
   let sent;
   try {
+    delete process.env.LITTLE_CANARY_ENDPOINT;
     process.stderr.write = () => true;
     globalThis.fetch = async (_url, options) => {
       sent = JSON.parse(options.body);
@@ -124,14 +127,19 @@ test("raw MCP text content is screened and replaced on an unsafe verdict", async
       { type: "text", text: "untrusted MCP result" },
       { type: "image", data: "opaque", mimeType: "image/png" },
       { type: "text", text: "more untrusted text" },
+      { type: "resource", resource: { uri: "test://document", text: "nested untrusted text" } },
     ] };
     await hooks["tool.execute.after"]({ tool: "mcp_example" }, result);
-    assert.deepEqual(sent, { text: "untrusted MCP result\nmore untrusted text" });
+    assert.deepEqual(sent, { text: "untrusted MCP result\nmore untrusted text\nnested untrusted text" });
     assert.ok(result.content[0].text.includes("withheld this tool result"));
     assert.ok(result.content[2].text.includes("withheld this tool result"));
+    assert.match(result.content[3].resource.text, /withheld this tool result/);
+    assert.equal(result.content[3].resource.uri, "test://document");
     assert.deepEqual(result.content[1], { type: "image", data: "opaque", mimeType: "image/png" });
   } finally {
     globalThis.fetch = originalFetch;
     process.stderr.write = originalWrite;
+    if (originalEndpoint === undefined) delete process.env.LITTLE_CANARY_ENDPOINT;
+    else process.env.LITTLE_CANARY_ENDPOINT = originalEndpoint;
   }
 });
