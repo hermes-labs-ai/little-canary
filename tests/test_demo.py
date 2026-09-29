@@ -603,3 +603,33 @@ def test_live_default_timeout_is_cpu_capable():
     assert DEFAULT_CANARY_TIMEOUT >= 60.0
     default = inspect.signature(run_live).parameters["timeout"].default
     assert default == DEFAULT_CANARY_TIMEOUT
+
+
+def test_live_canary_timeout_degraded_names_the_knob():
+    output = io.StringIO()
+    inventory = _response(
+        200,
+        {"models": [{"name": "qwen2.5:1.5b", "digest": "digest"}]},
+    )
+
+    with (
+        patch("little_canary.demo.requests.get", return_value=inventory),
+        patch(
+            "little_canary.canary.requests.post",
+            side_effect=requests.Timeout("slow cpu"),
+        ),
+    ):
+        exit_code = run_live(
+            endpoint="http://127.0.0.1:11434",
+            stdout=output,
+            stderr=io.StringIO(),
+            timeout=45.0,
+        )
+
+    assert exit_code == 2
+    text = output.getvalue()
+    assert "LIVE       DEGRADED / INCOMPLETE" in text
+    assert "VERDICT    DEGRADED" in text
+    assert "Canary timed out after 45.0s" in text
+    assert "--timeout" in text
+    assert "LITTLE_CANARY_TIMEOUT" in text

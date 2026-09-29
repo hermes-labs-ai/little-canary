@@ -31,6 +31,10 @@ Benchmark and latency figures in entries before `0.3.3` are historical release n
   resolves for the PyPI stranger.
 - `little-canary serve` accepts `--timeout` and passes it through as the
   pipeline's canary timeout.
+- A timeout-induced DEGRADED now names the knob to turn: the `demo --live`
+  case detail and the `serve` `/check` canary-layer details cite `--timeout`
+  / `LITTLE_CANARY_TIMEOUT` (or `canary_timeout` on `SecurityPipeline`) and
+  the configured per-call timeout seconds.
 
 ## [0.3.10] - 2026-09-26
 

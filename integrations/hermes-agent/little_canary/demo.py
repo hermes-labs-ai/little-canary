@@ -511,8 +511,16 @@ def _live_case_record(
     case_id: str,
     user_input: str,
     probe_result: CanaryResult,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
     if not probe_result.success:
+        error = probe_result.error or "canary probe failed"
+        if probe_result.failure_code == "timeout":
+            error += (
+                f" (per-call timeout was {timeout:g}s); raise it with "
+                "`little-canary demo --live --timeout SECONDS` or the "
+                "LITTLE_CANARY_TIMEOUT environment variable"
+            )
         return {
             "id": case_id,
             "input": user_input,
@@ -523,7 +531,7 @@ def _live_case_record(
             "canary_status": "failed",
             "analysis_method": "none",
             "analysis_status": "not_applicable",
-            "error": probe_result.error,
+            "error": error,
         }
     try:
         record, _analysis = _analysis_record(
@@ -638,7 +646,7 @@ def run_live(
     records: list[dict[str, Any]] = []
     for case_id, user_input in DEMO_CASES:
         result["model_call"] = True
-        record = _live_case_record(case_id, user_input, probe.test(user_input))
+        record = _live_case_record(case_id, user_input, probe.test(user_input), timeout=timeout)
         records.append(record)
         if record["canary_status"] == "failed" or record["analysis_status"] == "failed":
             break
