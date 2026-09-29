@@ -5,10 +5,13 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,6 +56,7 @@ def test_jailbench_example_matches_committed_cases():
         assert digest == case["source_input_sha256"]
         assert digest[:12] in text
     assert cases["jb-inj-01"]["prompt"] in text
+    assert cases["benign_control-jb-inj-01"]["prompt"] in text
 
 
 def test_jailbench_pair_structural_verdicts_are_reproducible():
@@ -86,12 +90,65 @@ def test_copilot_example_matches_matrix_and_host_evidence():
     assert "1.0.84-5" in text
 
 
+_PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+
+
 @contextlib.contextmanager
 def _refusing_port():
     """Hold a bound, non-listening loopback port: connects are refused and no other process can take it."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         yield sock.getsockname()[1]
+
+
+@contextlib.contextmanager
+def _fake_proxy():
+    """A local listener that records connections without reading request bodies."""
+    hits: list[bytes] = []
+    stop = threading.Event()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(5)
+        srv.settimeout(0.1)
+
+        def serve() -> None:
+            while not stop.is_set():
+                try:
+                    conn, _ = srv.accept()
+                except OSError:
+                    continue
+                with conn:
+                    conn.settimeout(0.5)
+                    try:
+                        hits.append(conn.recv(32))
+                    except OSError:
+                        hits.append(b"")
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        try:
+            yield srv.getsockname()[1], hits
+        finally:
+            stop.set()
+            thread.join(timeout=2)
+
+
+def _poisoned_env(proxy_port: int) -> dict:
+    env = {k: v for k, v in os.environ.items() if k.lower() not in {v.lower() for v in _PROXY_VARS} | {"no_proxy"}}
+    for name in _PROXY_VARS:
+        env[name] = f"http://127.0.0.1:{proxy_port}"
+    return env
+
+
+def _documented_command(text: str, batch: Path, port: int) -> list:
+    """The example's own bash command, with the batch file and unused port filled in."""
+    block = text.split("```bash\n", 1)[1].split("```", 1)[0]
+    assert "<UNUSED_PORT>" in block and "127.0.0.1:9" not in block
+    argv = shlex.split(block.replace("<UNUSED_PORT>", str(port)))
+    assert argv[0] == "env" and argv.count("little-canary") == 1
+    at = argv.index("little-canary")
+    tail = [str(batch) if a == "batch.jsonl" else a for a in argv[at + 1:]]
+    return argv[:at] + [sys.executable, "-m", "little_canary.cli"] + tail
 
 
 def _fenced_jsonl(text: str) -> str:
@@ -144,12 +201,12 @@ def test_batch_example_output_claims_match_offline_screen_run(tmp_path):
     assert hashlib.sha256(rows[1]["text"].encode("utf-8")).hexdigest() == jailbench["source_input_sha256"]
     batch = tmp_path / "batch.jsonl"
     batch.write_text(fenced, encoding="utf-8")
-    with _refusing_port() as port:
+    with _refusing_port() as port, _fake_proxy() as (proxy_port, proxy_hits):
+        argv = _documented_command(text, batch, port)
         run = subprocess.run(
-            [sys.executable, "-m", "little_canary.cli", "screen", str(batch),
-             "--ollama-url", f"http://127.0.0.1:{port}", "--timeout", "1"],
-            capture_output=True, text=True, cwd=ROOT,
+            argv, capture_output=True, text=True, cwd=ROOT, env=_poisoned_env(proxy_port)
         )
+    assert proxy_hits == [], "the documented command sent traffic to a proxy despite poisoned proxy variables"
     result = json.loads(run.stdout)
     items = {i["id"]: i for i in result["items"]}
     assert run.returncode == 2 and "Exit status `2`" in text
