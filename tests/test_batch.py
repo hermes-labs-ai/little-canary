@@ -311,3 +311,14 @@ def test_malformed_verdict_is_degraded_not_traceback():
             return object()
 
     assert screen_batch(Bad(), ["x"]).items[0].state == "degraded"
+
+
+def test_input_key_redacted_even_if_a_verdict_payload_carries_it():
+    class Leaky:
+        def check(self, text):
+            v = _verdict(text)
+            v.to_dict = lambda: {"input": text, "safe_input": text, "safe": True}
+            return v
+
+    dumped = json.dumps(screen_batch(Leaky(), ["SECRET-TEXT"]).to_dict())
+    assert "SECRET-TEXT" not in dumped

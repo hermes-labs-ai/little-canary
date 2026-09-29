@@ -197,9 +197,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode", choices=["block", "advisory", "full"], default="full",
         help="Pipeline mode (default: full)",
     )
-    screen_parser.add_argument("--canary-model", default="qwen2.5:1.5b")
-    screen_parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
-    screen_parser.add_argument("--timeout", type=timeout_type, default=None)
+    screen_parser.add_argument(
+        "--canary-model", default="qwen2.5:1.5b",
+        help="Ollama model tag for the canary probe (default: qwen2.5:1.5b)",
+    )
+    screen_parser.add_argument(
+        "--ollama-url", default="http://127.0.0.1:11434",
+        help="Explicit Ollama origin (default: http://127.0.0.1:11434)",
+    )
+    screen_parser.add_argument(
+        "--timeout", type=timeout_type, default=None,
+        help=f"Seconds per canary call (default: {TIMEOUT_ENV_VAR} or {DEFAULT_CANARY_TIMEOUT:g})",
+    )
     screen_parser.add_argument(
         "--max-item-bytes", type=int, default=64 * 1024,
         help="Refuse any item whose text exceeds this many UTF-8 bytes (default: 65536)",
@@ -226,7 +235,7 @@ def _run_screen(args) -> int:
         STATE_DEGRADED,
         STATE_FLAG,
         STATE_UNEXERCISED,
-        _check_limit,
+        check_limit,
         max_line_chars,
         read_jsonl,
         screen_batch,
@@ -247,7 +256,7 @@ def _run_screen(args) -> int:
             "max_total_bytes": args.max_total_bytes,
         }
         for name, value in limits.items():
-            _check_limit(name, value)
+            check_limit(name, value)
         # Items are consumed lazily and lines read in bounded chunks, so any limit
         # stops reading at the first violation without allocating the excess.
         line_cap = max_line_chars(args.max_item_bytes)

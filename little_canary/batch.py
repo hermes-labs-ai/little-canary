@@ -19,9 +19,9 @@ import json
 import logging
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
-from .pipeline import PipelineVerdict, SecurityPipeline
+from .pipeline import PipelineVerdict
 
 logger = logging.getLogger("little_canary.batch")
 
@@ -90,7 +90,8 @@ class ItemResult:
         }
         if self.verdict is not None:
             verdict = dict(self.verdict)
-            verdict.pop("safe_input", None)  # never re-emit untrusted text
+            for key in ("input", "safe_input"):  # never re-emit untrusted text
+                verdict.pop(key, None)
             out["verdict"] = verdict
         if self.error is not None:
             out["error"] = self.error
@@ -117,7 +118,13 @@ class BatchResult:
         }
 
 
-def _check_limit(name: str, value: Any) -> None:
+class Checker(Protocol):
+    """Anything with ``check(text) -> PipelineVerdict`` (e.g. ``SecurityPipeline``)."""
+
+    def check(self, user_input: str) -> PipelineVerdict: ...
+
+
+def check_limit(name: str, value: Any) -> None:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ValueError(f"{name} must be a non-negative integer")
 
@@ -159,7 +166,7 @@ def coerce_item(raw: Any, index: int = 0, *, max_item_bytes: int = DEFAULT_MAX_I
 
 
 def screen_batch(
-    pipeline: SecurityPipeline,
+    pipeline: Checker,
     items: Iterable[Any],
     *,
     max_items: int = DEFAULT_MAX_ITEMS,
@@ -173,24 +180,27 @@ def screen_batch(
     runs and is never silently truncated. The source is consumed lazily and
     reading stops at the first violation.
     """
-    _check_limit("max_items", max_items)
-    _check_limit("max_item_bytes", max_item_bytes)
-    _check_limit("max_total_bytes", max_total_bytes)
+    check_limit("max_items", max_items)
+    check_limit("max_item_bytes", max_item_bytes)
+    check_limit("max_total_bytes", max_total_bytes)
     prepared: list[BatchItem] = []
+    digests: list[str] = []
     total = 0
     for raw in items:
         if len(prepared) >= max_items:
             # Stop consuming the (possibly lazy/unbounded) source at the first excess item.
             raise ValueError(f"batch exceeds the limit of {max_items} items")
         item = coerce_item(raw, len(prepared), max_item_bytes=max_item_bytes)
-        total += len(item.text.encode("utf-8"))
+        encoded = item.text.encode("utf-8")  # already proven encodable in coerce_item
+        total += len(encoded)
         if total > max_total_bytes:
             raise ValueError(f"batch exceeds the limit of {max_total_bytes} total bytes")
         prepared.append(item)
+        digests.append(hashlib.sha256(encoded).hexdigest())
 
     result = BatchResult()
     for index, item in enumerate(prepared):
-        digest = hashlib.sha256(item.text.encode("utf-8")).hexdigest()
+        digest = digests[index]
         try:
             verdict = pipeline.check(item.text)
             state = classify(verdict)
