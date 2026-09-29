@@ -37,7 +37,7 @@ export async function checkText(text, {
     if (typeof verdict?.safe !== "boolean") throw new Error("invalid verdict");
     if (verdict.safe === false) return "block";
     if (verdict.degraded === true || verdict.canary_status !== "exercised") {
-      return "degraded";
+      return verdict.advisory?.flagged === true ? "flag-degraded" : "degraded";
     }
     if (verdict.advisory?.flagged === true) return "flag";
     return "pass";
@@ -49,6 +49,7 @@ export async function checkText(text, {
 export async function screenMessage(text, options) {
   const result = await checkText(text, options);
   if (result === "block") return "Prompt rejected by the screening service; this OpenCode hook cannot block the turn.";
+  if (result === "flag-degraded") return "Prompt flagged; screening coverage is incomplete; OpenCode continued.";
   if (result === "degraded") return "Screening coverage is incomplete; OpenCode continued.";
   if (result === "flag") return "Prompt flagged; OpenCode continued.";
   if (result === "unavailable") return "Screening unavailable; OpenCode continued.";
