@@ -1,6 +1,6 @@
 {
   "name": "@hermes-labs/little-canary-pi",
-  "version": "0.3.10",
+  "version": "0.4.0",
   "type": "module",
   "description": "Screen Pi user input with a local Little Canary service",
   "license": "Apache-2.0",

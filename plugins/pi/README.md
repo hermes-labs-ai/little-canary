@@ -19,7 +19,7 @@ little-canary serve --mode advisory
 Install the Pi package:
 
 ```sh
-pi install npm:@hermes-labs/little-canary-pi@0.3.10
+pi install npm:@hermes-labs/little-canary-pi@0.4.0
 ```
 
 The extension sends the current input to `http://127.0.0.1:18421/check`. Set

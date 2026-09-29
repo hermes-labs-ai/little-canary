@@ -1,6 +1,6 @@
 {
   "name": "@hermes-labs/little-canary-opencode",
-  "version": "0.3.10",
+  "version": "0.4.0",
   "type": "module",
   "main": "./index.js",
   "description": "Flag OpenCode prompts and screen text tool results with Little Canary",
