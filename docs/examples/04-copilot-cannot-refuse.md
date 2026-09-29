@@ -4,7 +4,7 @@
 
 ## Input
 
-Copilot's hook output types, verbatim:
+Copilot's hook output types, abridged from the committed declarations (`// ...` marks omitted members):
 
 ```ts
 export interface PreToolUseHookOutput {

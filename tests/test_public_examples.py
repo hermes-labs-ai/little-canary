@@ -103,7 +103,7 @@ def _refusing_port():
 
 @contextlib.contextmanager
 def _fake_proxy():
-    """A local listener that records connections without reading request bodies."""
+    """A local listener that records connections, keeping at most 32 leading bytes of each."""
     hits: list[bytes] = []
     stop = threading.Event()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
@@ -144,6 +144,9 @@ def _documented_command(text: str, batch: Path, port: int) -> list:
     """The example's own bash command, with the batch file and unused port filled in."""
     block = text.split("```bash\n", 1)[1].split("```", 1)[0]
     assert "<UNUSED_PORT>" in block and "127.0.0.1:9" not in block
+    for name in _PROXY_VARS:
+        assert f"-u {name} " in block, name
+    assert "NO_PROXY=127.0.0.1 no_proxy=127.0.0.1 " in block and "--timeout 1" in block
     argv = shlex.split(block.replace("<UNUSED_PORT>", str(port)))
     assert argv[0] == "env" and argv.count("little-canary") == 1
     at = argv.index("little-canary")
@@ -232,5 +235,9 @@ def test_copilot_example_output_claims_match_matrix():
     assert len(versions) >= 2 and set(versions) == {host["observed_version"]}
     assert f"`deny_channel: {str(host['inbound']['deny_channel']).lower()}`" in text
     assert f"`shipped: {str(host['inbound']['shipped']).lower()}`" in text
-    assert host["outbound_tool_execution"]["host_deny_channel"] is True
+    outbound = host["outbound_tool_execution"]
+    assert outbound["host_deny_channel"] is True
+    assert f"`{outbound['host_event']}` event does have a host deny channel" in text
     assert host["shipped_artifact"] is None
+    assert "ships **no Copilot artifact**" in text
+    assert "abridged" in text and "verbatim" not in text
