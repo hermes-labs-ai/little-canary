@@ -9,7 +9,8 @@ block a submitted prompt.
 
 ## Set up
 
-Requires Python 3.9+ and [Ollama](https://ollama.com/). Install Little Canary,
+Requires OpenCode (tested contract: 1.18.32), Git, Python 3.9+, and
+[Ollama](https://ollama.com/). Install Little Canary,
 pull the model, and keep the screening service running while you use OpenCode:
 
 ```sh
@@ -28,11 +29,20 @@ little-canary serve --mode block
 Block mode lets the plugin replace tool text when the service returns
 `safe: false`. It still cannot block a submitted prompt or undo a tool call.
 
-Install the plugin package from npm:
+The OpenCode npm package is not published. Install the reviewed source revision
+below from the project directory where you use OpenCode:
 
 ```sh
-opencode plugin @hermes-labs/little-canary-opencode@0.3.10
+git clone https://github.com/hermes-labs-ai/little-canary.git little-canary-source
+git -C little-canary-source checkout f92a15fdebb46c41870a8903496075329750efab
+opencode plugin "$(pwd)/little-canary-source/plugins/opencode"
 ```
+
+Keep that checkout in place: OpenCode registers the local package directory.
+Its [1.18.32 path resolver](https://github.com/anomalyco/opencode/blob/545f51d26cc39a907d2867492d498d9607ea5fa4/packages/opencode/src/plugin/shared.ts#L171-L191)
+supports this absolute-directory form, and the package's `main` identifies its
+server entry. Offline tests load both the local directory and packed archive;
+this source route is not an npm release or a new installed-host certification.
 
 The package contains the OpenCode adapter, not the Python service or model
 weights. It sends submitted message text and text tool results to

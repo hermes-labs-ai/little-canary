@@ -15,7 +15,8 @@ test("OpenCode package version matches the core release", () => {
   const version = core.match(/^__version__ = "([^"]+)"/m)?.[1];
   assert.equal(manifest.version, version);
   const readme = readFileSync(resolve(root, "README.md"), "utf8");
-  assert.ok(readme.includes(`opencode plugin ${manifest.name}@${version}`));
+  assert.ok(readme.includes('opencode plugin "$(pwd)/little-canary-source/plugins/opencode"'));
+  assert.ok(!readme.includes(`opencode plugin ${manifest.name}@`), "unpublished npm package must not be the install route");
 });
 
 // OpenCode 1.18.32's installer uses this main-target predicate after checking
@@ -26,6 +27,22 @@ function hasMainTarget(pkg) {
   if (typeof main !== "string") return false;
   return Boolean(main.trim());
 }
+
+test("the local package directory resolves its main and loads legacy server hooks", async () => {
+  // OpenCode 1.18.32 shared.ts:175-185 resolves an absolute directory with a
+  // package.json to a file URL; plugin/index.ts:99-124 loads function exports.
+  const target = pathToFileURL(root);
+  const directory = fileURLToPath(target);
+  const local = JSON.parse(readFileSync(resolve(directory, "package.json"), "utf8"));
+  assert.ok(hasMainTarget(local));
+  const module = await import(pathToFileURL(resolve(directory, local.main)));
+  for (const entry of new Set(Object.values(module))) {
+    assert.equal(typeof entry, "function", "legacy server exports must be plugin functions");
+    const hooks = await entry({ client: {} });
+    assert.equal(typeof hooks["chat.message"], "function");
+    assert.equal(typeof hooks["tool.execute.after"], "function");
+  }
+});
 
 test("npm archive exposes an installable OpenCode server target and loads its hooks", async () => {
   const directory = mkdtempSync(resolve(tmpdir(), "little-canary-opencode-package-"));
