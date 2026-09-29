@@ -322,3 +322,43 @@ def test_input_key_redacted_even_if_a_verdict_payload_carries_it():
 
     dumped = json.dumps(screen_batch(Leaky(), ["SECRET-TEXT"]).to_dict())
     assert "SECRET-TEXT" not in dumped
+
+
+def test_admitted_item_is_snapshotted_against_lazy_mutation():
+    seen = []
+
+    class Recorder:
+        def check(self, text):
+            seen.append(text)
+            return _verdict(text)
+
+    record = {"text": "short", "id": "first"}
+
+    def source():
+        yield record
+        record["text"] = "x" * 500  # mutate the already-admitted mapping
+        record["id"] = "changed"
+        yield "second"
+
+    result = screen_batch(Recorder(), source(), max_item_bytes=10)
+    assert seen == ["short", "second"]
+    assert result.items[0].sha256 == hashlib.sha256(b"short").hexdigest()
+    assert result.items[0].id == "first"
+
+
+def test_batchitem_is_immutable_and_copied_at_admission():
+    item = BatchItem(text="a", id="i")
+    with pytest.raises(AttributeError):
+        item.text = "b"
+    assert screen_batch(FakePipeline(), [item]).items[0].id == "i"
+
+
+def test_worst_case_escaped_labels_fit_line_cap():
+    from little_canary.batch import MAX_LABEL_CHARS, max_line_chars
+
+    astral = "\U0001F600" * MAX_LABEL_CHARS
+    line = json.dumps({"id": astral, "source": astral, "text": "\x01" * 100})
+    assert "\\ud83d\\ude00" in line
+    assert len(line) <= max_line_chars(100)
+    items = list(read_jsonl(io.StringIO(line + "\n"), max_line=max_line_chars(100)))
+    assert screen_batch(FakePipeline(), items, max_item_bytes=100).counts["pass"] == 1

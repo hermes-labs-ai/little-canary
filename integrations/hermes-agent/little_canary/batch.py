@@ -33,8 +33,9 @@ DEFAULT_MAX_ITEM_BYTES = 64 * 1024
 DEFAULT_MAX_TOTAL_BYTES = 8 * 1024 * 1024
 #: Cap on characters in an ``id`` or ``source`` provenance label.
 MAX_LABEL_CHARS = 256
-# A JSON string escapes at worst one byte as a 6-char ``\uXXXX``; leave room for labels/keys.
-_LINE_SLACK_CHARS = 4096
+# A JSON string escapes at worst one byte as a 6-char ``\uXXXX``. Two labels of astral
+# characters escape as 12-char surrogate pairs each; add room for keys, quotes and braces.
+_LINE_SLACK_CHARS = 2 * 12 * MAX_LABEL_CHARS + 1024
 
 STATE_BLOCK = "block"
 STATE_FLAG = "flag"
@@ -59,7 +60,7 @@ def classify(verdict: PipelineVerdict) -> str:
     return STATE_PASS
 
 
-@dataclass
+@dataclass(frozen=True)
 class BatchItem:
     """One untrusted text plus caller-supplied provenance labels."""
 
@@ -136,8 +137,10 @@ def max_line_chars(max_item_bytes: int) -> int:
 
 def coerce_item(raw: Any, index: int = 0, *, max_item_bytes: int = DEFAULT_MAX_ITEM_BYTES) -> BatchItem:
     """Accept a string, a ``BatchItem`` or a mapping with ``text``/``id``/``source``."""
+    # Every field is read exactly once into a new immutable item, so a lazy or
+    # hostile source cannot alter admitted data after validation.
     if isinstance(raw, BatchItem):
-        item = raw
+        item = BatchItem(text=raw.text, id=raw.id, source=raw.source)
     elif isinstance(raw, str):
         item = BatchItem(text=raw)
     elif isinstance(raw, Mapping):
