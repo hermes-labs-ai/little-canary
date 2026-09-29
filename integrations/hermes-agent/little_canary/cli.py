@@ -160,7 +160,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.document:
             from little_canary.documents import inspect_document
 
-            result = inspect_document(pipeline, text, context_model=args.context_model)
+            try:
+                result = inspect_document(pipeline, text, context_model=args.context_model)
+            except Exception:
+                print("DECISION   INSUFFICIENTLY INSPECTED")
+                print("INSPECTION FAILED — document inspection did not return a result; do not forward")
+                return 2
             print(f"DECISION   {result.decision}")
             print(f"INSPECTION {result.inspection}")
             print(f"COVERAGE   chunks={result.chunks_checked}/{result.chunks_total}; inspected_chars={result.chars_inspected}/{len(text)}")

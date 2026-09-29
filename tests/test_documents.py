@@ -168,3 +168,14 @@ def test_plain_check_cli_decisions_and_advisory(monkeypatch, capsys, verdict, co
     assert f"DECISION   {decision}" in output
     assert ("ADVISORY   Review input" in output) == bool(verdict.advisory)
     assert "private document bytes" not in output
+
+
+def test_document_cli_holds_unexpected_inspection_failure(monkeypatch, capsys):
+    monkeypatch.setattr("little_canary.SecurityPipeline", Mock(return_value=pipeline()))
+    monkeypatch.setattr("little_canary.documents.inspect_document", Mock(side_effect=RuntimeError("private failure detail")))
+    monkeypatch.setattr("sys.stdin", io.StringIO("private document bytes"))
+    assert cli.main(["check", "--document"]) == 2
+    output = capsys.readouterr().out
+    assert "DECISION   INSUFFICIENTLY INSPECTED" in output
+    assert "INSPECTION FAILED" in output
+    assert "private" not in output
