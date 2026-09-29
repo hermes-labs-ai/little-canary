@@ -1,6 +1,8 @@
 """Offline document-boundary controls; every classifier request is mocked."""
 
+import ast
 import io
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -47,6 +49,7 @@ def test_failed_later_classifier_chunk_never_forwards(monkeypatch, failed):
         guard_document(pipeline(), "abcdefghijklmno", chunk_chars=8, overlap=2, context_model="local")
     assert caught.value.result.decision == "INSUFFICIENTLY INSPECTED"
     assert caught.value.result.chars_inspected == 8
+    assert caught.value.result.chunks_checked == 1
     assert post.call_count == 2
 
 
@@ -179,3 +182,36 @@ def test_document_cli_holds_unexpected_inspection_failure(monkeypatch, capsys):
     assert "DECISION   INSUFFICIENTLY INSPECTED" in output
     assert "INSPECTION FAILED" in output
     assert "private" not in output
+
+
+def test_first_failed_classifier_chunk_does_not_report_coverage(monkeypatch):
+    monkeypatch.setattr("little_canary.documents.requests.post", Mock(side_effect=requests.ConnectionError("offline")))
+    result = inspect_document(pipeline(), "document", context_model="local")
+    assert result.decision == "INSUFFICIENTLY INSPECTED"
+    assert result.chunks_checked == result.chars_inspected == 0
+
+
+def test_example_redirect_never_reads_or_forwards_response():
+    # Execute the actual nested fetch function without importing the optional
+    # Agents SDK: its model runner is irrelevant to this network boundary.
+    source = Path(__file__).resolve().parents[1] / "examples/document_agent.py"
+    tree = ast.parse(source.read_text())
+    function = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "fetch_and_screen")
+    redirect = Mock(status_code=302)
+    context = Mock()
+    context.__enter__ = Mock(return_value=redirect)
+    context.__exit__ = Mock(return_value=False)
+    get = Mock(return_value=context)
+    guard = Mock()
+    counts = {"documents_fetched": 0, "documents_returned": 0}
+    url = "https://example.invalid/document"
+    namespace = dict(requests=SimpleNamespace(get=get), args=SimpleNamespace(url=url, context_model="local"),
+                     pipeline=pipeline(), counts=counts, guard_document=guard,
+                     DocumentInspectionError=DocumentInspectionError, inspection_failures=[])
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), "exec"), namespace)
+    with pytest.raises(ValueError, match="redirects are not permitted"):
+        namespace["fetch_and_screen"]()
+    get.assert_called_once_with(url, timeout=15, stream=True, allow_redirects=False)
+    redirect.iter_content.assert_not_called()
+    guard.assert_not_called()
+    assert counts == {"documents_fetched": 0, "documents_returned": 0}

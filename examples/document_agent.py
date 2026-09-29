@@ -50,7 +50,9 @@ async def run(args: argparse.Namespace) -> int:
         def fetch_and_screen() -> str:
             # Stream with a byte bound so a remote response cannot consume
             # unbounded memory before the character budget is checked.
-            with requests.get(args.url, timeout=15, stream=True) as response:
+            with requests.get(args.url, timeout=15, stream=True, allow_redirects=False) as response:
+                if 300 <= response.status_code < 400:
+                    raise ValueError("Document redirects are not permitted by this fixed-URL example")
                 response.raise_for_status()
                 data = bytearray()
                 for chunk in response.iter_content(8192):

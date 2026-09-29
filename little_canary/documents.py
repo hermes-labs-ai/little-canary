@@ -128,7 +128,7 @@ def inspect_document(
             label = _classify_document(pipeline, text[start:start + chunk_chars], context_model)
             if label is None:
                 return report(
-                    "INSUFFICIENTLY INSPECTED", "DEGRADED", index, len(starts), inspected,
+                    "INSUFFICIENTLY INSPECTED", "DEGRADED", index - 1, len(starts), inspected,
                     f"Chunk {index}: document classifier unavailable, incomplete, or invalid; nothing was forwarded",
                 )
             inspected = min(start + chunk_chars, len(text))
