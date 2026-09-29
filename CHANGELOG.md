@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
+## [Unreleased]
+
+### Added
+
+- `little-canary screen` and `little_canary.batch.screen_batch`: batch pre-screening with independent per-item verdicts, provenance (index/id/source/SHA-256), per-item errors reported as `degraded` (never `pass`), no echo of item text, and all-or-nothing admission with item-count, per-item and aggregate byte limits. Safety semantics of `SecurityPipeline.check` are unchanged.
+
 ## [0.4.0] - 2026-09-29
 
 Minor release. Bare `little-canary demo` now works out of the box with a

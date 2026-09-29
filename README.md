@@ -86,6 +86,25 @@ Python apps can skip HTTP and call `SecurityPipeline.check()` directly — see t
 
 The default remains `qwen2.5:1.5b`. Select an installed model with `serve --canary-model`, `demo --model`, or Python's `SecurityPipeline(canary_model=...)`; the Hermes Agent plugin reads `LITTLE_CANARY_MODEL`. Locally exercised alternatives are `qwen3.5:2b-q4_K_M`, `LiquidAI/lfm2.5-1.2b-instruct:q4_k_m`, and `gemma3:1b`. Pull weights with `ollama pull <tag>` and check each model's license. These are selectable models, not performance guarantees; see the [evaluation guidance](https://github.com/hermes-labs-ai/little-canary/blob/main/benchmarks/README.md).
 
+## Pre-screen a batch of documents or messages
+
+> **Unreleased — source install only.** Batch pre-screening was merged after the `0.4.0` release, so the published `pip install little-canary` (0.4.0) does **not** include `little-canary screen` or `little_canary.batch`. Until the next release, install from source:
+>
+> ```bash
+> pip install "git+https://github.com/hermes-labs-ai/little-canary.git"
+> ```
+
+`little-canary screen` (or `little_canary.batch.screen_batch`) runs the same pipeline once per item — nothing is aggregated into a batch-level "safe" verdict.
+
+```bash
+printf '%s\n' '{"id":"m1","source":"inbox","text":"Quarterly numbers attached."}' \
+  | little-canary screen --mode full
+```
+
+Input is JSONL: each line is a JSON string or `{"text", "id"?, "source"?}`. Output is one `little-canary-batch/v1` JSON document with per-item `state` (`pass`, `flag`, `block`, `degraded`, `unexercised`), provenance (`index`, `id`, `source`, `sha256`, `length`) and the standard verdict. Item text is never echoed, in the JSON output or in the Python result objects. An item whose check raises is `degraded`, never `pass`. Admission is all-or-nothing and happens before any check runs: malformed JSON, lone Unicode surrogates, non-string labels, or any breach of `--max-items` (default 1000), `--max-item-bytes` (UTF-8 bytes of one text, default 65536, at most 64 MiB) or `--max-total-bytes` (all texts, default 8 MiB) rejects the whole batch — nothing is truncated. Lines are read in bounded chunks, so an oversized line is refused before it is fully allocated; `id`/`source` labels are capped at 256 characters. The pipeline's own `max_input_length` policy still applies per item. Exit status: `2` if the input is empty or invalid or any item is `degraded`/`unexercised` (a coverage hold is never masked by a block elsewhere in the batch); otherwise `1` if any item is `block`/`flag`; otherwise `0` (non-empty, every item `pass`). `pass` requires both the canary and analysis layers to have run. Screening is advisory input-risk sensing with the same coverage limits as a single check.
+
+Worked examples with input, output and limits, each derived from committed evidence (recorded capture, public JailBench case, host SDK types), are in [`docs/examples/`](docs/examples/README.md).
+
 ## Reading a verdict
 
 | Verdict | Meaning | What to do |
