@@ -125,7 +125,7 @@ behavior and unsupported paths.
 <summary>Hermes Agent install</summary>
 
 With Hermes Agent 0.21.3 or later and local Ollama, install the reviewed community
-catalog entry (pinned to `b67c7292679f202e6378e439307dea1f82cbf243`):
+[catalog entry](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/little-canary.yaml):
 
 ```bash
 ollama pull qwen2.5:1.5b

@@ -9,6 +9,10 @@ import yaml
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "lintlang.yml"
 DEPENDABOT = ROOT / ".github" / "dependabot.yml"
+# Reviewed release pair for the workflow's intentional one-release-behind policy.
+# Update these together when approving a new Dependabot proposal.
+PINNED_LINTLANG_REF = ("6aace2a175483757c64d7aa2105346d1cc34b857", "v0.7.1")
+CURRENT_LINTLANG_REF = ("c0cab00048220286858f227aaf4b13cc043f718b", "v0.8.0")
 
 
 def _lintlang_ref(workflow: str) -> tuple[str, str]:
@@ -20,11 +24,33 @@ def _lintlang_ref(workflow: str) -> tuple[str, str]:
     return match.groups()
 
 
-def test_lintlang_pin_is_immutable_and_versioned() -> None:
-    sha, version = _lintlang_ref(WORKFLOW.read_text())
+def _assert_approved_stale_pin(workflow: str) -> None:
+    ref = _lintlang_ref(workflow)
+    assert ref != CURRENT_LINTLANG_REF, "LintLang must remain intentionally one release behind"
+    assert ref == PINNED_LINTLANG_REF, "LintLang must use the approved SHA and version pair"
 
-    assert len(sha) == 40
-    assert version.startswith("v")
+
+def test_lintlang_pin_is_immutable_and_deliberately_stale() -> None:
+    _assert_approved_stale_pin(WORKFLOW.read_text())
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        CURRENT_LINTLANG_REF,
+        ("0" * 40, PINNED_LINTLANG_REF[1]),
+        (PINNED_LINTLANG_REF[0], CURRENT_LINTLANG_REF[1]),
+    ],
+)
+def test_unapproved_pin_is_a_failing_control(replacement: tuple[str, str]) -> None:
+    """Well-formed pins must still satisfy the approved stale-release policy."""
+    workflow = WORKFLOW.read_text()
+    sha, version = _lintlang_ref(WORKFLOW.read_text())
+    unapproved = workflow.replace(f"@{sha} # {version}", f"@{replacement[0]} # {replacement[1]}")
+    assert _lintlang_ref(unapproved) == replacement
+
+    with pytest.raises(AssertionError, match="intentionally one release behind|approved SHA"):
+        _assert_approved_stale_pin(unapproved)
 
 
 def test_dependabot_monitors_github_actions() -> None:
