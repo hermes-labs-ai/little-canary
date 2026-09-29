@@ -15,6 +15,7 @@ License: Apache-2.0
 
 from .analyzer import BehavioralAnalyzer
 from .audit_logger import AuditLogger
+from .batch import BatchItem, BatchResult, screen_batch
 from .canary import CanaryProbe, CanaryResult
 from .canary_guard import (
     VERDICT_DEGRADED,
@@ -32,6 +33,8 @@ __version__ = "0.4.0"
 __author__ = "Roli Bosch"
 __all__ = [
     "AuditLogger",
+    "BatchItem",
+    "BatchResult",
     "CanaryGuard",
     "CanaryProbe",
     "CanaryResult",
@@ -45,6 +48,7 @@ __all__ = [
     "SecurityPipeline",
     "SecurityAdvisory",
     "StructuralFilter",
+    "screen_batch",
     "VERDICT_DEGRADED",
     "VERDICT_STRUCTURAL_ONLY",
     "VERDICT_UNSCREENED",

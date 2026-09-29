@@ -1,0 +1,266 @@
+"""
+little_canary.batch — Batch pre-screening of documents/messages.
+
+A thin loop over ``SecurityPipeline.check``: every item receives its own
+independent verdict with the same coverage semantics as a single check. Nothing
+here widens what Little Canary claims:
+
+* no batch-level "safe" verdict exists — only per-item states and counts;
+* an item whose check raises is reported as ``degraded``, never as ``pass``;
+* item text is treated as data, is never echoed into the result, and is never
+  granted instruction authority — results carry provenance (id, source, index,
+  SHA-256, length) so callers can join verdicts back to their own records.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+from .pipeline import PipelineVerdict
+
+logger = logging.getLogger("little_canary.batch")
+
+SCHEMA = "little-canary-batch/v1"
+DEFAULT_MAX_ITEMS = 1000
+#: Per-item cap on UTF-8 bytes of ``text``; matches the HTTP server's request bound.
+DEFAULT_MAX_ITEM_BYTES = 64 * 1024
+#: Cap on the summed UTF-8 bytes of all item texts in one batch.
+DEFAULT_MAX_TOTAL_BYTES = 8 * 1024 * 1024
+#: Cap on characters in an ``id`` or ``source`` provenance label.
+MAX_LABEL_CHARS = 256
+# A JSON string escapes at worst one byte as a 6-char ``\uXXXX``. Two labels of astral
+# characters escape as 12-char surrogate pairs each; add room for keys, quotes and braces.
+_LINE_SLACK_CHARS = 2 * 12 * MAX_LABEL_CHARS + 1024
+
+_RAW_TEXT_KEYS = frozenset({"input", "safe_input"})
+
+STATE_BLOCK = "block"
+STATE_FLAG = "flag"
+STATE_PASS = "pass"
+STATE_DEGRADED = "degraded"
+STATE_UNEXERCISED = "unexercised"
+STATES = (STATE_BLOCK, STATE_FLAG, STATE_PASS, STATE_DEGRADED, STATE_UNEXERCISED)
+
+
+def classify(verdict: PipelineVerdict) -> str:
+    """Map a single verdict to one state, mirroring pipeline callback precedence."""
+    if not verdict.safe:
+        return STATE_BLOCK
+    if verdict.degraded:
+        return STATE_DEGRADED
+    if verdict.advisory is not None and verdict.advisory.flagged:
+        return STATE_FLAG
+    # pass requires BOTH behavioral coverage layers to have actually run
+    # (same contract as the OpenAI Agents adapter).
+    if verdict.canary_status != "exercised" or verdict.analysis_status != "exercised":
+        return STATE_UNEXERCISED
+    return STATE_PASS
+
+
+@dataclass(frozen=True)
+class BatchItem:
+    """One untrusted text plus caller-supplied provenance labels."""
+
+    text: str
+    id: str | None = None
+    source: str | None = None
+
+
+@dataclass
+class ItemResult:
+    index: int
+    id: str | None
+    source: str | None
+    sha256: str
+    length: int
+    state: str
+    verdict: dict[str, Any] | None = None
+    error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "index": self.index,
+            "id": self.id,
+            "source": self.source,
+            "sha256": self.sha256,
+            "length": self.length,
+            "state": self.state,
+        }
+        if self.verdict is not None:
+            out["verdict"] = dict(self.verdict)
+        if self.error is not None:
+            out["error"] = self.error
+        return out
+
+
+@dataclass
+class BatchResult:
+    items: list[ItemResult] = field(default_factory=list)
+
+    @property
+    def counts(self) -> dict[str, int]:
+        counts = dict.fromkeys(STATES, 0)
+        for item in self.items:
+            counts[item.state] += 1
+        return counts
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": SCHEMA,
+            "total": len(self.items),
+            "counts": self.counts,
+            "items": [item.to_dict() for item in self.items],
+        }
+
+
+class Checker(Protocol):
+    """Anything with ``check(text) -> PipelineVerdict`` (e.g. ``SecurityPipeline``)."""
+
+    def check(self, user_input: str) -> PipelineVerdict: ...
+
+
+#: Ceiling for ``max_item_bytes``; keeps the derived line cap within ``readline``'s index range.
+MAX_ITEM_BYTES_CEILING = 64 * 1024 * 1024
+
+
+def check_limit(name: str, value: Any, *, maximum: int | None = None) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{name} must not exceed {maximum}")
+
+
+def max_line_chars(max_item_bytes: int) -> int:
+    """Longest raw JSONL line that can still hold a within-limit item."""
+    return 6 * max_item_bytes + _LINE_SLACK_CHARS
+
+
+def coerce_item(raw: Any, index: int = 0, *, max_item_bytes: int = DEFAULT_MAX_ITEM_BYTES) -> BatchItem:
+    """Accept a string, a ``BatchItem`` or a mapping with ``text``/``id``/``source``."""
+    # Every field is read exactly once into a new immutable item, so a lazy or
+    # hostile source cannot alter admitted data after validation.
+    if isinstance(raw, BatchItem):
+        item = BatchItem(text=raw.text, id=raw.id, source=raw.source)
+    elif isinstance(raw, str):
+        item = BatchItem(text=raw)
+    elif isinstance(raw, Mapping):
+        item = BatchItem(text=raw.get("text"), id=raw.get("id"), source=raw.get("source"))  # type: ignore[arg-type]
+    else:
+        raise ValueError(f"item {index}: must be a string or object with 'text'")
+    if not isinstance(item.text, str) or item.text == "":
+        raise ValueError(f"item {index}: 'text' must be a non-empty string")
+    if len(item.text) > max_item_bytes:  # cheap bound before encoding a huge string
+        raise ValueError(f"item {index}: 'text' exceeds {max_item_bytes} bytes")
+    try:
+        size = len(item.text.encode("utf-8"))  # rejects lone surrogates before any check runs
+    except UnicodeEncodeError:
+        raise ValueError(f"item {index}: 'text' is not valid Unicode (lone surrogate)") from None
+    if size > max_item_bytes:
+        raise ValueError(f"item {index}: 'text' exceeds {max_item_bytes} bytes")
+    for label in ("id", "source"):
+        value = getattr(item, label)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"item {index}: '{label}' must be a string")
+        if len(value) > MAX_LABEL_CHARS:
+            raise ValueError(f"item {index}: '{label}' exceeds {MAX_LABEL_CHARS} characters")
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError(
+                f"item {index}: '{label}' is not valid Unicode (lone surrogate)"
+            ) from None
+    return item
+
+
+def screen_batch(
+    pipeline: Checker,
+    items: Iterable[Any],
+    *,
+    max_items: int = DEFAULT_MAX_ITEMS,
+    max_item_bytes: int = DEFAULT_MAX_ITEM_BYTES,
+    max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
+) -> BatchResult:
+    """Screen each item independently and return per-item results with provenance.
+
+    Admission is all-or-nothing: malformed or over-limit input (item count,
+    per-item bytes, aggregate bytes) raises ``ValueError`` before any check
+    runs and is never silently truncated. The source is consumed lazily and
+    reading stops at the first violation.
+    """
+    check_limit("max_items", max_items)
+    check_limit("max_item_bytes", max_item_bytes, maximum=MAX_ITEM_BYTES_CEILING)
+    check_limit("max_total_bytes", max_total_bytes)
+    prepared: list[BatchItem] = []
+    digests: list[str] = []
+    total = 0
+    for raw in items:
+        if len(prepared) >= max_items:
+            # Stop consuming the (possibly lazy/unbounded) source at the first excess item.
+            raise ValueError(f"batch exceeds the limit of {max_items} items")
+        item = coerce_item(raw, len(prepared), max_item_bytes=max_item_bytes)
+        encoded = item.text.encode("utf-8")  # already proven encodable in coerce_item
+        total += len(encoded)
+        if total > max_total_bytes:
+            raise ValueError(f"batch exceeds the limit of {max_total_bytes} total bytes")
+        prepared.append(item)
+        digests.append(hashlib.sha256(encoded).hexdigest())
+
+    result = BatchResult()
+    for index, item in enumerate(prepared):
+        digest = digests[index]
+        try:
+            verdict = pipeline.check(item.text)
+            state = classify(verdict)
+            payload = {
+                k: v for k, v in verdict.to_dict().items() if k not in _RAW_TEXT_KEYS
+            }  # redacted at construction: the in-memory result never retains raw text
+        except Exception as exc:
+            logger.error("Batch item %d check failed (%s)", index, type(exc).__name__)
+            result.items.append(
+                ItemResult(
+                    index, item.id, item.source, digest, len(item.text),
+                    STATE_DEGRADED, error=type(exc).__name__,
+                )
+            )
+            continue
+        result.items.append(
+            ItemResult(index, item.id, item.source, digest, len(item.text), state, verdict=payload)
+        )
+    return result
+
+
+def _parse_line(line: str, number: int) -> Any:
+    try:
+        return json.loads(line)
+    except (json.JSONDecodeError, RecursionError):
+        raise ValueError(f"line {number}: malformed JSON") from None
+
+
+def read_jsonl(source: Iterable[str] | Any, *, max_line: int | None = None) -> Iterator[Any]:
+    """Yield one item per non-blank line: a JSON string or object.
+
+    With ``max_line`` and a file-like ``source`` (``readline``), each line is read
+    in bounded chunks, so an oversized line is rejected before it is allocated.
+    """
+    number = 0
+    if max_line is not None and hasattr(source, "readline"):
+        while True:
+            line = source.readline(max_line + 1)
+            if line == "":
+                return
+            number += 1
+            if len(line) > max_line:
+                raise ValueError(f"line {number}: exceeds {max_line} characters")
+            if line.strip():
+                yield _parse_line(line, number)
+    else:
+        for number, line in enumerate(source, 1):
+            if line.strip():
+                yield _parse_line(line, number)
