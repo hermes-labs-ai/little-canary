@@ -201,6 +201,14 @@ def build_parser() -> argparse.ArgumentParser:
     screen_parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     screen_parser.add_argument("--timeout", type=timeout_type, default=None)
     screen_parser.add_argument(
+        "--max-item-bytes", type=int, default=64 * 1024,
+        help="Refuse any item whose text exceeds this many UTF-8 bytes (default: 65536)",
+    )
+    screen_parser.add_argument(
+        "--max-total-bytes", type=int, default=8 * 1024 * 1024,
+        help="Refuse batches whose texts total more than this many bytes (default: 8388608)",
+    )
+    screen_parser.add_argument(
         "--max-items", type=int, default=1000,
         help="Refuse batches larger than this instead of truncating (default: 1000)",
     )
@@ -213,7 +221,16 @@ def _run_screen(args) -> int:
     import json
     import sys
 
-    from little_canary.batch import STATE_BLOCK, STATE_DEGRADED, STATE_FLAG, STATE_UNEXERCISED, read_jsonl, screen_batch
+    from little_canary.batch import (
+        STATE_BLOCK,
+        STATE_DEGRADED,
+        STATE_FLAG,
+        STATE_UNEXERCISED,
+        _check_limit,
+        max_line_chars,
+        read_jsonl,
+        screen_batch,
+    )
     from little_canary.pipeline import SecurityPipeline
 
     try:
@@ -224,12 +241,21 @@ def _run_screen(args) -> int:
             mode=args.mode,
             canary_timeout=timeout,
         )
-        # Items are consumed lazily so --max-items stops reading at the first excess line.
+        limits = {
+            "max_items": args.max_items,
+            "max_item_bytes": args.max_item_bytes,
+            "max_total_bytes": args.max_total_bytes,
+        }
+        for name, value in limits.items():
+            _check_limit(name, value)
+        # Items are consumed lazily and lines read in bounded chunks, so any limit
+        # stops reading at the first violation without allocating the excess.
+        line_cap = max_line_chars(args.max_item_bytes)
         if args.input == "-":
-            result = screen_batch(pipeline, read_jsonl(sys.stdin), max_items=args.max_items)
+            result = screen_batch(pipeline, read_jsonl(sys.stdin, max_line=line_cap), **limits)
         else:
             with open(args.input, encoding="utf-8") as handle:
-                result = screen_batch(pipeline, read_jsonl(handle), max_items=args.max_items)
+                result = screen_batch(pipeline, read_jsonl(handle, max_line=line_cap), **limits)
     except (OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

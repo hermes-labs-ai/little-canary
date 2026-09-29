@@ -27,6 +27,14 @@ logger = logging.getLogger("little_canary.batch")
 
 SCHEMA = "little-canary-batch/v1"
 DEFAULT_MAX_ITEMS = 1000
+#: Per-item cap on UTF-8 bytes of ``text``; matches the HTTP server's request bound.
+DEFAULT_MAX_ITEM_BYTES = 64 * 1024
+#: Cap on the summed UTF-8 bytes of all item texts in one batch.
+DEFAULT_MAX_TOTAL_BYTES = 8 * 1024 * 1024
+#: Cap on characters in an ``id`` or ``source`` provenance label.
+MAX_LABEL_CHARS = 256
+# A JSON string escapes at worst one byte as a 6-char ``\uXXXX``; leave room for labels/keys.
+_LINE_SLACK_CHARS = 4096
 
 STATE_BLOCK = "block"
 STATE_FLAG = "flag"
@@ -109,7 +117,17 @@ class BatchResult:
         }
 
 
-def coerce_item(raw: Any, index: int = 0) -> BatchItem:
+def _check_limit(name: str, value: Any) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+
+
+def max_line_chars(max_item_bytes: int) -> int:
+    """Longest raw JSONL line that can still hold a within-limit item."""
+    return 6 * max_item_bytes + _LINE_SLACK_CHARS
+
+
+def coerce_item(raw: Any, index: int = 0, *, max_item_bytes: int = DEFAULT_MAX_ITEM_BYTES) -> BatchItem:
     """Accept a string, a ``BatchItem`` or a mapping with ``text``/``id``/``source``."""
     if isinstance(raw, BatchItem):
         item = raw
@@ -121,14 +139,22 @@ def coerce_item(raw: Any, index: int = 0) -> BatchItem:
         raise ValueError(f"item {index}: must be a string or object with 'text'")
     if not isinstance(item.text, str) or item.text == "":
         raise ValueError(f"item {index}: 'text' must be a non-empty string")
+    if len(item.text) > max_item_bytes:  # cheap bound before encoding a huge string
+        raise ValueError(f"item {index}: 'text' exceeds {max_item_bytes} bytes")
     try:
-        item.text.encode("utf-8")  # rejects lone surrogates before any check runs
+        size = len(item.text.encode("utf-8"))  # rejects lone surrogates before any check runs
     except UnicodeEncodeError:
         raise ValueError(f"item {index}: 'text' is not valid Unicode (lone surrogate)") from None
+    if size > max_item_bytes:
+        raise ValueError(f"item {index}: 'text' exceeds {max_item_bytes} bytes")
     for label in ("id", "source"):
         value = getattr(item, label)
-        if value is not None and not isinstance(value, str):
+        if value is None:
+            continue
+        if not isinstance(value, str):
             raise ValueError(f"item {index}: '{label}' must be a string")
+        if len(value) > MAX_LABEL_CHARS:
+            raise ValueError(f"item {index}: '{label}' exceeds {MAX_LABEL_CHARS} characters")
     return item
 
 
@@ -137,26 +163,38 @@ def screen_batch(
     items: Iterable[Any],
     *,
     max_items: int = DEFAULT_MAX_ITEMS,
+    max_item_bytes: int = DEFAULT_MAX_ITEM_BYTES,
+    max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
 ) -> BatchResult:
     """Screen each item independently and return per-item results with provenance.
 
-    Malformed items raise ``ValueError`` before any check runs; an oversized
-    batch raises ``ValueError`` rather than being silently truncated.
+    Admission is all-or-nothing: malformed or over-limit input (item count,
+    per-item bytes, aggregate bytes) raises ``ValueError`` before any check
+    runs and is never silently truncated. The source is consumed lazily and
+    reading stops at the first violation.
     """
-    if not isinstance(max_items, int) or isinstance(max_items, bool) or max_items < 0:
-        raise ValueError("max_items must be a non-negative integer")
+    _check_limit("max_items", max_items)
+    _check_limit("max_item_bytes", max_item_bytes)
+    _check_limit("max_total_bytes", max_total_bytes)
     prepared: list[BatchItem] = []
+    total = 0
     for raw in items:
         if len(prepared) >= max_items:
             # Stop consuming the (possibly lazy/unbounded) source at the first excess item.
             raise ValueError(f"batch exceeds the limit of {max_items} items")
-        prepared.append(coerce_item(raw, len(prepared)))
+        item = coerce_item(raw, len(prepared), max_item_bytes=max_item_bytes)
+        total += len(item.text.encode("utf-8"))
+        if total > max_total_bytes:
+            raise ValueError(f"batch exceeds the limit of {max_total_bytes} total bytes")
+        prepared.append(item)
 
     result = BatchResult()
     for index, item in enumerate(prepared):
         digest = hashlib.sha256(item.text.encode("utf-8")).hexdigest()
         try:
             verdict = pipeline.check(item.text)
+            state = classify(verdict)
+            payload = verdict.to_dict()
         except Exception as exc:
             logger.error("Batch item %d check failed (%s)", index, type(exc).__name__)
             result.items.append(
@@ -167,20 +205,36 @@ def screen_batch(
             )
             continue
         result.items.append(
-            ItemResult(
-                index, item.id, item.source, digest, len(item.text),
-                classify(verdict), verdict=verdict.to_dict(),
-            )
+            ItemResult(index, item.id, item.source, digest, len(item.text), state, verdict=payload)
         )
     return result
 
 
-def read_jsonl(lines: Iterable[str]) -> Iterator[Any]:
-    """Yield one item per non-blank line: a JSON string or object."""
-    for number, line in enumerate(lines, 1):
-        if not line.strip():
-            continue
-        try:
-            yield json.loads(line)
-        except json.JSONDecodeError:
-            raise ValueError(f"line {number}: malformed JSON") from None
+def _parse_line(line: str, number: int) -> Any:
+    try:
+        return json.loads(line)
+    except (json.JSONDecodeError, RecursionError):
+        raise ValueError(f"line {number}: malformed JSON") from None
+
+
+def read_jsonl(source: Iterable[str] | Any, *, max_line: int | None = None) -> Iterator[Any]:
+    """Yield one item per non-blank line: a JSON string or object.
+
+    With ``max_line`` and a file-like ``source`` (``readline``), each line is read
+    in bounded chunks, so an oversized line is rejected before it is allocated.
+    """
+    number = 0
+    if max_line is not None and hasattr(source, "readline"):
+        while True:
+            line = source.readline(max_line + 1)
+            if line == "":
+                return
+            number += 1
+            if len(line) > max_line:
+                raise ValueError(f"line {number}: exceeds {max_line} characters")
+            if line.strip():
+                yield _parse_line(line, number)
+    else:
+        for number, line in enumerate(source, 1):
+            if line.strip():
+                yield _parse_line(line, number)

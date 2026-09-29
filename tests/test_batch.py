@@ -229,3 +229,85 @@ def test_lone_surrogate_rejected_before_any_check():
 def test_cli_lone_surrogate_exits_2_with_no_output(capsys):
     code, out = _run_cli(["screen"], '"ok"\n"\\ud800"\n', capsys)
     assert code == 2 and out.out == "" and "surrogate" in out.err
+
+
+class _Counting:
+    def __init__(self):
+        self.calls = 0
+
+    def check(self, text):
+        self.calls += 1
+        return _verdict(text)
+
+
+def test_oversized_item_rejected_with_zero_checks():
+    p = _Counting()
+    with pytest.raises(ValueError, match="exceeds 10 bytes"):
+        screen_batch(p, ["ok", "x" * 11], max_item_bytes=10)
+    assert p.calls == 0
+
+
+def test_item_limit_counts_utf8_bytes_not_chars():
+    p = _Counting()
+    with pytest.raises(ValueError, match="bytes"):
+        screen_batch(p, ["\u00e9" * 6], max_item_bytes=10)  # 12 bytes, 6 chars
+    assert p.calls == 0
+
+
+def test_aggregate_limit_rejected_with_zero_checks():
+    p = _Counting()
+    with pytest.raises(ValueError, match="total bytes"):
+        screen_batch(p, ["aaaa", "bbbb", "cccc"], max_total_bytes=10)
+    assert p.calls == 0
+    assert screen_batch(p, ["aaaa", "bbbb"], max_total_bytes=8).counts["pass"] == 2
+
+
+def test_oversized_label_rejected():
+    with pytest.raises(ValueError, match="'id'"):
+        screen_batch(_Counting(), [{"text": "t", "id": "i" * 257}])
+
+
+@pytest.mark.parametrize("name", ["max_item_bytes", "max_total_bytes"])
+@pytest.mark.parametrize("bad", [-1, True, 1.5, "3"])
+def test_invalid_byte_limits_rejected(name, bad):
+    with pytest.raises(ValueError, match=name):
+        screen_batch(_Counting(), [], **{name: bad})
+
+
+def test_read_jsonl_bounded_line_never_reads_past_cap():
+    class Handle:
+        def __init__(self):
+            self.data = io.StringIO("\"" + "a" * 1_000_000 + "\"\n")
+            self.max_requested = 0
+
+        def readline(self, n=-1):
+            self.max_requested = max(self.max_requested, n)
+            return self.data.readline(n)
+
+    h = Handle()
+    with pytest.raises(ValueError, match="line 1: exceeds 100"):
+        list(read_jsonl(h, max_line=100))
+    assert h.max_requested == 101
+
+
+def test_read_jsonl_deep_nesting_is_malformed_not_traceback():
+    with pytest.raises(ValueError, match="malformed"):
+        list(read_jsonl(["[" * 100000 + "\n"]))
+
+
+def test_cli_oversized_line_and_item_exit_2_with_zero_checks(capsys):
+    huge = json.dumps("a" * 5000)
+    code, out = _run_cli(["screen", "--max-item-bytes", "100"], huge + "\n", capsys)
+    assert code == 2 and out.out == "" and "exceeds" in out.err
+    code, out = _run_cli(["screen", "--max-total-bytes", "5"], '"abc"\n"def"\n', capsys)
+    assert code == 2 and "total bytes" in out.err
+    code, out = _run_cli(["screen", "--max-item-bytes", "-1"], '"a"\n', capsys)
+    assert code == 2 and "max_item_bytes" in out.err
+
+
+def test_malformed_verdict_is_degraded_not_traceback():
+    class Bad:
+        def check(self, text):
+            return object()
+
+    assert screen_batch(Bad(), ["x"]).items[0].state == "degraded"

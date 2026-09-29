@@ -11,7 +11,7 @@ Benchmark and latency figures in entries before `0.3.3` are historical release n
 
 ### Added
 
-- `little-canary screen` and `little_canary.batch.screen_batch`: batch pre-screening with independent per-item verdicts, provenance (index/id/source/SHA-256), per-item errors reported as `degraded` (never `pass`), and no echo of item text. Safety semantics of `SecurityPipeline.check` are unchanged.
+- `little-canary screen` and `little_canary.batch.screen_batch`: batch pre-screening with independent per-item verdicts, provenance (index/id/source/SHA-256), per-item errors reported as `degraded` (never `pass`), no echo of item text, and all-or-nothing admission with item-count, per-item and aggregate byte limits. Safety semantics of `SecurityPipeline.check` are unchanged.
 
 ## [0.4.0] - 2026-09-29
 
