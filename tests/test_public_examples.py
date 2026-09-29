@@ -122,8 +122,18 @@ def test_jailbench_example_output_claims_match_structural_run():
 
 def test_batch_example_output_claims_match_offline_screen_run(tmp_path):
     text = (EXAMPLES / "03-batch-coverage-hold.md").read_text(encoding="utf-8")
+    fenced = _fenced_jsonl(text)
+    rows = [json.loads(line) for line in fenced.splitlines() if line.strip()]
+    fixture = _load("little_canary/data/demo_replay.json")
+    probe = _load("benchmarks/jailbench_injection_cases.json")
+    replay_clean = next(c for c in fixture["cases"] if c["id"] == "clean")["input"]
+    jailbench = next(c for c in probe["cases"] if c["id"] == "jb-inj-01")
+    assert [r["id"] for r in rows] == ["clean", "jb-inj-01"]
+    assert rows[0]["text"] == replay_clean
+    assert rows[1]["text"] == jailbench["prompt"]
+    assert hashlib.sha256(rows[1]["text"].encode("utf-8")).hexdigest() == jailbench["source_input_sha256"]
     batch = tmp_path / "batch.jsonl"
-    batch.write_text(_fenced_jsonl(text), encoding="utf-8")
+    batch.write_text(fenced, encoding="utf-8")
     run = subprocess.run(
         [sys.executable, "-m", "little_canary.cli", "screen", str(batch),
          "--ollama-url", "http://127.0.0.1:9", "--timeout", "1"],
