@@ -88,6 +88,12 @@ The default remains `qwen2.5:1.5b`. Select an installed model with `serve --cana
 
 ## Pre-screen a batch of documents or messages
 
+> **Unreleased — source install only.** Batch pre-screening was merged after the `0.4.0` release, so the published `pip install little-canary` (0.4.0) does **not** include `little-canary screen` or `little_canary.batch`. Until the next release, install from source:
+>
+> ```bash
+> pip install "git+https://github.com/hermes-labs-ai/little-canary.git"
+> ```
+
 `little-canary screen` (or `little_canary.batch.screen_batch`) runs the same pipeline once per item — nothing is aggregated into a batch-level "safe" verdict.
 
 ```bash
