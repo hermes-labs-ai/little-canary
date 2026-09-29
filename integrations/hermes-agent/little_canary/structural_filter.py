@@ -43,6 +43,10 @@ class StructuralFilter:
         self._injection_keywords = self._build_injection_keywords()
 
     def check(self, user_input: str) -> FilterResult:
+        if not isinstance(user_input, str):
+            raise TypeError(
+                f"text must be a str, got {type(user_input).__name__}"
+            )
         reasons = []
 
         # Length check
