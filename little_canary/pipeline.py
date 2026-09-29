@@ -414,6 +414,10 @@ class SecurityPipeline:
             logger.info("Using regex-based BehavioralAnalyzer (no judge_model specified)")
 
     def check(self, user_input: str) -> PipelineVerdict:
+        if not isinstance(user_input, str):
+            raise TypeError(
+                f"text must be a str, got {type(user_input).__name__}"
+            )
         verdict = self._run_check(user_input)
         self._fire_callbacks(verdict)
         if self._audit_logger is not None:

@@ -688,3 +688,21 @@ def test_canary_timeout_layer_details_name_the_knob(MockProbe):
     assert "30s" in canary_layer.details
     assert "--timeout" in canary_layer.details
     assert "LITTLE_CANARY_TIMEOUT" in canary_layer.details
+
+
+def test_check_rejects_none():
+    pipe = SecurityPipeline(enable_canary=False)
+    with pytest.raises(TypeError, match="text must be a str.*NoneType"):
+        pipe.check(None)
+
+
+def test_check_rejects_int():
+    pipe = SecurityPipeline(enable_canary=False)
+    with pytest.raises(TypeError, match="text must be a str.*int"):
+        pipe.check(123)
+
+
+def test_check_rejects_bytes():
+    pipe = SecurityPipeline(enable_canary=False)
+    with pytest.raises(TypeError, match="text must be a str.*bytes"):
+        pipe.check(b"hello")
