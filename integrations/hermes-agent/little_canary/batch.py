@@ -44,7 +44,9 @@ def classify(verdict: PipelineVerdict) -> str:
         return STATE_DEGRADED
     if verdict.advisory is not None and verdict.advisory.flagged:
         return STATE_FLAG
-    if verdict.canary_status != "exercised":
+    # pass requires BOTH behavioral coverage layers to have actually run
+    # (same contract as the OpenAI Agents adapter).
+    if verdict.canary_status != "exercised" or verdict.analysis_status != "exercised":
         return STATE_UNEXERCISED
     return STATE_PASS
 

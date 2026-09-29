@@ -37,6 +37,10 @@ class FakePipeline:
                 flagged=True, severity="medium", signals=["x"], message="m"))
         if "DEGRADE" in text:
             return _verdict(text, degraded=True, canary_status="failed")
+        if "NOANALYSIS" in text:
+            return _verdict(text, analysis_status="failed")
+        if "NA" == text:
+            return _verdict(text, analysis_status="not_applicable")
         if "BOOM" in text:
             raise RuntimeError("secret detail must not leak")
         return _verdict(text)
@@ -180,3 +184,29 @@ def test_cli_file_input_and_limit(tmp_path, capsys):
     assert code == 2 and "limit" in out.err
     code, out = _run_cli(["screen", str(f)], "", capsys)
     assert code == 0 and json.loads(out.out)["total"] == 3
+
+
+@pytest.mark.parametrize("status", ["failed", "not_applicable", "", "bogus"])
+def test_pass_requires_analysis_exercised(status):
+    assert classify(_verdict("t", analysis_status=status)) == "unexercised"
+    assert classify(_verdict("t")) == "pass"
+
+
+def test_analysis_not_exercised_is_not_pass_in_batch():
+    r = screen_batch(FakePipeline(), ["NOANALYSIS", "NA", "ok"])
+    assert [i.state for i in r.items] == ["unexercised", "unexercised", "pass"]
+
+
+def test_degraded_verdict_never_pass_even_if_statuses_exercised():
+    assert classify(_verdict("t", degraded=True)) == "degraded"
+
+
+def test_cli_mixed_block_and_degraded_exits_2_but_reports_both(capsys):
+    code, out = _run_cli(["screen"], '"BLOCK"\n"DEGRADE"\n"fine"\n', capsys)
+    c = json.loads(out.out)["counts"]
+    assert code == 2 and c["block"] == 1 and c["degraded"] == 1
+
+
+def test_cli_unexercised_analysis_exits_2(capsys):
+    code, _ = _run_cli(["screen"], '"NOANALYSIS"\n', capsys)
+    assert code == 2

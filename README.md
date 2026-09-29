@@ -95,7 +95,7 @@ printf '%s\n' '{"id":"m1","source":"inbox","text":"Quarterly numbers attached."}
   | little-canary screen --mode full
 ```
 
-Input is JSONL: each line is a JSON string or `{"text", "id"?, "source"?}`. Output is one `little-canary-batch/v1` JSON document with per-item `state` (`pass`, `flag`, `block`, `degraded`, `unexercised`), provenance (`index`, `id`, `source`, `sha256`, `length`) and the standard verdict. Item text is never echoed. An item whose check raises is `degraded`, never `pass`. Malformed lines or oversized batches (`--max-items`, default 1000) are rejected, not truncated. Exit status: `0` a non-empty batch where every item is `pass`; `1` any `block`/`flag` (takes precedence); `2` otherwise (any `degraded`/`unexercised`, empty input, or invalid input). Screening is advisory input-risk sensing with the same coverage limits as a single check.
+Input is JSONL: each line is a JSON string or `{"text", "id"?, "source"?}`. Output is one `little-canary-batch/v1` JSON document with per-item `state` (`pass`, `flag`, `block`, `degraded`, `unexercised`), provenance (`index`, `id`, `source`, `sha256`, `length`) and the standard verdict. Item text is never echoed. An item whose check raises is `degraded`, never `pass`. Malformed lines or oversized batches (`--max-items`, default 1000) are rejected, not truncated. Exit status: `2` if the input is empty or invalid or any item is `degraded`/`unexercised` (a coverage hold is never masked by a block elsewhere in the batch); otherwise `1` if any item is `block`/`flag`; otherwise `0` (non-empty, every item `pass`). `pass` requires both the canary and analysis layers to have run. Screening is advisory input-risk sensing with the same coverage limits as a single check.
 
 ## Reading a verdict
 

@@ -208,11 +208,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _run_screen(args) -> int:
-    """Exit 0: at least one item and all pass; 1: any block/flag; 2: else (degraded/unexercised, empty, bad input)."""
+    """Exit 2: empty/invalid input or any degraded/unexercised item (coverage hold wins);
+    1: else any block/flag; 0: non-empty and all pass."""
     import json
     import sys
 
-    from little_canary.batch import STATE_BLOCK, STATE_FLAG, STATE_PASS, read_jsonl, screen_batch
+    from little_canary.batch import STATE_BLOCK, STATE_DEGRADED, STATE_FLAG, STATE_UNEXERCISED, read_jsonl, screen_batch
     from little_canary.pipeline import SecurityPipeline
 
     try:
@@ -238,11 +239,13 @@ def _run_screen(args) -> int:
         return 2
     print(json.dumps(result.to_dict()))
     counts = result.counts
-    if counts[STATE_BLOCK] or counts[STATE_FLAG]:
-        return 1
     if not result.items:
         return 2  # nothing was screened: not a clean result
-    return 0 if counts[STATE_PASS] == len(result.items) else 2
+    if counts[STATE_DEGRADED] or counts[STATE_UNEXERCISED]:
+        return 2  # a coverage hold is never masked by a block/flag elsewhere in the batch
+    if counts[STATE_BLOCK] or counts[STATE_FLAG]:
+        return 1
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
