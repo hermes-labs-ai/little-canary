@@ -1,4 +1,4 @@
-"""Batch pre-screening: per-item independence, provenance, and fail-closed states."""
+"""Batch pre-screening: per-item independence, provenance, and degraded/unexercised-never-pass states."""
 
 import hashlib
 import io
@@ -146,3 +146,37 @@ def test_cli_empty_input_is_not_clean(capsys):
     code, out = _run_cli(["screen"], "\n", capsys)
     assert code == 2
     assert json.loads(out.out)["total"] == 0
+
+
+def test_limit_stops_consuming_lazy_source():
+    consumed = []
+
+    def source():
+        for i in range(1000):
+            consumed.append(i)
+            yield f"item {i}"
+
+    with pytest.raises(ValueError, match="limit"):
+        screen_batch(FakePipeline(), source(), max_items=3)
+    assert len(consumed) == 4
+
+
+@pytest.mark.parametrize("bad", [-1, True, 1.5])
+def test_invalid_max_items_rejected(bad):
+    with pytest.raises(ValueError, match="max_items"):
+        screen_batch(FakePipeline(), [], max_items=bad)
+
+
+def test_cli_invalid_timeout_env_exits_2(capsys, monkeypatch):
+    monkeypatch.setenv("LITTLE_CANARY_TIMEOUT", "abc")
+    code, out = _run_cli(["screen"], '"x"\n', capsys)
+    assert code == 2 and "LITTLE_CANARY_TIMEOUT" in out.err
+
+
+def test_cli_file_input_and_limit(tmp_path, capsys):
+    f = tmp_path / "in.jsonl"
+    f.write_text('"a"\n"b"\n"c"\n')
+    code, out = _run_cli(["screen", str(f), "--max-items", "2"], "", capsys)
+    assert code == 2 and "limit" in out.err
+    code, out = _run_cli(["screen", str(f)], "", capsys)
+    assert code == 0 and json.loads(out.out)["total"] == 3

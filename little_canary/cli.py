@@ -216,11 +216,6 @@ def _run_screen(args) -> int:
     from little_canary.pipeline import SecurityPipeline
 
     try:
-        if args.input == "-":
-            items = list(read_jsonl(sys.stdin))
-        else:
-            with open(args.input, encoding="utf-8") as handle:
-                items = list(read_jsonl(handle))
         timeout = args.timeout if args.timeout is not None else _default_timeout()
         pipeline = SecurityPipeline(
             canary_model=args.canary_model,
@@ -228,9 +223,18 @@ def _run_screen(args) -> int:
             mode=args.mode,
             canary_timeout=timeout,
         )
-        result = screen_batch(pipeline, items, max_items=args.max_items)
+        # Items are consumed lazily so --max-items stops reading at the first excess line.
+        if args.input == "-":
+            result = screen_batch(pipeline, read_jsonl(sys.stdin), max_items=args.max_items)
+        else:
+            with open(args.input, encoding="utf-8") as handle:
+                result = screen_batch(pipeline, read_jsonl(handle), max_items=args.max_items)
     except (OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except SystemExit as exc:  # invalid LITTLE_CANARY_TIMEOUT: report as invalid config
+        if exc.code not in (None, 0):
+            print(exc.code, file=sys.stderr)
         return 2
     print(json.dumps(result.to_dict()))
     counts = result.counts

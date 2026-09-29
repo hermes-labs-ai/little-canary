@@ -137,9 +137,14 @@ def screen_batch(
     Malformed items raise ``ValueError`` before any check runs; an oversized
     batch raises ``ValueError`` rather than being silently truncated.
     """
-    prepared = [coerce_item(raw, i) for i, raw in enumerate(items)]
-    if len(prepared) > max_items:
-        raise ValueError(f"batch has {len(prepared)} items; limit is {max_items}")
+    if not isinstance(max_items, int) or isinstance(max_items, bool) or max_items < 0:
+        raise ValueError("max_items must be a non-negative integer")
+    prepared: list[BatchItem] = []
+    for raw in items:
+        if len(prepared) >= max_items:
+            # Stop consuming the (possibly lazy/unbounded) source at the first excess item.
+            raise ValueError(f"batch exceeds the limit of {max_items} items")
+        prepared.append(coerce_item(raw, len(prepared)))
 
     result = BatchResult()
     for index, item in enumerate(prepared):
