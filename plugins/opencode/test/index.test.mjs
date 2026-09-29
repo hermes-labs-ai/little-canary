@@ -112,9 +112,11 @@ test("tool results stay intact on pass, flag, degraded, and unavailable outcomes
 
 test("raw MCP text content is screened and replaced on an unsafe verdict", async () => {
   const originalFetch = globalThis.fetch;
+  const originalEndpoint = process.env.LITTLE_CANARY_ENDPOINT;
   const originalWrite = process.stderr.write;
   let sent;
   try {
+    delete process.env.LITTLE_CANARY_ENDPOINT;
     process.stderr.write = () => true;
     globalThis.fetch = async (_url, options) => {
       sent = JSON.parse(options.body);
@@ -137,5 +139,7 @@ test("raw MCP text content is screened and replaced on an unsafe verdict", async
   } finally {
     globalThis.fetch = originalFetch;
     process.stderr.write = originalWrite;
+    if (originalEndpoint === undefined) delete process.env.LITTLE_CANARY_ENDPOINT;
+    else process.env.LITTLE_CANARY_ENDPOINT = originalEndpoint;
   }
 });

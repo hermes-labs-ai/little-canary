@@ -51,7 +51,7 @@ test("empty text does not call the screening service", async () => {
 
 
 test("degraded coverage preserves known advisory flag", async () => {
-  const warning = await screenMessage("inspect this", { fetchImpl: async () => reply({
+  const warning = await screenMessage("inspect this", { endpoint: DEFAULT_ENDPOINT, fetchImpl: async () => reply({
     safe: true, degraded: true, canary_status: "failed", advisory: { flagged: true },
   }) });
   assert.match(warning, /flagged/);
