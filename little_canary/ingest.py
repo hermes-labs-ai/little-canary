@@ -999,8 +999,14 @@ def required_canary_context(policy: IngestPolicy, pipeline: Any) -> int | None:
     return 4 * policy.segment_chars + prompt_bytes + max(0, reply) + CANARY_CONTEXT_RESERVE
 
 
-def _check_canary_context(policy: IngestPolicy, pipeline: Any) -> None:
+def _check_canary_context(
+    policy: IngestPolicy, pipeline: Any, verified: tuple[int, int] | None = None
+) -> tuple[int, int] | None:
     """Refuse before any check unless the canary can read every whole segment.
+
+    Returns ``(id(probe), trained_context_length)`` for an Ollama canary so a
+    later re-check of the same probe object can reuse the trained length
+    (``verified``) instead of querying ``/api/show`` again; ``None`` otherwise.
 
     Ollama: ``num_ctx`` must be set and at least ``required_canary_context``, and
     the model's trained context length (``CanaryProbe.context_length()``, from
@@ -1014,7 +1020,7 @@ def _check_canary_context(policy: IngestPolicy, pipeline: Any) -> None:
     from .canary import CanaryProbe
 
     if getattr(pipeline, "enable_canary", True) is False:
-        return
+        return None
     if getattr(pipeline, "use_judge", False) is True or (
         hasattr(pipeline, "analyzer") and type(pipeline.analyzer) is not BehavioralAnalyzer
     ):
@@ -1029,7 +1035,7 @@ def _check_canary_context(policy: IngestPolicy, pipeline: Any) -> None:
         )
     needed = required_canary_context(policy, pipeline)
     if needed is None:
-        return
+        return None
     probe = pipeline.canary_probe
     have = getattr(probe, "num_ctx", None)
     if not isinstance(have, int) or isinstance(have, bool) or have < needed:
@@ -1037,7 +1043,10 @@ def _check_canary_context(policy: IngestPolicy, pipeline: Any) -> None:
             f"the canary context window (num_ctx={have}) cannot hold a whole segment; "
             f"construct SecurityPipeline(canary_num_ctx={needed}) or larger, or lower segment_chars"
         )
-    trained = probe.context_length()
+    if verified is not None and verified[0] == id(probe):
+        trained: int | None = verified[1]
+    else:
+        trained = probe.context_length()
     if trained is None:
         raise ValueError(
             "could not verify the canary model's context length (backend unreachable or "
@@ -1048,6 +1057,7 @@ def _check_canary_context(policy: IngestPolicy, pipeline: Any) -> None:
             f"the canary model's trained context length ({trained}) is smaller than the "
             f"{needed} tokens a whole segment may need; lower segment_chars or use a larger-context model"
         )
+    return (id(probe), trained)
 
 
 def ingest_records(
@@ -1079,7 +1089,7 @@ def ingest_records(
         raise ValueError(
             f"segment_chars ({policy.segment_chars}) exceeds the pipeline's max_input_length ({limit})"
         )
-    _check_canary_context(policy, pipeline)
+    verified = _check_canary_context(policy, pipeline)
     clock = now if now is not None else (lambda: datetime.now(timezone.utc))
 
     # Phase 1: snapshot + run-level budget, before any check.
@@ -1096,6 +1106,9 @@ def ingest_records(
                 raise ValueError(f"ingest exceeds the limit of {policy.max_total_bytes} total bytes")
         prepared.append(item)
 
+    # Reading the records may have run caller code; re-verify the pipeline right
+    # before the first check so a mid-read change cannot bypass the gate.
+    _check_canary_context(policy, pipeline, verified)
     started_at = _iso_utc(clock())
     counter = _Counter()
     results: list[RecordResult] = []
@@ -1271,6 +1284,8 @@ def publish(
     manifest_target = os.fspath(manifest_path)
     export_target = os.fspath(export_path) if export_path is not None else None
     result.export_requested = export_target is not None
+    if export_target is not None and _same_file(manifest_target, export_target):
+        raise ValueError("manifest and export paths must be different files")
     for target in (manifest_target, export_target):
         if target is None or not os.path.lexists(target):
             continue
@@ -1285,8 +1300,6 @@ def publish(
     if export_data is not None:
         digests["export"] = hashlib.sha256(export_data).hexdigest()
 
-    if export_target is not None and _same_file(manifest_target, export_target):
-        raise ValueError("manifest and export paths must be different files")
     temps: list[str] = []
     published: list[str] = []  # targets this call may have created, most recent last
     try:

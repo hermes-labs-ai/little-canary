@@ -298,7 +298,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-item-bytes", type=int, default=64 * 1024,
         help=(
             "Hold any record whose text exceeds this many UTF-8 bytes (default: 65536); "
-            "a single JSONL line longer than about 6x this value refuses the whole run"
+            "a single JSONL line longer than the reader's cap (6x this value plus room for "
+            "labels and metadata) refuses the whole run"
         ),
     )
     ingest_parser.add_argument(

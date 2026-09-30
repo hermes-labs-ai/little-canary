@@ -1640,3 +1640,40 @@ def test_context_length_failure_resets_last_context_length(second, monkeypatch):
     assert probe.context_length() is None
     assert probe.last_context_length is None
     assert len(calls) == 2
+
+
+def test_gate_is_rechecked_after_records_are_read(monkeypatch):
+    """Invariant (context gate is not point-in-time): caller code that runs while the records
+    iterable is consumed cannot flip the pipeline past the gate; the gate is re-run right
+    before the first check and refuses with zero checks."""
+    from little_canary.canary import CanaryProbe
+    from little_canary.pipeline import SecurityPipeline
+
+    monkeypatch.setattr(CanaryProbe, "context_length", lambda self: 32768)
+    pipeline = SecurityPipeline(enable_canary=False)  # passes the gate at entry
+
+    def hostile_records():
+        yield "first"
+        pipeline.enable_canary = True  # now an unsized Ollama canary
+        yield "second"
+
+    calls = []
+    original = pipeline.check
+    monkeypatch.setattr(pipeline, "check", lambda text: calls.append(text) or original(text))
+    with pytest.raises(ValueError, match="num_ctx"):
+        ingest_records(pipeline, hostile_records())
+    assert calls == []
+
+
+def test_publish_alias_check_runs_before_overwrite_unlink(tmp_path):
+    """Invariant (non-destructive): aliased manifest/export paths are refused before an
+    existing file is removed, even with overwrite=True."""
+    result, _ = _run(["ok"])
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    (tmp_path / "alias").symlink_to(real_dir, target_is_directory=True)
+    existing = real_dir / "m.json"
+    existing.write_bytes(b"KEEP")
+    with pytest.raises(ValueError, match="different files"):
+        publish(result, existing, tmp_path / "alias" / "m.json", overwrite=True)
+    assert existing.read_bytes() == b"KEEP"
