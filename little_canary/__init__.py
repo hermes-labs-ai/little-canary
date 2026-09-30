@@ -24,12 +24,21 @@ from .canary_guard import (
     CanaryGuard,
     GuardResult,
 )
+from .ingest import (
+    IngestPolicy,
+    IngestRecord,
+    IngestResult,
+    ingest_records,
+    verify_export,
+    write_export,
+    write_manifest,
+)
 from .judge import LLMJudge
 from .openai_provider import OpenAICanaryProbe, OpenAILLMJudge
 from .pipeline import LayerResult, PipelineVerdict, SecurityAdvisory, SecurityPipeline
 from .structural_filter import StructuralFilter
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __author__ = "Roli Bosch"
 __all__ = [
     "AuditLogger",
@@ -40,6 +49,9 @@ __all__ = [
     "CanaryResult",
     "BehavioralAnalyzer",
     "GuardResult",
+    "IngestPolicy",
+    "IngestRecord",
+    "IngestResult",
     "LayerResult",
     "LLMJudge",
     "OpenAICanaryProbe",
@@ -48,7 +60,11 @@ __all__ = [
     "SecurityPipeline",
     "SecurityAdvisory",
     "StructuralFilter",
+    "ingest_records",
     "screen_batch",
+    "verify_export",
+    "write_export",
+    "write_manifest",
     "VERDICT_DEGRADED",
     "VERDICT_STRUCTURAL_ONLY",
     "VERDICT_UNSCREENED",
