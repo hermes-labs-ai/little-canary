@@ -12,14 +12,20 @@ Benchmark and latency figures in entries before `0.3.3` are historical release n
 ### Added
 
 - `little-canary screen` and `little_canary.batch.screen_batch`: batch pre-screening with independent per-item verdicts, provenance (index/id/source/SHA-256), per-item errors reported as `degraded` (never `pass`), no echo of item text, and all-or-nothing admission with item-count, per-item and aggregate byte limits. Safety semantics of `SecurityPipeline.check` are unchanged.
-- Experimental Ingest surface: the `little-canary ingest` CLI and the Python module `little_canary.ingest` (`ingest_records`, `IngestPolicy`, `IngestRecord`, `IngestResult`, `write_manifest`, `write_export`, `verify_export`). Each JSONL record (`text`, optional `id`, `source`, `metadata`) is checked through `SecurityPipeline.check` and admitted or held under the `strict/v1` policy.
+- Experimental Ingest surface: the `little-canary ingest` CLI and the Python module `little_canary.ingest` (`ingest_records`, `IngestPolicy`, `IngestRecord`, `IngestResult`, `publish`, `write_manifest`, `write_export`, `verify_export`, `required_canary_context`, `loads_strict`). Each JSONL record (`text`, optional `id`, `source`, `metadata`) is checked through `SecurityPipeline.check` and admitted or held under the `strict/v1` policy.
 - Three separate per-record states: detection (`none`/`flag`/`block`), coverage (`complete`/`partial`/`none`) and admission (`admitted`/`held`). A record is admitted only with detection `none`, coverage `complete` and every segment `pass`.
 - Hold reasons, all listed when they apply: `malformed`, `over_budget`, `blocked`, `flagged`, `degraded`, `unexercised`, `error`, `incomplete`. Record-level validation failures (including unknown top-level keys and non-string metadata values) hold the record instead of coercing it.
+- Admission is decided from the verdict snapshot recorded in the manifest. A non-finite or out-of-range risk score, a mistyped or self-contradictory verdict, a verdict for other text, or a `PipelineVerdict` subclass is an `error` hold; a measured non-zero risk score is `flag`, never `pass`.
 - Deterministic segmentation with a per-record budget (`--segment-chars`, `--segment-overlap`, `--max-segments`, `--max-item-bytes`) and character-level coverage accounting. A record over budget is held with zero checks; a record is never partly scanned and reported as screened.
+- The CLI sets the Ollama canary's `num_ctx` to `4 × segment_chars + 4 × len(system prompt) + max_tokens + 64` (`required_canary_context`) so the backend's default context window does not silently truncate a long segment; the value is recorded as `pipeline.canary_num_ctx`. Python callers construct `SecurityPipeline(canary_num_ctx=required_canary_context(policy, pipeline))` or larger, or `ingest_records` raises `ValueError` before any check.
 - `id`, `source` and `metadata` are screened as material, before the text, because the export emits them downstream.
-- Manifest `little-canary-ingest-manifest/v1`, always written when a run completes, with hashes, lengths, offsets and states only (no record text).
-- Opt-in export `little-canary-ingest-export/v1` (`--export`): only admitted records, exact snapshot text, per-record `sha256`/`material_sha256`, and the `manifest_sha256` it is bound to; atomic writes, no overwrite without `--overwrite`.
-- Consumer example `examples/ingest_consumer.py`, which refuses an export that fails `verify_export`.
+- Input from a file or stdin is decoded as strict UTF-8 regardless of locale; an object with a duplicate key is malformed JSON and refuses the whole run.
+- Manifest `little-canary-ingest-manifest/v1`, written when a run completes. It carries hashes, lengths, offsets, states, hold reasons, detector-generated signals and verdict summaries with the raw input fields removed, pipeline configuration (mode, provider, model, `canary_num_ctx`; never URLs or keys), timestamps, `run.input_sha256` (the exact input bytes, set by the CLI) and `run.export_requested`. `id`/`source` labels and metadata key names appear in plaintext only for admitted records; held records carry `id_sha256`/`source_sha256`/`metadata_key_count` instead. Record text and metadata values never appear.
+- Opt-in export `little-canary-ingest-export/v1` (`--export`): only admitted records, exact snapshot text, per-record `sha256`/`material_sha256`, and the `manifest_sha256` it is bound to.
+- Publication (`publish`, used by the CLI): both files are written to temp files first and the export is published before the manifest; a failure leaves no new file and an interrupted run leaves no new manifest. Existing paths are refused unless `--overwrite`, which removes the previous manifest and export before the run starts.
+- Exit status: `0` all admitted; `1` held for detection only; `2` run completed and files written, but some record held for an operational or coverage reason; `3` nothing written (invalid input or configuration, empty input, unusable or existing output paths, unwritable output directory, malformed JSON including duplicate keys, write failure).
+- `verify_export` checks that an export and its manifest are consistent (schemas, exact field set, hash binding including optional raw manifest bytes, `run.export_requested`, admitted set and order, per-segment evidence, counts, digests); it does not check authenticity, since anyone who can write both files can forge a matching pair.
+- Consumer example `examples/ingest_consumer.py`, which refuses an export that fails `verify_export`, accepts `--expect-manifest-sha256` (the manifest sha256 printed by the ingest run) and warns when it is absent.
 - Evaluation tooling in `benchmarks/ingest_eval/` (corpus and `run_eval.py`) that scores detector misses and false holds separately from operational/coverage holds.
 
 **Experimental.** The Ingest command, schemas and `strict/v1` policy are experimental.
@@ -29,6 +35,7 @@ Benchmark and latency figures in entries before `0.3.3` are historical release n
 ### Unchanged
 
 - Runtime `SecurityPipeline.check`, `screen`, `serve` and `demo` semantics are untouched by Ingest.
+- Runtime: `CanaryProbe(num_ctx=...)` and `SecurityPipeline(canary_num_ctx=...)` are new optional parameters. The default `None` sends no `num_ctx`, so Runtime behavior is unchanged.
 
 ### Fixed
 

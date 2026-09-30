@@ -39,11 +39,12 @@ One JSON object per line:
 
 ### The runner must strip `expect`
 
-The ingest reader treats unknown top-level keys as malformed (SPEC §3,
-`unknown_keys`), so that nothing unscreened can ride through to export. A
-record passed to `ingest()` with `expect` still attached would be held as
-`malformed` and never checked. The eval runner must remove `expect` from each
-record before ingesting and keep the labels on the side, joined back by `id`.
+The ingest reader accepts only the top-level keys `id`, `source`, `text` and
+`metadata`; any other key makes the record malformed, so that nothing unscreened
+can ride through to export. A record passed to `ingest()` with `expect` still
+attached would be held as `malformed` and never checked. The eval runner removes
+`expect` from each record before ingesting and keeps the labels on the side,
+joined back by record index (the record's position in the ingested list).
 
 ## Vectors
 
@@ -74,11 +75,18 @@ hidden markdown/HTML-comment instructions, non-English overrides, and
 
 ## Things to know when scoring
 
-- `id` and `source` are part of the screened metadata material (SPEC §3). The
-  descriptive ids (`benign-...`, `inj-...`) therefore reach the canary. Keep this
-  in mind when reading results; it is a known limitation of this corpus.
+- Ingest screens a record's `id` and `source` together with its metadata, so the
+  descriptive corpus ids (`benign-...`, `inj-...`) would show the label to the
+  canary. The runner prevents this: before ingest it replaces every `id` with a
+  neutral `doc-NNNN` and every `source` with `corpus`, and after the run it
+  restores the original ids by record index for scoring. The descriptive ids
+  never reach the canary through the runner.
 - Every record carries `id` and `source`, so every record has at least one
   metadata segment in addition to its text segments.
+- Ingest reports a plaintext `id` only for admitted records; a held record
+  carries only `id_sha256`. The runner therefore never joins results to labels
+  by `id`; it joins by index and cross-checks each result's `id` or `id_sha256`
+  against the neutral id at that index.
 - `benign-long-01` and `inj-long-01` share the same base document; they differ
   only by the payload inserted near the end.
 - A held record whose reasons are only operational or coverage reasons
@@ -102,8 +110,17 @@ is local and illustrative for this corpus, this run; it is not a benchmark.
 
 Before ingesting, the runner strips `expect` and replaces every `id` with a
 neutral `doc-NNNN` (corpus line order) and every `source` with `corpus`, so the
-label never reaches the canary through the metadata segment. The mapping back to
-the original ids is in the `--json` document; a `--manifest` carries neutral ids.
+label never reaches the canary through the metadata segment. Labels are restored
+by record index after the run. The mapping back to the original ids is in the
+`--json` document; a `--manifest` carries neutral ids only (plaintext for
+admitted records, `id_sha256` only for held ones).
+
+For a live run the runner builds the Ollama canary with a context window
+(`canary_num_ctx`) large enough to hold a whole segment under the policy; ingest
+refuses to run with an unset or smaller window, because the backend would
+otherwise silently truncate long segments. The value used is recorded as
+`canary_num_ctx` in the `--json` header (`null` for the offline fake, which has
+no canary).
 
 ```sh
 # scorer self-test, no model (deterministic stand-in; NOT a detector result)

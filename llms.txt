@@ -13,7 +13,7 @@ Primary entry points:
 - no-model structural screening via `StructuralFilter().check(text)` (`blocked`, `reasons`, `input_sanitized`) or `SecurityPipeline(enable_canary=False)`; pattern matching only, so a clean result is not a behavioral PASS and the canary reports `disabled`
 - loopback live contrast via `little-canary demo --live` (requires Ollama + a pulled canary model)
 - local server via `little-canary serve`
-- experimental document admission via `little-canary ingest` (JSONL in; text-free manifest and opt-in hash-bound export of admitted records out)
+- experimental document admission via `little-canary ingest` (JSONL in; a manifest without record text or metadata values, and an opt-in hash-bound export of admitted records, out)
 
 Expected output:
 - verdict object with safety, degradation, canary/analysis status, summary, risk, and optional advisory text
@@ -30,6 +30,8 @@ Evidence rules:
 - `MOCK` and `STATIC_ONLY` validate logic but do not prove live integration
 - remote backends receive raw input; a configured judge receives raw input plus canary output
 - `ingest` admission is a policy decision, not a detection result: `admitted` means every configured check completed and the policy was satisfied, not that the content is harmless
+- `ingest` manifests show `id`/`source` labels and metadata key names in plaintext only for admitted records; held records carry digests instead
+- `verify_export` checks that an export and its manifest are consistent, not that they are authentic; pin the manifest sha256 printed by the `ingest` run
 
 
 ## About Hermes Labs
