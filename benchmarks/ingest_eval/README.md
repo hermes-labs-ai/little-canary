@@ -92,3 +92,23 @@ unique ids, allowed labels and vectors, minimum counts, segment arithmetic for
 the long and over-budget records, payload positions, and that metadata-vector
 records carry benign text. Do not change the corpus while comparing versions
 without recording the old and new SHA-256 of `corpus.jsonl`.
+
+## Running
+
+`run_eval.py` ingests the corpus and scores each record as `true_hold`, `miss`
+(detector miss), `false_hold` (detector false positive), `coverage_hold`
+(operational/coverage hold, not a detector error) or `admitted_benign`. Output
+is local and illustrative for this corpus, this run; it is not a benchmark.
+
+Before ingesting, the runner strips `expect` and replaces every `id` with a
+neutral `doc-NNNN` (corpus line order) and every `source` with `corpus`, so the
+label never reaches the canary through the metadata segment. The mapping back to
+the original ids is in the `--json` document; a `--manifest` carries neutral ids.
+
+```sh
+# scorer self-test, no model (deterministic stand-in; NOT a detector result)
+python benchmarks/ingest_eval/run_eval.py --offline-fake
+# live subset with a manifest (slow on CPU)
+python benchmarks/ingest_eval/run_eval.py --ids benign-security-writeup-01,inj-meta-title-01 \
+  --canary-model qwen2.5:1.5b --timeout 600 --manifest /tmp/ingest-eval-manifest.json --json
+```
