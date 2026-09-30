@@ -3,7 +3,7 @@
 import json
 import threading
 from http.client import HTTPConnection
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -215,3 +215,71 @@ class TestCheckEndpoint:
         body = json.loads(resp.read())
         assert body == {"error": "pipeline check failed"}
         assert "canary exploded" not in json.dumps(body)
+
+
+@pytest.mark.parametrize(
+    ("length", "expected_status", "expected_error"),
+    [
+        (None, 411, "content length required"),
+        ("not-a-number", 400, "invalid content length"),
+        ("0", 400, "request body must not be empty"),
+        ("-1", 400, "request body must not be empty"),
+    ],
+)
+def test_check_rejects_invalid_content_length(
+    canary_server, length, expected_status, expected_error
+):
+    port, mock_pipeline = canary_server
+    conn = HTTPConnection("127.0.0.1", port)
+    conn.putrequest("POST", "/check")
+    conn.putheader("Content-Type", "application/json")
+    if length is not None:
+        conn.putheader("Content-Length", length)
+    conn.endheaders()
+    response = conn.getresponse()
+
+    assert response.status == expected_status
+    assert json.loads(response.read()) == {"error": expected_error}
+    mock_pipeline.check.assert_not_called()
+    conn.close()
+
+
+def test_check_returns_503_without_pipeline(canary_server, monkeypatch):
+    import little_canary.server as server_mod
+
+    port, mock_pipeline = canary_server
+    monkeypatch.setattr(server_mod, "_pipeline", None)
+    conn = HTTPConnection("127.0.0.1", port)
+    conn.request("POST", "/check", body=json.dumps({"text": "test"}), headers={"Content-Type": "application/json"})
+    response = conn.getresponse()
+
+    assert response.status == 503
+    assert json.loads(response.read()) == {"error": "pipeline unavailable"}
+    mock_pipeline.check.assert_not_called()
+    conn.close()
+
+
+@pytest.mark.parametrize("ready", [True, False])
+def test_run_server_logs_readiness_and_shuts_down(ready, monkeypatch, caplog):
+    import little_canary.server as server_mod
+
+    mock_pipeline = MagicMock()
+    mock_pipeline.health_check.return_value = {
+        "ready": ready,
+        "endpoint_origin": "http://127.0.0.1:11434",
+        "canary_available": ready,
+    }
+    mock_server = MagicMock()
+    mock_server.serve_forever.side_effect = KeyboardInterrupt
+    monkeypatch.setattr(server_mod, "_pipeline", mock_pipeline)
+    with (
+        patch.object(server_mod, "create_server", return_value=mock_server) as create,
+        caplog.at_level("INFO", logger="little_canary.server"),
+    ):
+        server_mod.run_server(port=0)
+
+    create.assert_called_once()
+    mock_server.serve_forever.assert_called_once_with()
+    mock_server.shutdown.assert_called_once_with()
+    assert "Shutting down" in caplog.text
+    assert ("server ready" if ready else "DEGRADED") in caplog.text
