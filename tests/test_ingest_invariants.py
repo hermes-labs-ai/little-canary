@@ -1368,3 +1368,194 @@ def test_target_created_during_write_is_not_clobbered(tmp_path, monkeypatch):
     with contextlib.suppress(FileExistsError):
         write_export(_result(), target)
     assert target.read_bytes() == b"CONCURRENT"
+
+
+# ---------------------------------------------------------------------------
+# Final polish (w15): pins for the last round of fixes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("pairs", [
+    [("text", "benign"), ("text", "BLK " + SENTINEL)],
+    [("id", "same"), ("text", "BLK " + SENTINEL), ("id", "same")],
+], ids=["text-twice-different-values", "id-twice-same-value"])
+def test_top_level_mapping_yielding_a_repeated_key_is_malformed(pairs):
+    """Invariant (_snapshot Mapping branch): a top-level record Mapping whose items() yields a key twice is
+    held malformed ('keys collide') with zero checks and nothing exported; neither value is kept."""
+    res, pipe = _run([_RepeatingItems(pairs), "fine"])
+    _assert_held_malformed_unscreened(res, pipe, "keys collide")
+    assert res.records[0].detail == "record 0: keys collide"
+
+
+def test_top_level_mapping_with_distinct_valid_keys_is_unaffected():
+    """Invariant (_snapshot Mapping branch): a non-dict Mapping with distinct valid keys is screened and
+    exported exactly like the equivalent dict."""
+    rec = _RepeatingItems([("text", "body"), ("id", "i"), ("metadata", {"k": "v"})])
+    res, pipe = _run([rec])
+    assert res.records[0].admission == ADMISSION_ADMITTED
+    assert res.export_document()["records"][0]["metadata"] == {"k": "v"}
+    assert res.admitted[0].id == "i" and "id: i\nk: v" in pipe.calls
+    _assert_invariants(res, pipe)
+
+
+class _FormatLies(str):
+    def __format__(self, spec):
+        return "benign"
+
+    def __str__(self):
+        return "benign"
+
+
+def test_metadata_material_renders_plain_str_copies_of_labels_and_values():
+    """Invariant (metadata_material): id/source/metadata values are rendered from plain-str copies, so a
+    str subclass with a lying __format__/__str__ renders as its real contents."""
+    assert f"{_FormatLies('x')}" == "benign" and str(_FormatLies("x")) == "benign"  # the lie is live
+    rec = IngestRecord("body", id=_FormatLies("real-id"), source=_FormatLies("real-src"),
+                       metadata={"k": _FormatLies("real-v")})
+    assert metadata_material(rec) == "id: real-id\nsource: real-src\nk: real-v"
+
+
+@pytest.mark.parametrize("meta,reason", [
+    (_RepeatingItems([("k", "a"), ("k", "b")]), "metadata keys collide"),
+    ({_PlainSubKey("k"): "v"}, "metadata keys must be plain str"),
+], ids=["repeated-key", "str-subclass-key"])
+def test_metadata_material_refuses_record_with_invalid_metadata_keys(meta, reason):
+    """Invariant (metadata_material): an IngestRecord whose metadata keys were invalid (_InvalidMetadata)
+    has no canonical material; ValueError names the reason."""
+    with pytest.raises(ValueError, match=f"^{reason}$"):
+        metadata_material(IngestRecord("body", metadata=meta))
+
+
+def _reader_cap(max_item_bytes, keys, value_chars):
+    from little_canary import batch
+
+    return batch.max_line_chars(max_item_bytes) + keys * (12 * (128 + value_chars) + 8) + 16
+
+
+@pytest.mark.parametrize("shape", ["list", "generator", "readline"])
+def test_read_records_line_cap_is_the_same_for_plain_iterables(shape):
+    """Invariant (_read_strict_jsonl): an iterable of lines without readline() enforces the same line cap
+    as a file: a line of cap+1 chars is ValueError('line N: exceeds <cap> characters'), cap chars is read."""
+    kw = {"max_item_bytes": 16, "max_metadata_keys": 1, "max_metadata_value_chars": 1}
+    cap = _reader_cap(16, 1, 1)
+    at_cap = json.dumps("x" * (cap - 3)) + "\n"
+    over = json.dumps("x" * (cap - 2)) + "\n"
+    assert (len(at_cap), len(over)) == (cap, cap + 1)
+
+    def src(lines):
+        if shape == "readline":
+            return io.StringIO("".join(lines))
+        return list(lines) if shape == "list" else (line for line in lines)
+
+    assert shape == "readline" or not hasattr(src(["x"]), "readline")
+    assert list(read_records(src(['"fine"\n', at_cap]), **kw)) == ["fine", "x" * (cap - 3)]
+    with pytest.raises(ValueError) as info:
+        list(read_records(src(['"fine"\n', over]), **kw))
+    assert str(info.value) == f"line 2: exceeds {cap} characters"
+
+
+@pytest.mark.parametrize("method,admitted", [("llm_judge", False), ("regex", True), ("none", True)])
+def test_llm_judge_verdict_payload_is_an_error_segment_never_a_pass(method, admitted):
+    """Invariant (_classify_payload judge rule): a segment verdict with analysis_method 'llm_judge' is an
+    error segment (held, never a pass); 'regex' and 'none' exercised passes are admitted as before."""
+    res, pipe = _run(["plain"], Recorder(lambda t: _v(t, analysis_method=method)))
+    rec = res.records[0]
+    assert (rec.admission == ADMISSION_ADMITTED) is admitted
+    if not admitted:
+        assert HOLD_ERROR in rec.hold_reasons and rec.segments[0].state == "error"
+        assert rec.segments[0].exercised is False and res.admitted == []
+    _assert_invariants(res, pipe)
+
+
+def test_verify_refuses_admission_backed_by_llm_judge_evidence():
+    """Invariant (_classify_payload judge rule, consumer side): an admitted record whose recorded verdict
+    says analysis_method 'llm_judge' (manifest re-bound) is not supported by its segment evidence."""
+    export, manifest = _pair()
+    manifest["records"][3]["segments"][0]["verdict"]["analysis_method"] = "llm_judge"
+    _rehash(export, manifest)
+    assert verify_export(export, manifest) == [_EVIDENCE.format(3)]
+
+
+@pytest.mark.parametrize("value", [["x"], {"a": "b"}, 5, True, []], ids=["list", "dict", "int", "bool", "empty"])
+@pytest.mark.parametrize("name", ["id", "source"])
+def test_verify_rejects_non_string_exported_label(name, value):
+    """Invariant (verify_export id/source type rule): an exported id/source that is not a str or null, in
+    both documents with {name}_sha256 None, material recomputed and the manifest re-bound, is reported as
+    'must be a string or null'; None stays accepted."""
+    export, manifest = _pair()
+    rec, mrec = _find(export, 3), manifest["records"][3]
+    assert rec[name] is None and mrec[f"{name}_sha256"] is None
+    assert verify_export(export, manifest) == []  # None is accepted
+    rec[name] = mrec[name] = value
+    rec["material_sha256"] = mrec["material_sha256"] = _material(rec)
+    _rehash(export, manifest)
+    assert verify_export(export, manifest) == [f"record 3: {name} must be a string or null"]
+
+
+@pytest.mark.parametrize("side", ["export", "manifest"])
+@pytest.mark.parametrize("name", ["id", "source"])
+def test_verify_rejects_non_string_label_on_either_side_alone(name, side):
+    """Invariant (verify_export id/source type rule): the type rule applies to each document on its own;
+    a list label on only one side (material recomputed, manifest re-bound) is still reported."""
+    export, manifest = _pair()
+    rec, mrec = _find(export, 3), manifest["records"][3]
+    (rec if side == "export" else mrec)[name] = ["x"]
+    rec["material_sha256"] = mrec["material_sha256"] = _material(rec)
+    _rehash(export, manifest)
+    assert f"record 3: {name} must be a string or null" in verify_export(export, manifest)
+
+
+_HOSTILE_MANIFESTS = [
+    ("hold_reasons_dict_item_held", lambda m: m["records"][1].update(hold_reasons=[{"x": 1}])),
+    ("hold_reasons_dict_item_admitted", lambda m: m["records"][0].update(hold_reasons=[{"x": 1}, "blocked"])),
+    ("detection_dict", lambda m: m["records"][0].update(detection={"none": 1})),
+    ("detection_list", lambda m: m["records"][1].update(detection=["block"])),
+    ("coverage_dict", lambda m: m["records"][3].update(coverage={"complete": 1})),
+    ("coverage_list", lambda m: m["records"][1].update(coverage=["none"])),
+    ("record_int", lambda m: m["records"].append(5)),
+    ("record_list", lambda m: m["records"].insert(0, ["x", {"y": 1}])),
+    ("record_none", lambda m: m["records"].__setitem__(1, None)),
+    ("record_str", lambda m: m["records"].__setitem__(2, "admitted")),
+    ("counts_list", lambda m: m.update(counts=[1, 2])),
+    ("segment_not_dict", lambda m: m["records"][0]["segments"].__setitem__(0, [1])),
+    ("verdict_list", lambda m: m["records"][0]["segments"][0].update(verdict=[{"safe": True}])),
+]
+
+
+@pytest.mark.parametrize("mutate", [m[1] for m in _HOSTILE_MANIFESTS], ids=[m[0] for m in _HOSTILE_MANIFESTS])
+def test_verify_export_never_raises_on_hostile_manifest(mutate):
+    """Invariant (verify_export, _recount): unhashable hold_reasons items, dict/list detection or coverage,
+    and non-dict record/segment/verdict items (manifest re-bound) return a non-empty problem list and
+    never raise."""
+    export, manifest = _pair()
+    mutate(manifest)
+    _rehash(export, manifest)
+    problems = verify_export(export, manifest)
+    assert isinstance(problems, list) and problems
+    assert "manifest_sha256 does not match the manifest" not in problems
+
+
+@pytest.mark.parametrize("item", [5, None, ["x"], "record"], ids=["int", "none", "list", "str"])
+def test_verify_export_never_raises_on_non_dict_export_records(item):
+    """Invariant (verify_export): a non-dict export record item is a reported problem, not an exception."""
+    export, manifest = _pair()
+    export["records"].append(item)
+    assert "export record at position 3: malformed" in verify_export(export, manifest)
+
+
+_OVERFLOW_MANIFESTS = [
+    ("risk_score_huge_int",
+     lambda m: m["records"][0]["segments"][0]["verdict"].update(canary_risk_score=10 ** 400)),
+    ("policy_huge_ints",
+     lambda m: m["policy"].update(segment_chars=10 ** 400, segment_overlap=10 ** 400 - 1)),
+]
+@pytest.mark.parametrize("mutate", [m[1] for m in _OVERFLOW_MANIFESTS], ids=[m[0] for m in _OVERFLOW_MANIFESTS])
+def test_verify_export_never_raises_on_huge_integers(mutate):
+    """Invariant (verify_export never raises): a manifest with an integer too large for a float (a legal
+    JSON value; re-bound) yields a non-empty problem list, never OverflowError."""
+    export, manifest = _pair()
+    mutate(manifest)
+    manifest = json.loads(json.dumps(manifest))
+    _rehash(export, manifest)
+    problems = verify_export(export, manifest)
+    assert isinstance(problems, list) and problems

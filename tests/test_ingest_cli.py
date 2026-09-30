@@ -742,3 +742,19 @@ def test_offline_guard_rejects_unrouted_requests(paths, capsys, http):
     assert http.calls == [("POST", "http://127.0.0.1:11434/api/show")]
     http.unexpected.clear()  # this test expects the interception; teardown stays clean
     assert list(paths.dir.iterdir()) == []
+
+
+# -- w15: help text pins the whole-run line refusal and exit 3 wording ----------------
+
+
+def test_ingest_help_pins_line_refusal_and_unverifiable_context_exit_3(capsys):
+    """Invariant (cli help): --max-item-bytes help says an over-long JSONL line refuses the whole run,
+    and the description lists an unverifiable canary context among the exit-3 causes."""
+    with pytest.raises(SystemExit):
+        main(["ingest", "--help"])
+    out = " ".join(capsys.readouterr().out.split())  # undo argparse line wrapping
+    item_help = out.split("--max-item-bytes MAX_ITEM_BYTES ", 1)[1].split(" --max-items ", 1)[0]
+    assert "Hold any record whose text exceeds" in item_help
+    assert "refuses the whole run" in item_help
+    exit_3 = out.split("3: nothing was written", 1)[1].split("positional arguments", 1)[0]
+    assert "unverifiable canary context" in exit_3

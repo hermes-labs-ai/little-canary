@@ -133,7 +133,7 @@ class IngestPolicy:
 
     def validate(self) -> None:
         """Raise ``ValueError`` for any out-of-range field."""
-        batch.check_limit("segment_chars", self.segment_chars)
+        batch.check_limit("segment_chars", self.segment_chars, maximum=batch.MAX_ITEM_BYTES_CEILING)
         if self.segment_chars < 1:
             raise ValueError("segment_chars must be at least 1")
         batch.check_limit("segment_overlap", self.segment_overlap)
@@ -395,6 +395,10 @@ class IngestResult:
                 or rec.sha256 != entry.sha256
                 or rec.material_sha256 != entry.material_sha256
                 or rec.sha256 != _sha256_text(entry.text)
+                or rec.id != entry.id
+                or rec.source != entry.source
+                or rec.metadata_keys != sorted(entry.metadata)
+                or rec.material_sha256 != _material_sha256(entry.id, entry.source, entry.metadata, entry.text)
             ):
                 raise ValueError(f"export refused: admitted entry {entry.index} does not match the run's records")
             seen.add(entry.index)
@@ -449,7 +453,10 @@ def metadata_material(record: IngestRecord) -> str:
     ``<key>: <value>`` for each metadata key in sorted order, joined by ``\\n``.
     Returns ``""`` when the record has no id, source or metadata.
     """
-    return "\n".join(_metadata_lines(record.id, record.source, record.metadata or {}))
+    if isinstance(record.metadata, _InvalidMetadata):
+        raise ValueError(record.metadata.reason)
+    metadata = {k: _plain(v) for k, v in (record.metadata or {}).items()}
+    return "\n".join(_metadata_lines(_plain(record.id), _plain(record.source), metadata))
 
 
 def _material_sha256(
@@ -496,8 +503,9 @@ def read_records(
     """Yield one raw record per non-blank JSONL line, with a bounded line length.
 
     The line cap is ``batch.max_line_chars(max_item_bytes)`` plus room for a
-    worst-case escaped metadata object within the metadata limits, so a record
-    that is within every limit is never rejected by the reader. Unlike
+    worst-case escaped metadata object within the metadata limits, so a compactly
+    serialized record within every limit is never rejected by the reader (a line
+    padded with extra JSON whitespace can still exceed the cap). Unlike
     ``batch.read_jsonl``, an object with a duplicate key (at any depth) is
     malformed JSON: a parser that keeps the other value would screen and export
     different material, so the ambiguity is refused instead of resolved.
@@ -543,6 +551,8 @@ def _read_strict_jsonl(source: Any, max_line: int) -> Iterator[Any]:
                 yield parse(line, number)
     else:
         for number, line in enumerate(source, 1):
+            if len(line) > max_line:
+                raise ValueError(f"line {number}: exceeds {max_line} characters")
             if line.strip():
                 yield parse(line, number)
 
@@ -598,12 +608,18 @@ def _snapshot(raw: Any, index: int) -> _Prepared:
     elif isinstance(raw, str):
         prepared = _Prepared(index, raw, None, None, None)
     elif isinstance(raw, Mapping):
-        snap = dict(raw)
+        snap: dict[Any, Any] = {}
+        yielded = 0
+        for key, value in raw.items():  # single read; a repeated key is a rewrite, never merged
+            yielded += 1
+            snap[key] = value
         prepared = _Prepared(
             index, snap.get("text"), snap.get("id"), snap.get("source"), snap.get("metadata")
         )
         if any(not _exact_str(k) or k not in _RECORD_KEYS for k in snap):
             prepared.malformed = f"record {index}: unknown_keys"
+        elif len(snap) != yielded:
+            prepared.malformed = f"record {index}: keys collide"
     else:
         raise ValueError(
             f"record {index}: must be a string, object, IngestRecord or BatchItem"
@@ -684,7 +700,12 @@ def _text_bytes_for_budget(text: Any, remaining: int) -> int | None:
 
 
 def _finite_real(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (OverflowError, ValueError):
+        return False  # an integer too large for a float is not a usable risk score
 
 
 def _classify_payload(payload: Mapping[str, Any]) -> tuple[str, bool]:
@@ -730,6 +751,8 @@ def _classify_payload(payload: Mapping[str, Any]) -> tuple[str, bool]:
         return batch.STATE_FLAG, exercised
     if payload.get("canary_status") != "exercised" or payload.get("analysis_status") != "exercised":
         return batch.STATE_UNEXERCISED, False
+    if payload.get("analysis_method") == "llm_judge":
+        return STATE_ERROR, False  # judge evidence has no sized context window; never a pass
     if risk is not None and risk > 0.0:
         # strict/v1: a measured non-zero risk is a detection signal even when the
         # analyzer raised no advisory; it is never a pass.
@@ -987,11 +1010,19 @@ def _check_canary_context(policy: IngestPolicy, pipeline: Any) -> None:
     OpenAI-compatible provider offers no context control, and the LLM judge
     reads the whole segment without one, so neither is supported by ingest.
     """
+    from .analyzer import BehavioralAnalyzer
+    from .canary import CanaryProbe
+
     if getattr(pipeline, "enable_canary", True) is False:
         return
-    if getattr(pipeline, "use_judge", False) is True:
+    if getattr(pipeline, "use_judge", False) is True or (
+        hasattr(pipeline, "analyzer") and type(pipeline.analyzer) is not BehavioralAnalyzer
+    ):
         raise ValueError("ingest does not support judge_model: the LLM judge has no sized context window")
-    if getattr(pipeline, "provider", None) == "openai":
+    if getattr(pipeline, "provider", None) == "openai" or (
+        hasattr(pipeline, "canary_probe") and hasattr(pipeline, "provider")
+        and type(pipeline.canary_probe) is not CanaryProbe
+    ):
         raise ValueError(
             "ingest does not support provider='openai': the canary context window cannot be sized "
             "or verified there; use the Ollama provider"
@@ -1145,10 +1176,16 @@ def ingest_records(
 # ---------------------------------------------------------------------------
 
 
-def _write_temp(target: str, data: bytes) -> str:
-    """Write ``data`` to a fsynced temp file next to ``target``; return the temp path."""
+def _write_temp(target: str, data: bytes, register: list[str] | None = None) -> str:
+    """Write ``data`` to a fsynced temp file next to ``target``; return the temp path.
+
+    When ``register`` is given the temp path is appended to it right after
+    creation, so a caller's cleanup sees it even if this function is interrupted.
+    """
     directory = os.path.dirname(os.path.abspath(target))
     fd, tmp = tempfile.mkstemp(dir=directory, prefix="." + os.path.basename(target) + ".", suffix=".tmp")
+    if register is not None:
+        register.append(tmp)
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
@@ -1248,19 +1285,27 @@ def publish(
     if export_data is not None:
         digests["export"] = hashlib.sha256(export_data).hexdigest()
 
+    if export_target is not None and _same_file(manifest_target, export_target):
+        raise ValueError("manifest and export paths must be different files")
     temps: list[str] = []
     published: list[str] = []  # targets this call may have created, most recent last
     try:
-        manifest_tmp = _write_temp(manifest_target, manifest_data)
-        temps.append(manifest_tmp)
+        manifest_tmp = _write_temp(manifest_target, manifest_data, temps)
         if export_target is not None and export_data is not None:
-            export_tmp = _write_temp(export_target, export_data)
-            temps.append(export_tmp)
+            export_tmp = _write_temp(export_target, export_data, temps)
             published.append(export_target)  # counted as ours from the moment publish is attempted
-            _publish_temp(export_tmp, export_target, overwrite=overwrite)
+            try:
+                _publish_temp(export_tmp, export_target, overwrite=overwrite)
+            except FileExistsError:
+                published.remove(export_target)  # a racing writer's file: not ours, never removed
+                raise
             temps.remove(export_tmp)
         published.append(manifest_target)
-        _publish_temp(manifest_tmp, manifest_target, overwrite=overwrite)
+        try:
+            _publish_temp(manifest_tmp, manifest_target, overwrite=overwrite)
+        except FileExistsError:
+            published.remove(manifest_target)
+            raise
         temps.remove(manifest_tmp)
     except BaseException:
         # Roll back everything this call touched: temp files and any target it
@@ -1273,6 +1318,15 @@ def publish(
                 os.unlink(target)
         raise
     return digests
+
+
+def _same_file(a: str, b: str) -> bool:
+    if os.path.abspath(a) == os.path.abspath(b) or os.path.realpath(a) == os.path.realpath(b):
+        return True
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 def write_manifest(
@@ -1428,6 +1482,9 @@ def verify_export(
             problems.append(f"{label}: provenance mismatch")
         for name in ("id", "source"):
             value = rec.get(name)
+            if not (value is None or _exact_str(value)) or not (mrec.get(name) is None or _exact_str(mrec.get(name))):
+                problems.append(f"{label}: {name} must be a string or null")
+                continue
             expected = _sha256_text(value) if isinstance(value, str) else None
             if mrec.get(f"{name}_sha256") != expected:
                 problems.append(f"{label}: {name} digest mismatch")
@@ -1458,12 +1515,13 @@ def _recount(records: list[Any]) -> dict[str, Any]:
             continue
         if rec.get("admission") == ADMISSION_ADMITTED:
             admitted += 1
-        for reason in rec.get("hold_reasons") or []:
-            if reason in by_reason:
+        reasons = rec.get("hold_reasons")
+        for reason in reasons if isinstance(reasons, list) else []:
+            if isinstance(reason, str) and reason in by_reason:
                 by_reason[reason] += 1
-        if rec.get("detection") in detection:
+        if isinstance(rec.get("detection"), str) and rec["detection"] in detection:
             detection[rec["detection"]] += 1
-        if rec.get("coverage") in coverage:
+        if isinstance(rec.get("coverage"), str) and rec["coverage"] in coverage:
             coverage[rec["coverage"]] += 1
     return {
         "admitted": admitted,
@@ -1498,7 +1556,7 @@ def _segments_match_material(
         plan = [(SEGMENT_METADATA, i, s, e, meta_text) for i, (s, e) in enumerate(
             segment_text(meta_text, seg_chars, overlap) if meta_text else [])]
         plan += [(SEGMENT_TEXT, i, s, e, text) for i, (s, e) in enumerate(segment_text(text, seg_chars, overlap))]
-    except ValueError:
+    except (ValueError, OverflowError, TypeError, MemoryError):
         return False
     segments = mrec.get("segments")
     if not isinstance(segments, list) or len(segments) != len(plan):

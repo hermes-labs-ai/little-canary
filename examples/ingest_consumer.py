@@ -72,7 +72,7 @@ def _load_with_bytes(path: str, label: str) -> tuple[Any, bytes]:
         with open(path, "rb") as handle:
             raw = handle.read()
         return loads_strict(raw.decode("utf-8")), raw  # duplicate keys are refused, never resolved
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError, TypeError, MemoryError) as exc:
         raise Refused([f"cannot read {label} ({type(exc).__name__})"]) from None
 
 
@@ -85,7 +85,10 @@ def verified_records(
     checked against the exact bytes on disk, not only the parsed document.
     """
     # 1. The library check: schemas, manifest hash binding, admitted set, hashes.
-    problems = verify_export(export, manifest, manifest_bytes=manifest_bytes)
+    try:
+        problems = verify_export(export, manifest, manifest_bytes=manifest_bytes)
+    except (TypeError, ValueError, RecursionError, AttributeError, KeyError, OverflowError, MemoryError) as exc:
+        raise Refused([f"verification failed ({type(exc).__name__})"]) from None
     if problems:
         raise Refused(problems)
 

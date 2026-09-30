@@ -458,3 +458,54 @@ def test_duplicate_json_keys_refused(pair, capsys, which, old, new):
     out, err = capsys.readouterr()
     assert out == "" and f"cannot read {which} (ValueError)" in err
     assert SENTINEL not in out + err
+
+
+# (12) w15: deep nesting and verify_export failures are refusals, never tracebacks ----
+
+_DEEP = "[" * 200_000 + "]" * 200_000
+
+
+@pytest.mark.parametrize("which", ["manifest", "export"])
+def test_deeply_nested_document_refused_as_recursion_error(pair, capsys, which):
+    """Invariant (_load_with_bytes): a 200,000-deep nested JSON manifest or export is refused with
+    'cannot read <file> (RecursionError)', exit 2, nothing consumed, no traceback."""
+    mpath, epath = pair
+    (mpath if which == "manifest" else epath).write_text(_DEEP, encoding="utf-8")
+    assert _refused(mpath, epath) == [f"cannot read {which} (RecursionError)"]
+    assert _main(mpath, epath) == 2
+    out, err = capsys.readouterr()
+    assert out == "" and "REFUSED: nothing consumed" in err
+    assert f"cannot read {which} (RecursionError)" in err
+
+
+@pytest.mark.parametrize("exc", [TypeError, ValueError, RecursionError, AttributeError, KeyError])
+def test_verify_export_exception_is_a_refusal(pair, capsys, monkeypatch, exc):
+    """Invariant (verified_records exception handling): if verify_export raises one of the handled
+    exception types, the pair is refused ('verification failed (<type>)'), exit 2, nothing consumed."""
+    def raising(*args, **kwargs):
+        raise exc(SENTINEL)
+
+    monkeypatch.setattr(consumer, "verify_export", raising)
+    assert _refused(*pair) == [f"verification failed ({exc.__name__})"]
+    assert _main(*pair) == 2
+    out, err = capsys.readouterr()
+    assert out == "" and f"verification failed ({exc.__name__})" in err
+    assert SENTINEL not in out + err
+
+
+_HUGE = str(10 ** 400)
+
+
+@pytest.mark.parametrize("old,new", [
+    ('"canary_risk_score":0.0', '"canary_risk_score":' + _HUGE),
+    ('"segment_chars":40,"segment_overlap":5', f'"segment_chars":{_HUGE},"segment_overlap":{10 ** 400 - 1}'),
+], ids=["risk-score", "policy-segment-ints"])
+def test_manifest_that_makes_verify_export_raise_is_refused(pair, capsys, old, new):
+    """Invariant (consumer never tracebacks): a manifest carrying an integer too large for a float (a
+    legal JSON value) is refused with exit 2 and nothing consumed, not an uncaught OverflowError."""
+    mpath, epath = pair
+    raw = mpath.read_text(encoding="utf-8")
+    assert old in raw
+    mpath.write_text(raw.replace(old, new, 1), encoding="utf-8")
+    assert _main(mpath, epath) == 2
+    assert "REFUSED: nothing consumed" in capsys.readouterr().err

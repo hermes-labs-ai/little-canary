@@ -131,14 +131,20 @@ def test_score_rejects_misaligned_expectations():
         run_eval.score(result, list(reversed(expectations)))
 
 
-def test_live_pipeline_is_built_with_required_canary_context():
+def test_live_pipeline_is_built_with_required_canary_context(monkeypatch):
+    from little_canary.canary import CanaryProbe
+
+    # The context gate would query /api/show; stub it so this test never touches a backend.
+    calls = []
+    monkeypatch.setattr(CanaryProbe, "context_length", lambda self: calls.append(1) or 32768)
     args = run_eval.build_parser().parse_args(["--timeout", "5"])
     policy = IngestPolicy()
     pipeline = run_eval._build_pipeline(args, policy)
     needed = required_canary_context(policy, pipeline)
     assert needed is not None and pipeline.canary_probe.num_ctx == needed
-    # ingest's context check passes (no records, so no network call is made)
+    # ingest's context check passes against the stubbed trained length (no records, no checks)
     result = ingest_records(pipeline, [], policy=policy, now=_clock)
+    assert calls == [1]
     assert result.pipeline_info["canary_num_ctx"] == needed
     # a pipeline without an explicit window is refused at the run level
     from little_canary.pipeline import SecurityPipeline

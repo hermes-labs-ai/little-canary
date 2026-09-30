@@ -265,10 +265,13 @@ class CanaryProbe:
         """The model's trained context length (tokens) from ``/api/show``, or None.
 
         Ollama caps ``num_ctx`` at this value and truncates longer prompts, so a
-        caller that needs whole-prompt coverage must compare against it. Returns
-        None when the backend is unreachable, the model is unknown, or the
-        response carries no ``<architecture>.context_length`` entry.
+        caller that needs whole-prompt coverage must compare against it. Reads
+        ``model_info["<general.architecture>.context_length"]``, falling back to
+        a single ``*.context_length`` entry when the architecture key is absent.
+        Returns None (and resets ``last_context_length``) when the backend is
+        unreachable, the model is unknown, or no usable entry is present.
         """
+        self.last_context_length = None
         try:
             resp = requests.post(
                 f"{self.ollama_url}/api/show", json={"model": self.model}, timeout=self.timeout

@@ -237,7 +237,8 @@ def build_parser() -> argparse.ArgumentParser:
             "the configured checks and satisfied policy. Exit 0: every record admitted; "
             "1: held for detection only (blocked/flagged); 2: run completed but some "
             "record was held for an operational/coverage reason; 3: nothing was written "
-            "(invalid input/config, empty input, or a write failure)."
+            "(invalid input/config, empty input, an unreachable backend or unverifiable "
+            "canary context, or a write failure)."
         ),
     )
     ingest_parser.add_argument(
@@ -295,7 +296,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest_parser.add_argument(
         "--max-item-bytes", type=int, default=64 * 1024,
-        help="Hold any record whose text exceeds this many UTF-8 bytes (default: 65536)",
+        help=(
+            "Hold any record whose text exceeds this many UTF-8 bytes (default: 65536); "
+            "a single JSONL line longer than about 6x this value refuses the whole run"
+        ),
     )
     ingest_parser.add_argument(
         "--max-items", type=int, default=1000,

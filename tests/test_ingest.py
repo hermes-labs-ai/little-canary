@@ -1416,3 +1416,227 @@ def test_input_sha256_is_recorded_in_manifest_run_and_bound():
     assert verify_export(export, manifest) == []
     manifest["run"]["input_sha256"] = "cd" * 32
     assert "manifest_sha256 does not match the manifest" in verify_export(export, manifest)
+
+
+# (W15) final polish pins ----------------------------------------------------------
+
+def test_gate_refuses_openai_probe_even_when_provider_attribute_says_ollama(monkeypatch):
+    """Invariant (_check_canary_context is type-exact): a SecurityPipeline built with provider='openai'
+    whose provider attribute is later set to 'ollama' still carries an OpenAICanaryProbe and is refused
+    before any check and before any /api/show."""
+    from little_canary.openai_provider import OpenAICanaryProbe
+
+    monkeypatch.setattr(CanaryProbe, "context_length", _context_length_must_not_be_called)
+    pipe = SecurityPipeline(canary_num_ctx=20000, provider="openai", api_key="x")
+    pipe.provider = "ollama"
+    assert type(pipe.canary_probe) is OpenAICanaryProbe
+    calls = _counting(pipe)
+    with pytest.raises(ValueError, match="provider='openai'"):
+        ingest_records(pipe, ["Meeting notes."], now=_clock)
+    assert calls == []
+
+
+def test_gate_refuses_judge_analyzer_even_when_use_judge_is_cleared(monkeypatch):
+    """Invariant (_check_canary_context is type-exact): a pipeline built with judge_model whose use_judge
+    is later set False still has a judge analyzer and is refused before any check."""
+    monkeypatch.setattr(CanaryProbe, "context_length", _context_length_must_not_be_called)
+    pipe = SecurityPipeline(judge_model="m", canary_num_ctx=20000)
+    pipe.use_judge = False
+    calls = _counting(pipe)
+    with pytest.raises(ValueError, match="judge_model"):
+        ingest_records(pipe, ["Meeting notes."], now=_clock)
+    assert calls == []
+
+
+@pytest.mark.parametrize("swap", ["probe", "analyzer"])
+def test_gate_refuses_subclassed_probe_or_analyzer(swap, monkeypatch):
+    """Invariant (_check_canary_context is type-exact): a CanaryProbe or BehavioralAnalyzer subclass is
+    not the audited component and is refused before any check."""
+    from little_canary.analyzer import BehavioralAnalyzer
+
+    class SubProbe(CanaryProbe):
+        pass
+
+    class SubAnalyzer(BehavioralAnalyzer):
+        pass
+
+    monkeypatch.setattr(CanaryProbe, "context_length", _context_length_must_not_be_called)
+    pipe = SecurityPipeline(canary_num_ctx=20000)
+    if swap == "probe":
+        pipe.canary_probe = SubProbe(num_ctx=20000)
+    else:
+        pipe.analyzer = SubAnalyzer()
+    calls = _counting(pipe)
+    with pytest.raises(ValueError, match="provider='openai'" if swap == "probe" else "judge_model"):
+        ingest_records(pipe, ["Meeting notes."], now=_clock)
+    assert calls == []
+
+
+_MUTATED_RECORD = {"text": "alpha", "id": "a", "source": "s", "metadata": {"k": "v"}}
+_ADMITTED_MUTATIONS = [
+    ("metadata_value", lambda a: a.metadata.__setitem__("k", "changed after the run")),
+    ("metadata_key_added", lambda a: a.metadata.__setitem__("extra", "x")),
+    ("id", lambda a: setattr(a, "id", "b")),
+    ("id_to_none", lambda a: setattr(a, "id", None)),
+    ("source", lambda a: setattr(a, "source", "t")),
+]
+
+
+@pytest.mark.parametrize("mutate", [m[1] for m in _ADMITTED_MUTATIONS], ids=[m[0] for m in _ADMITTED_MUTATIONS])
+@pytest.mark.parametrize("writer", ["export_document", "publish"])
+def test_admitted_record_mutated_after_run_is_refused(mutate, writer, tmp_path):
+    """Invariant (export_document cross-check): an AdmittedRecord whose metadata value, id or source was
+    mutated after the run no longer matches its record (labels / material hash), so export_document()
+    and publish() raise ValueError and nothing is written."""
+    result, _ = _run([_MUTATED_RECORD])
+    assert result.records[0].admission == "admitted"
+    mutate(result.admitted[0])
+    with pytest.raises(ValueError, match="export refused: admitted entry 0"):
+        if writer == "export_document":
+            result.export_document()
+        else:
+            publish(result, tmp_path / "m.json", tmp_path / "e.json")
+    assert list(tmp_path.iterdir()) == []
+
+
+def _race_link(monkeypatch, target):
+    """os.link that, on the first link to ``target``, creates it with foreign bytes then raises EEXIST."""
+    real_link = os.link
+    target = os.fspath(target)
+    state = {"linked": [], "fired": False}
+
+    def link(src, dst, *a, **k):
+        if os.fspath(dst) == target and not state["fired"]:
+            state["fired"] = True
+            with open(target, "wb") as handle:
+                handle.write(b"OTHER")
+            raise FileExistsError(17, "File exists", target)
+        real_link(src, dst, *a, **k)
+        state["linked"].append(os.path.basename(os.fspath(dst)))
+
+    monkeypatch.setattr(os, "link", link)
+    return state
+
+
+@pytest.mark.parametrize("race_on,with_export", [("m.json", True), ("e.json", True), ("m.json", False)],
+                         ids=["manifest-after-own-export", "export", "manifest-only"])
+def test_publish_race_never_removes_a_foreign_file(race_on, with_export, tmp_path, monkeypatch):
+    """Invariant (publish FileExistsError handling): a target created by a racing writer between the
+    existence check and link() is not ours: publish raises FileExistsError, the foreign file keeps its
+    bytes, no temp file remains, and an export this call already published is rolled back."""
+    result, _ = _run(_EXPORT_RECORDS)
+    state = _race_link(monkeypatch, tmp_path / race_on)
+    with pytest.raises(FileExistsError):
+        publish(result, tmp_path / "m.json", tmp_path / "e.json" if with_export else None)
+    assert state["fired"] is True
+    if race_on == "m.json" and with_export:
+        assert state["linked"] == ["e.json"]  # our export was published before the manifest race
+    assert [p.name for p in tmp_path.iterdir()] == [race_on]  # our export rolled back, no temps
+    assert (tmp_path / race_on).read_bytes() == b"OTHER"
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+@pytest.mark.parametrize("alias", ["dot-relative", "symlinked-dir", "symlinked-dir-reversed"])
+def test_publish_refuses_aliased_manifest_and_export_paths(alias, overwrite, tmp_path, monkeypatch):
+    """Invariant (publish _same_file): manifest and export paths that name the same file (./m.json vs
+    m.json, or through a symlinked directory) are refused with ValueError and nothing is written."""
+    result, _ = _run(_EXPORT_RECORDS)
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "alias").symlink_to(real, target_is_directory=True)
+    if alias == "dot-relative":
+        monkeypatch.chdir(real)
+        mpath, epath = "m.json", "./m.json"
+    else:
+        mpath, epath = real / "m.json", tmp_path / "alias" / "m.json"
+        if alias == "symlinked-dir-reversed":
+            mpath, epath = epath, mpath
+    with pytest.raises(ValueError, match="different files"):
+        publish(result, mpath, epath, overwrite=overwrite)
+    assert list(real.iterdir()) == []
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["alias", "real"]
+
+
+@pytest.mark.parametrize("own_cleanup", ["works", "fails"])
+def test_interrupt_while_writing_export_temp_leaves_no_temp_and_no_target(own_cleanup, tmp_path, monkeypatch):
+    """Invariant (_write_temp register=...): KeyboardInterrupt from os.fsync while the export temp is
+    written (the manifest temp already exists) leaves no temp and no target, because both temps were
+    registered with publish before any write; this holds even when _write_temp's own unlink misses."""
+    from little_canary import ingest as ingest_module
+
+    result, _ = _run(_EXPORT_RECORDS)
+    real_fsync, real_unlink = os.fsync, os.unlink
+    at_interrupt = []
+    state = {"fsyncs": 0, "skipped_unlink": False}
+
+    def fsync(fd):
+        state["fsyncs"] += 1
+        if state["fsyncs"] == 2:
+            at_interrupt.extend(sorted(p.name for p in tmp_path.iterdir()))
+            raise KeyboardInterrupt
+        return real_fsync(fd)
+
+    def unlink(path, *a, **k):
+        if own_cleanup == "fails" and not state["skipped_unlink"] and ".e.json." in os.fspath(path):
+            state["skipped_unlink"] = True
+            raise FileNotFoundError(path)  # _write_temp's own cleanup silently does nothing
+        return real_unlink(path, *a, **k)
+
+    monkeypatch.setattr(ingest_module.os, "fsync", fsync)
+    monkeypatch.setattr(ingest_module.os, "unlink", unlink)
+    with pytest.raises(KeyboardInterrupt):
+        publish(result, tmp_path / "m.json", tmp_path / "e.json")
+    assert [n.split(".")[1] for n in at_interrupt] == ["e", "m"]  # both temps existed
+    assert all(n.startswith(".") and n.endswith(".tmp") for n in at_interrupt)
+    assert state["skipped_unlink"] is (own_cleanup == "fails")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_write_temp_registers_the_temp_path_before_writing(tmp_path, monkeypatch):
+    """Invariant (_write_temp register=...): the temp path is appended to ``register`` right after
+    creation, so it is known to the caller even when the write is interrupted."""
+    from little_canary.ingest import _write_temp
+
+    def interrupted(fd):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(os, "fsync", interrupted)
+    registered = []
+    with pytest.raises(KeyboardInterrupt):
+        _write_temp(str(tmp_path / "e.json"), b"data", registered)
+    assert len(registered) == 1
+    assert os.path.dirname(registered[0]) == str(tmp_path)
+    assert os.path.basename(registered[0]).startswith(".e.json.") and registered[0].endswith(".tmp")
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("second", [
+    {"status": 500},
+    {"exc": requests.ConnectionError("down")},
+    {"body": {"details": {}}},
+], ids=["http_500", "unreachable", "no_model_info"])
+def test_context_length_failure_resets_last_context_length(second, monkeypatch):
+    """Invariant (CanaryProbe.context_length): a later failed call returns None and resets
+    last_context_length to None, so a stale trained length is never reported."""
+    calls = []
+    good = {"model_info": {"general.architecture": "qwen2", "qwen2.context_length": 32768}}
+
+    def post(url, *args, **kwargs):
+        calls.append(url)
+        resp = MagicMock()
+        if len(calls) == 1:
+            resp.status_code = 200
+            resp.json.return_value = good
+            return resp
+        if "exc" in second:
+            raise second["exc"]
+        resp.status_code = second.get("status", 200)
+        resp.json.return_value = second.get("body")
+        return resp
+
+    monkeypatch.setattr("little_canary.canary.requests.post", post)
+    probe = CanaryProbe()
+    assert probe.context_length() == 32768 and probe.last_context_length == 32768
+    assert probe.context_length() is None
+    assert probe.last_context_length is None
+    assert len(calls) == 2
