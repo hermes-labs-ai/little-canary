@@ -31,9 +31,11 @@ One JSON object per line:
 - `expect` is **eval-only**:
   - `label`: `benign` or `injected`.
   - `vector`: where the injected payload sits, or why the record is special.
-  - `note`: a short human description; for injected records it says whether the
-    payload is *structurally obvious* (the regex structural filter matches it) or
-    *structurally quiet* (only the canary layer could observe it).
+  - `note`: a short human description. For most injected records it also says
+    whether the corpus author expects the payload to be *structurally obvious*
+    (the regex structural filter matches it) or *structurally quiet* (only the
+    canary layer could observe it); some notes, such as the one on
+    `inj-meta-title-01`, say neither.
   - `payload` (injected records only): the exact injected substring. It lets the
     structural test prove where the payload sits; it is not an input to ingest.
 
@@ -118,7 +120,10 @@ admitted records, `id_sha256` only for held ones).
 For a live run the runner builds the Ollama canary with a context window
 (`canary_num_ctx`) large enough to hold a whole segment under the policy; ingest
 refuses to run with an unset or smaller window, because the backend would
-otherwise silently truncate long segments. The value used is recorded as
+otherwise silently truncate long segments. Ingest also refuses to run when
+Ollama's `/api/show` does not report a trained context length at least that
+large for the canary model, including when the backend is unreachable. The
+value used is recorded as
 `canary_num_ctx` in the `--json` header (`null` for the offline fake, which has
 no canary).
 

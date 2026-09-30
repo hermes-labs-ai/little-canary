@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+import requests
 
 from little_canary import (
     IngestPolicy,
@@ -31,6 +32,28 @@ consumer = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(consumer)
 
 SENTINEL = "SENTINEL-c0nsum3r-do-not-leak"
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """Offline guard: any HTTP request that reaches ``requests`` fails the test (see test_ingest.py)."""
+    calls = []
+
+    def blocked(method):
+        def call(url, *args, **kwargs):
+            calls.append((method, url))
+            raise requests.ConnectionError("network disabled in tests")
+        return call
+
+    def blocked_send(session, request, **kwargs):
+        calls.append(("SEND", request.url))
+        raise requests.ConnectionError("network disabled in tests")
+
+    monkeypatch.setattr(requests, "post", blocked("POST"))
+    monkeypatch.setattr(requests, "get", blocked("GET"))
+    monkeypatch.setattr(requests.Session, "send", blocked_send)
+    yield calls
+    assert calls == [], f"test attempted a live HTTP request: {calls}"
 
 
 # -- FakePipeline (copied in miniature from tests/test_ingest.py) -------------

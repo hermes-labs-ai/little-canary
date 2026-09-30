@@ -231,7 +231,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Experimental. Check every JSONL record ({text, id?, source?, metadata?} or a "
             "JSON string) and admit or hold it under the strict/v1 policy. Writes a "
             "manifest that carries no record text or metadata values (labels and key "
-            "names appear in plaintext only for admitted records; digests otherwise); "
+            "names appear in plaintext only for admitted records; label digests and a "
+            "key count otherwise); "
             "--export writes admitted records only. Admitted means the record completed "
             "the configured checks and satisfied policy. Exit 0: every record admitted; "
             "1: held for detection only (blocked/flagged); 2: run completed but some "
@@ -255,7 +256,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest_parser.add_argument(
         "--overwrite", action="store_true",
-        help="Replace existing manifest/export files (default: refuse)",
+        help=(
+            "Replace existing manifest/export files: once the limits are validated, "
+            "the previous pair is removed before the run starts, so a failed run never "
+            "leaves a stale pair (default: refuse)"
+        ),
     )
     ingest_parser.add_argument(
         "--mode", choices=["block", "advisory", "full"], default="full",
@@ -478,16 +483,6 @@ def _run_ingest(args) -> int:
     if problem is not None:
         print(f"error: {problem}", file=sys.stderr)
         return 3
-    if args.overwrite:
-        # Consent to replace means the previous pair is removed before the run starts:
-        # a failed run can never leave a stale pair that still verifies.
-        for path in (args.manifest, args.export):
-            if path is not None and os.path.lexists(path):
-                try:
-                    os.unlink(path)
-                except OSError as exc:
-                    print(f"error: cannot remove {path} ({type(exc).__name__})", file=sys.stderr)
-                    return 3
 
     try:
         limits = {
@@ -505,6 +500,12 @@ def _run_ingest(args) -> int:
         policy = IngestPolicy(**limits)
         policy.validate()
         timeout = args.timeout if args.timeout is not None else _default_timeout()
+        if args.overwrite:
+            # Local configuration is valid; consent to replace means the previous pair
+            # is removed before the run starts, so a failed run never leaves a stale pair.
+            for path in (args.manifest, args.export):
+                if path is not None and os.path.lexists(path):
+                    os.unlink(path)
         pipeline = SecurityPipeline(
             canary_model=args.canary_model,
             ollama_url=args.ollama_url,

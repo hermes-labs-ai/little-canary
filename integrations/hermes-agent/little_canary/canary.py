@@ -100,6 +100,8 @@ class CanaryProbe:
         if num_ctx is not None and (not isinstance(num_ctx, int) or isinstance(num_ctx, bool) or num_ctx < 1):
             raise ValueError("num_ctx must be a positive integer or None")
         self.num_ctx = num_ctx
+        #: Trained context length reported by ``/api/show`` on the last ``context_length()`` call.
+        self.last_context_length: Optional[int] = None
 
     def test(self, user_input: str) -> CanaryResult:
         """
@@ -258,6 +260,36 @@ class CanaryProbe:
                 error=f"Canary probe failed ({error_class})",
                 failure_code="probe_exception",
             )
+
+    def context_length(self) -> Optional[int]:
+        """The model's trained context length (tokens) from ``/api/show``, or None.
+
+        Ollama caps ``num_ctx`` at this value and truncates longer prompts, so a
+        caller that needs whole-prompt coverage must compare against it. Returns
+        None when the backend is unreachable, the model is unknown, or the
+        response carries no ``<architecture>.context_length`` entry.
+        """
+        try:
+            resp = requests.post(
+                f"{self.ollama_url}/api/show", json={"model": self.model}, timeout=self.timeout
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            info = data.get("model_info") if isinstance(data, dict) else None
+            if not isinstance(info, dict):
+                return None
+            arch = info.get("general.architecture")
+            value = info.get(f"{arch}.context_length") if isinstance(arch, str) else None
+            if value is None:
+                candidates = [v for k, v in info.items() if isinstance(k, str) and k.endswith(".context_length")]
+                value = candidates[0] if len(candidates) == 1 else None
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                self.last_context_length = value
+                return value
+            return None
+        except Exception:
+            return None
 
     def is_available(self) -> bool:
         """Check if the Ollama instance and model are reachable."""

@@ -11,9 +11,13 @@ import types
 from unittest.mock import patch
 
 import pytest
+import requests
 
-from little_canary import verify_export
+from little_canary import batch, verify_export
+from little_canary import canary as canary_module
+from little_canary.canary import DEFAULT_CANARY_SYSTEM_PROMPT
 from little_canary.cli import main
+from little_canary.ingest import MAX_METADATA_KEY_CHARS
 from little_canary.pipeline import PipelineVerdict, SecurityAdvisory
 
 SENTINEL_TEXT = "SENTINEL-TEXT-4c1e-do-not-print"
@@ -21,6 +25,65 @@ SENTINEL_META = "SENTINEL-META-9b2d-do-not-print"
 SENTINEL_ID = "SENTINEL-ID-71aa-do-not-print"
 SENTINEL_SOURCE = "SENTINEL-SOURCE-5e03-do-not-print"
 SENTINEL_KEY = "SENTINEL-KEY-c8f6-do-not-print"
+
+
+class UnexpectedRequest(BaseException):
+    """Not an ``Exception``: the probe's broad ``except Exception`` cannot swallow it."""
+
+
+class _Response:
+    def __init__(self, status_code, payload=None):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class RequestGuard:
+    """Replaces ``requests.post``/``get`` as seen by ``little_canary.canary``.
+
+    Every call is recorded. A call is answered only by a route the test registered
+    (``routes[path] = handler(url, json)``) or forwarded for real only to an origin
+    the test explicitly allowed; anything else raises ``UnexpectedRequest`` and the
+    teardown fails the test, so no test can reach the live Ollama on this VM.
+    """
+
+    def __init__(self, real_post, real_get):
+        self._real = {"POST": real_post, "GET": real_get}
+        self.routes = {}
+        self.allowed_origins = set()
+        self.calls = []
+        self.unexpected = []
+
+    def _handle(self, method, url, **kw):
+        self.calls.append((method, url))
+        for origin in self.allowed_origins:
+            if url.startswith(origin + "/"):
+                return self._real[method](url, **kw)
+        for path, handler in self.routes.items():
+            if url.endswith(path):
+                return handler(url, kw.get("json"))
+        self.unexpected.append((method, url))
+        raise UnexpectedRequest(f"unexpected {method} {url}")
+
+    def post(self, url, **kw):
+        return self._handle("POST", url, **kw)
+
+    def get(self, url, **kw):
+        return self._handle("GET", url, **kw)
+
+    def paths(self, suffix):
+        return [url for _, url in self.calls if url.endswith(suffix)]
+
+
+@pytest.fixture(autouse=True)
+def http(monkeypatch):
+    guard = RequestGuard(canary_module.requests.post, canary_module.requests.get)
+    monkeypatch.setattr(canary_module.requests, "post", guard.post)
+    monkeypatch.setattr(canary_module.requests, "get", guard.get)
+    yield guard
+    assert guard.unexpected == [], f"unintended HTTP request(s): {guard.unexpected}"
 
 
 def _verdict(text, **kw):
@@ -513,33 +576,169 @@ def test_file_input_invalid_utf8_exits_3_nothing_written(paths, capsys):
     assert list(paths.dir.iterdir()) == []
 
 
-# -- real SecurityPipeline: canary context sized to the segment budget ----------------
+# -- help text pins the round-3 contract ----------------------------------------------
+
+
+def test_ingest_help_pins_overwrite_timing_and_held_label_digests(capsys):
+    with pytest.raises(SystemExit):
+        main(["ingest", "--help"])
+    out = " ".join(capsys.readouterr().out.split())  # undo argparse line wrapping
+    assert "the previous pair is removed before the run starts" in out
+    assert "label digests and a key count otherwise" in out
+
+
+# -- --overwrite: previous pair removed only after local config validation ------------
+
+
+@pytest.mark.parametrize("extra,env", [
+    (["--segment-chars", "0"], None),
+    (["--segment-overlap", "3500"], None),
+    ([], "abc"),                                     # invalid LITTLE_CANARY_TIMEOUT
+])
+def test_overwrite_with_invalid_config_keeps_previous_pair(paths, capsys, monkeypatch, extra, env):
+    if env is not None:
+        monkeypatch.setenv("LITTLE_CANARY_TIMEOUT", env)
+    paths.manifest.write_text("previous manifest", encoding="utf-8")
+    paths.export.write_text("previous export", encoding="utf-8")
+    code, out, p = _ingest(paths, capsys, ["fine"], "--export", str(paths.export), "--overwrite", *extra)
+    assert code == 3 and p.calls == 0 and out.err.startswith(("error:", "LITTLE_CANARY_TIMEOUT"))
+    assert paths.manifest.read_text() == "previous manifest"
+    assert paths.export.read_text() == "previous export"
+    assert sorted(x.name for x in paths.dir.iterdir()) == ["export.json", "manifest.json"]
+
+
+# -- reader line cap is a run-level limit ---------------------------------------------
+
+
+def _line_cap(max_item_bytes, keys=32, value_chars=1024):
+    slack = keys * (12 * (MAX_METADATA_KEY_CHARS + value_chars) + 8) + 16
+    return batch.max_line_chars(max_item_bytes) + slack
+
+
+def test_line_longer_than_reader_cap_exits_3_nothing_written(paths, capsys):
+    cap = _line_cap(16)
+    long_line = json.dumps("x" * cap) + "\n"  # a JSON string line of cap + 3 chars
+    assert len(long_line) > cap
+    paths.input.write_text('"fine"\n' + long_line, encoding="utf-8")
+    code, out, p = _run(["ingest", str(paths.input), "--manifest", str(paths.manifest),
+                         "--export", str(paths.export), "--max-item-bytes", "16"], capsys)
+    assert code == 3 and p.calls == 0
+    assert "exceeds" in out.err and f"line 2: exceeds {cap} characters" in out.err
+    assert list(paths.dir.iterdir()) == []
+
+
+def test_line_at_reader_cap_is_read_and_held_per_record(paths, capsys):
+    cap = _line_cap(16)
+    at_cap = json.dumps("x" * (cap - 3)) + "\n"  # exactly cap chars including the newline
+    assert len(at_cap) == cap
+    paths.input.write_text('"fine"\n' + at_cap, encoding="utf-8")
+    code, out, _ = _run(["ingest", str(paths.input), "--manifest", str(paths.manifest),
+                         "--max-item-bytes", "16"], capsys)
+    assert code == 2 and "exceeds" not in out.err  # record-level hold, not a run refusal
+    manifest = json.loads(paths.manifest.read_text())
+    assert manifest["counts"]["admitted"] == 1 and manifest["counts"]["held"] == 1
+
+
+# -- real SecurityPipeline: canary context sized and verified before any check --------
 
 
 _PROXY_VARS = ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")
+_KNOWN_MODEL = "qwen2.5:1.5b"
+_EXPECTED_NUM_CTX = 4 * 3500 + 4 * len(DEFAULT_CANARY_SYSTEM_PROMPT) + 256 + 64
 
 
-def test_real_pipeline_sizes_canary_context_and_holds_degraded(paths, capsys, monkeypatch):
+def _show_route(trained):
+    """``/api/show`` stand-in: the known model reports ``trained``; any other model is 404."""
+    def handler(url, body):
+        if body.get("model") != _KNOWN_MODEL:
+            return _Response(404, {"error": "model not found"})
+        return _Response(200, {"model_info": {"general.architecture": "qwen2",
+                                              "qwen2.context_length": trained}})
+    return handler
+
+
+def _chat_timeout(url, body):
+    raise requests.Timeout("simulated canary timeout")
+
+
+def _real_ingest(paths, *extra, url="http://127.0.0.1:9"):
+    paths.input.write_text(_jsonl("hello there"), encoding="utf-8")
+    with patch("sys.stdin", io.StringIO("")):
+        return main(["ingest", str(paths.input), "--manifest", str(paths.manifest),
+                     "--export", str(paths.export), "--ollama-url", url, "--timeout", "1", *extra])
+
+
+def test_real_pipeline_unreachable_backend_refuses_exit_3(paths, capsys, monkeypatch, http):
     for var in _PROXY_VARS:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1")
     monkeypatch.setenv("no_proxy", "localhost,127.0.0.1")
-    paths.input.write_text(_jsonl("hello there"), encoding="utf-8")
     # Bound but not listening: connects are refused and no other process can take the port.
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-        with patch("sys.stdin", io.StringIO("")):
-            code = main(["ingest", str(paths.input), "--manifest", str(paths.manifest),
-                         "--export", str(paths.export), "--ollama-url", f"http://127.0.0.1:{port}",
-                         "--timeout", "1"])
+        origin = f"http://127.0.0.1:{sock.getsockname()[1]}"
+        http.allowed_origins.add(origin)  # the only real request allowed: to the dead port
+        code = _real_ingest(paths, url=origin)
+    err = capsys.readouterr().err
+    assert code == 3 and "verify" in err and "context length" in err
+    assert http.paths("/api/show") == [origin + "/api/show"]
+    assert http.paths("/api/chat") == []
+    assert list(paths.dir.iterdir()) == []
+
+
+def test_real_pipeline_sizes_canary_context_and_holds_degraded(paths, capsys, http):
+    http.routes["/api/show"] = _show_route(32768)
+    http.routes["/api/chat"] = _chat_timeout
+    code = _real_ingest(paths)
     out = capsys.readouterr()
+    assert len(http.paths("/api/show")) == 1 and len(http.paths("/api/chat")) == 1
     manifest = json.loads(paths.manifest.read_text())
-    num_ctx = manifest["pipeline"]["canary_num_ctx"]
-    assert isinstance(num_ctx, int) and not isinstance(num_ctx, bool) and num_ctx >= 4 * 3500
+    assert manifest["pipeline"]["canary_num_ctx"] == _EXPECTED_NUM_CTX
+    assert manifest["pipeline"]["canary_context_length"] == 32768
     rec = manifest["records"][0]
     assert rec["admission"] == "held" and "degraded" in rec["hold_reasons"]
     assert code == 2 and "exit 2" in out.out
     export = json.loads(paths.export.read_text())
     assert export["records"] == []
     assert verify_export(export, manifest) == []
+
+
+def test_real_pipeline_trained_context_too_small_refuses_exit_3(paths, capsys, http):
+    http.routes["/api/show"] = _show_route(4096)
+    http.routes["/api/chat"] = _chat_timeout
+    code = _real_ingest(paths)
+    err = capsys.readouterr().err
+    assert code == 3 and "trained context length (4096)" in err and str(_EXPECTED_NUM_CTX) in err
+    assert http.paths("/api/chat") == []
+    assert list(paths.dir.iterdir()) == []
+
+
+@pytest.mark.parametrize("payload", [None, {"details": {}}])
+def test_real_pipeline_show_without_model_info_refuses_exit_3(paths, capsys, http, payload):
+    http.routes["/api/show"] = lambda url, body: _Response(200 if payload else 404, payload)
+    http.routes["/api/chat"] = _chat_timeout
+    code = _real_ingest(paths)
+    assert code == 3 and "context length" in capsys.readouterr().err
+    assert http.paths("/api/chat") == []
+    assert list(paths.dir.iterdir()) == []
+
+
+def test_real_pipeline_unknown_canary_model_refuses_exit_3(paths, capsys, http):
+    shown = []
+    show = _show_route(32768)
+    http.routes["/api/show"] = lambda url, body: shown.append(body["model"]) or show(url, body)
+    http.routes["/api/chat"] = _chat_timeout
+    code = _real_ingest(paths, "--canary-model", "no-such-model:latest")
+    assert code == 3 and "context length" in capsys.readouterr().err
+    assert shown == ["no-such-model:latest"]
+    assert http.paths("/api/chat") == []
+    assert list(paths.dir.iterdir()) == []
+
+
+def test_offline_guard_rejects_unrouted_requests(paths, capsys, http):
+    # Default ollama url (the live VM Ollama) with no routes: the guard must intercept.
+    with pytest.raises(UnexpectedRequest):
+        _real_ingest(paths, url="http://127.0.0.1:11434")
+    assert http.calls == [("POST", "http://127.0.0.1:11434/api/show")]
+    http.unexpected.clear()  # this test expects the interception; teardown stays clean
+    assert list(paths.dir.iterdir()) == []

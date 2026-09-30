@@ -19,9 +19,9 @@ satisfied policy; it is not a statement that the content is harmless.
 Held record text is never retained. The manifest carries hashes, lengths,
 offsets, states, detector-generated signals and verdict summaries, and — for
 admitted records only — the plaintext ``id``/``source`` labels and metadata key
-names (they were screened and passed). For held records those attacker-controlled
-strings are replaced by their SHA-256 digests. Record text and metadata values
-never appear in the manifest.
+names (they were screened and passed). For held records the labels are replaced
+by their SHA-256 digests and the key names by a key count. Record text and
+metadata values never appear in the manifest.
 """
 
 from __future__ import annotations
@@ -170,7 +170,31 @@ class IngestRecord:
 
     def __post_init__(self) -> None:
         if isinstance(self.metadata, Mapping):
-            object.__setattr__(self, "metadata", types.MappingProxyType(dict(self.metadata)))
+            # Single read of the caller's mapping. Keys must be unique plain str: a
+            # repeated or look-alike key would otherwise be merged here, which is a
+            # silent rewrite of the record before screening. Such a record is kept
+            # as invalid metadata so ingest holds it as malformed (never merged).
+            copied: dict[Any, Any] = {}
+            problem: str | None = None
+            for key, value in self.metadata.items():
+                if not _exact_str(key):
+                    problem = problem or "metadata keys must be plain str"
+                    continue
+                if key in copied:
+                    problem = problem or "metadata keys collide"
+                    continue
+                copied[key] = value
+            if problem is not None:
+                object.__setattr__(self, "metadata", _InvalidMetadata(problem))
+            else:
+                object.__setattr__(self, "metadata", types.MappingProxyType(copied))
+
+
+@dataclass(frozen=True)
+class _InvalidMetadata:
+    """Placeholder kept on an ``IngestRecord`` whose metadata keys were not unique plain str."""
+
+    reason: str
 
 
 @dataclass
@@ -223,7 +247,7 @@ class RecordResult:
     hold_reasons: list[str]
     segments: list[SegmentResult] = field(default_factory=list)
     detail: str | None = None
-    id_sha256: str | None = None       # digest of the label (always present when a label exists)
+    id_sha256: str | None = None       # digest of the label when it is a valid label; else None
     source_sha256: str | None = None
     metadata_key_count: int = 0
 
@@ -381,7 +405,7 @@ class IngestResult:
             "manifest_schema": MANIFEST_SCHEMA,
             "manifest_sha256": _sha256_text(self.manifest_json()),
             "policy_name": POLICY_NAME,
-            "records": [rec.to_export_dict() for rec in self.admitted],
+            "records": [rec.to_export_dict() for rec in sorted(self.admitted, key=lambda r: r.index)],
         }
 
 
@@ -566,6 +590,9 @@ def _snapshot(raw: Any, index: int) -> _Prepared:
     """
     if isinstance(raw, IngestRecord):
         prepared = _Prepared(index, raw.text, raw.id, raw.source, raw.metadata)
+        if isinstance(raw.metadata, _InvalidMetadata):
+            prepared.malformed = f"record {index}: {raw.metadata.reason}"
+            prepared.metadata = None
     elif isinstance(raw, batch.BatchItem):
         prepared = _Prepared(index, raw.text, raw.id, raw.source, None)
     elif isinstance(raw, str):
@@ -583,7 +610,20 @@ def _snapshot(raw: Any, index: int) -> _Prepared:
         )
     if isinstance(prepared.metadata, Mapping):
         # The one and only read of the caller's mapping, taken before any check.
-        prepared.metadata = {_plain(k): _plain(v) for k, v in prepared.metadata.items()}
+        # Keys must already be plain str: a str-subclass key with custom equality
+        # could collide with another key and be silently merged (a rewrite).
+        copied: dict[Any, Any] = {}
+        yielded = 0
+        for key, value in prepared.metadata.items():
+            yielded += 1
+            if not _exact_str(key):
+                if prepared.malformed is None:
+                    prepared.malformed = f"record {index}: metadata keys must be plain str"
+                continue
+            copied[key] = _plain(value)
+        if len(copied) != yielded and prepared.malformed is None:
+            prepared.malformed = f"record {index}: metadata keys collide"
+        prepared.metadata = copied
     prepared.text = _plain(prepared.text)
     prepared.id = _plain(prepared.id)
     prepared.source = _plain(prepared.source)
@@ -723,11 +763,13 @@ def _pipeline_info(pipeline: Any) -> dict[str, Any]:
         "analysis_method": analysis,
         "structural_filter": prim(getattr(pipeline, "enable_structural_filter", None)),
         "canary_enabled": prim(getattr(pipeline, "enable_canary", None)),
-        "canary_num_ctx": (
-            ctx if isinstance(ctx := getattr(getattr(pipeline, "canary_probe", None), "num_ctx", None), int)
-            and not isinstance(ctx, bool) else None
-        ),
+        "canary_num_ctx": _int_or_none(getattr(getattr(pipeline, "canary_probe", None), "num_ctx", None)),
+        "canary_context_length": _int_or_none(getattr(getattr(pipeline, "canary_probe", None), "last_context_length", None)),
     }
+
+
+def _int_or_none(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _iso_utc(dt: datetime) -> str:
@@ -796,7 +838,7 @@ def _check_segment(
         # verdict for other text is evidence of nothing.
         if not _exact_str(verdict.input) or not str.__eq__(piece, verdict.input):
             raise ValueError("verdict input does not match the checked segment")
-        snapshot = verdict.to_dict()
+        snapshot = PipelineVerdict.to_dict(verdict)  # the class method, never an instance override
         if not isinstance(snapshot, dict):
             raise TypeError("verdict.to_dict() did not return a dict")
         # redacted at construction: the in-memory result never retains raw text
@@ -934,6 +976,49 @@ def required_canary_context(policy: IngestPolicy, pipeline: Any) -> int | None:
     return 4 * policy.segment_chars + prompt_bytes + max(0, reply) + CANARY_CONTEXT_RESERVE
 
 
+def _check_canary_context(policy: IngestPolicy, pipeline: Any) -> None:
+    """Refuse before any check unless the canary can read every whole segment.
+
+    Ollama: ``num_ctx`` must be set and at least ``required_canary_context``, and
+    the model's trained context length (``CanaryProbe.context_length()``, from
+    ``/api/show``) must be at least as large, because Ollama caps ``num_ctx`` at
+    the trained length and then silently truncates the prompt. An unreachable
+    backend therefore refuses the run: coverage cannot be verified. The
+    OpenAI-compatible provider offers no context control, and the LLM judge
+    reads the whole segment without one, so neither is supported by ingest.
+    """
+    if getattr(pipeline, "enable_canary", True) is False:
+        return
+    if getattr(pipeline, "use_judge", False) is True:
+        raise ValueError("ingest does not support judge_model: the LLM judge has no sized context window")
+    if getattr(pipeline, "provider", None) == "openai":
+        raise ValueError(
+            "ingest does not support provider='openai': the canary context window cannot be sized "
+            "or verified there; use the Ollama provider"
+        )
+    needed = required_canary_context(policy, pipeline)
+    if needed is None:
+        return
+    probe = pipeline.canary_probe
+    have = getattr(probe, "num_ctx", None)
+    if not isinstance(have, int) or isinstance(have, bool) or have < needed:
+        raise ValueError(
+            f"the canary context window (num_ctx={have}) cannot hold a whole segment; "
+            f"construct SecurityPipeline(canary_num_ctx={needed}) or larger, or lower segment_chars"
+        )
+    trained = probe.context_length()
+    if trained is None:
+        raise ValueError(
+            "could not verify the canary model's context length (backend unreachable or "
+            "model unknown); ingest refuses to run without it"
+        )
+    if trained < needed:
+        raise ValueError(
+            f"the canary model's trained context length ({trained}) is smaller than the "
+            f"{needed} tokens a whole segment may need; lower segment_chars or use a larger-context model"
+        )
+
+
 def ingest_records(
     pipeline: Any,
     records: Iterable[Any],
@@ -963,14 +1048,7 @@ def ingest_records(
         raise ValueError(
             f"segment_chars ({policy.segment_chars}) exceeds the pipeline's max_input_length ({limit})"
         )
-    needed = required_canary_context(policy, pipeline)
-    if needed is not None:
-        have = getattr(pipeline.canary_probe, "num_ctx", None)
-        if not isinstance(have, int) or isinstance(have, bool) or have < needed:
-            raise ValueError(
-                f"the canary context window (num_ctx={have}) cannot hold a whole segment; "
-                f"construct SecurityPipeline(canary_num_ctx={needed}) or larger, or lower segment_chars"
-            )
+    _check_canary_context(policy, pipeline)
     clock = now if now is not None else (lambda: datetime.now(timezone.utc))
 
     # Phase 1: snapshot + run-level budget, before any check.
@@ -1101,8 +1179,15 @@ def _publish_temp(tmp: str, target: str, *, overwrite: bool) -> None:
                     raise FileExistsError(f"refusing to overwrite existing file: {target}") from None
                 os.replace(tmp, target)
     finally:
-        with contextlib.suppress(FileNotFoundError):
+        # The temp file is a complete copy of the document; remove it, retrying once
+        # on a transient error so a hidden duplicate is not left beside the target.
+        try:
             os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
     directory = os.path.dirname(os.path.abspath(target))
     try:  # best-effort durability of the rename; not available everywhere
         dir_fd = os.open(directory, os.O_RDONLY)
@@ -1114,7 +1199,8 @@ def _publish_temp(tmp: str, target: str, *, overwrite: bool) -> None:
         except OSError:
             pass
         finally:
-            os.close(dir_fd)
+            with contextlib.suppress(OSError):
+                os.close(dir_fd)
 
 
 def _atomic_write(path: str | os.PathLike[str], data: bytes, *, overwrite: bool) -> str:
@@ -1163,25 +1249,28 @@ def publish(
         digests["export"] = hashlib.sha256(export_data).hexdigest()
 
     temps: list[str] = []
-    export_published = False
+    published: list[str] = []  # targets this call may have created, most recent last
     try:
         manifest_tmp = _write_temp(manifest_target, manifest_data)
         temps.append(manifest_tmp)
         if export_target is not None and export_data is not None:
             export_tmp = _write_temp(export_target, export_data)
             temps.append(export_tmp)
+            published.append(export_target)  # counted as ours from the moment publish is attempted
             _publish_temp(export_tmp, export_target, overwrite=overwrite)
             temps.remove(export_tmp)
-            export_published = True
+        published.append(manifest_target)
         _publish_temp(manifest_tmp, manifest_target, overwrite=overwrite)
         temps.remove(manifest_tmp)
     except BaseException:
+        # Roll back everything this call touched: temp files and any target it
+        # published (or may have published) before the failure.
         for tmp in temps:
-            with contextlib.suppress(FileNotFoundError):
+            with contextlib.suppress(OSError):
                 os.unlink(tmp)
-        if export_published and export_target is not None:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(export_target)
+        for target in reversed(published):
+            with contextlib.suppress(OSError):
+                os.unlink(target)
         raise
     return digests
 
@@ -1344,6 +1433,8 @@ def verify_export(
                 problems.append(f"{label}: {name} digest mismatch")
         if sorted(metadata) != mrec.get("metadata_keys") or mrec.get("metadata_key_count") != len(metadata):
             problems.append(f"{label}: metadata keys mismatch")
+        if not _segments_match_material(mrec, manifest.get("policy"), rec.get("id"), rec.get("source"), metadata, text):
+            problems.append(f"{label}: segment evidence does not cover the exported material")
     missing = admitted_indices - seen
     if missing:
         problems.append(f"admitted records missing from export: {sorted(missing)}")
@@ -1381,6 +1472,47 @@ def _recount(records: list[Any]) -> dict[str, Any]:
         "detection": detection,
         "coverage": coverage,
     }
+
+
+def _segments_match_material(
+    mrec: dict[str, Any], policy: Any, id_: Any, source: Any, metadata: dict[str, str], text: str
+) -> bool:
+    """The manifest's segments are exactly the policy's plan over the exported material.
+
+    Rebuilds the metadata material and both segment plans from the exported record
+    and the manifest policy, then requires kind/index/start/end to match the plan,
+    each segment ``sha256`` to equal the hash of its slice, and ``chars_total`` to
+    equal text plus metadata material length. Otherwise the manifest could claim
+    coverage of material that was never checked.
+    """
+    if not isinstance(policy, dict):
+        return False
+    seg_chars, overlap = policy.get("segment_chars"), policy.get("segment_overlap")
+    if not isinstance(seg_chars, int) or not isinstance(overlap, int) or isinstance(seg_chars, bool) or isinstance(overlap, bool):
+        return False
+    if seg_chars < 1 or not 0 <= overlap < seg_chars:
+        return False
+    meta_text = "\n".join(_metadata_lines(id_ if isinstance(id_, str) else None,
+                                          source if isinstance(source, str) else None, metadata))
+    try:
+        plan = [(SEGMENT_METADATA, i, s, e, meta_text) for i, (s, e) in enumerate(
+            segment_text(meta_text, seg_chars, overlap) if meta_text else [])]
+        plan += [(SEGMENT_TEXT, i, s, e, text) for i, (s, e) in enumerate(segment_text(text, seg_chars, overlap))]
+    except ValueError:
+        return False
+    segments = mrec.get("segments")
+    if not isinstance(segments, list) or len(segments) != len(plan):
+        return False
+    if mrec.get("chars_total") != len(text) + len(meta_text):
+        return False
+    for seg, (kind, index, start, end, material) in zip(segments, plan):
+        if not isinstance(seg, dict):
+            return False
+        if seg.get("kind") != kind or seg.get("index") != index or seg.get("start") != start or seg.get("end") != end:
+            return False
+        if seg.get("sha256") != _sha256_text(material[start:end]):
+            return False
+    return True
 
 
 def _segment_evidence_supports_admission(mrec: dict[str, Any]) -> bool:
