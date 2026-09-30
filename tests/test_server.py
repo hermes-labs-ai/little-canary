@@ -290,6 +290,7 @@ def test_create_server_binds_loopback_and_initializes_pipeline(monkeypatch):
     import little_canary.server as server_mod
 
     original_pipeline = server_mod._pipeline
+    monkeypatch.setattr(server_mod, "_pipeline", original_pipeline)
     with patch.object(server_mod, "SecurityPipeline") as pipeline:
         httpd = server_mod.create_server(
             port=0, mode="block", canary_model="offline-test",
@@ -307,5 +308,5 @@ def test_create_server_binds_loopback_and_initializes_pipeline(monkeypatch):
         )
     finally:
         httpd.server_close()
-        monkeypatch.setattr(server_mod, "_pipeline", original_pipeline)
+        server_mod._pipeline = original_pipeline
     assert httpd.socket.fileno() == -1
