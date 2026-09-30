@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
 
+import pytest
+
 from benchmarks.ingest_eval import run_eval
 from little_canary import IngestPolicy, ingest_records
+from little_canary.ingest import required_canary_context
 from little_canary.pipeline import PipelineVerdict
 
 SENTINEL = "SENTINEL-4c1e-must-not-appear"
@@ -35,14 +39,19 @@ class ScriptedPipeline:
         return _verdict(text)
 
 
-def _score(pipeline, rows, **policy_kw):
-    """rows: (label, vector, record dict without id). Returns the score document."""
-    records, expectations = [], {}
+def _rows_to_inputs(rows):
+    records, expectations = [], []
     for n, (label, vector, rec) in enumerate(rows, 1):
         nid = run_eval.neutral_id(n)
         records.append({"id": nid, "source": run_eval.NEUTRAL_SOURCE, **rec})
-        expectations[nid] = {"original_id": f"orig-{n}", "original_source": None,
-                             "label": label, "vector": vector}
+        expectations.append({"neutral_id": nid, "original_id": f"orig-{n}", "original_source": None,
+                             "label": label, "vector": vector})
+    return records, expectations
+
+
+def _score(pipeline, rows, **policy_kw):
+    """rows: (label, vector, record dict without id). Returns the score document."""
+    records, expectations = _rows_to_inputs(rows)
     result = ingest_records(pipeline, records, policy=IngestPolicy(**policy_kw), now=_clock)
     return result, run_eval.score(result, expectations)
 
@@ -95,6 +104,50 @@ def test_blocked_with_incomplete_is_true_hold():
     assert _outcomes(scored) == ["true_hold"]
 
 
+def test_held_records_have_no_plaintext_id_and_are_joined_by_index():
+    result, scored = _score(ScriptedPipeline(), [
+        ("benign", "none", {"text": "ordinary note"}),
+        ("injected", "text_start", {"text": "BLOCK this"}),
+        ("injected", "text_end", {"text": "DEGRADE me"}),
+    ])
+    assert [r.id for r in result.records] == ["doc-0001", None, None]
+    assert all(r.id_sha256 for r in result.records)
+    assert [(r["index"], r["id"], r["original_id"]) for r in scored["records"]] == [
+        (0, "doc-0001", "orig-1"), (1, "doc-0002", "orig-2"), (2, "doc-0003", "orig-3"),
+    ]
+    assert _outcomes(scored) == ["admitted_benign", "true_hold", "coverage_hold"]
+
+
+def test_score_rejects_misaligned_expectations():
+    records, expectations = _rows_to_inputs([
+        ("benign", "none", {"text": "a"}),
+        ("injected", "text_start", {"text": "BLOCK b"}),
+    ])
+    result = ingest_records(ScriptedPipeline(), records, now=_clock)
+    with pytest.raises(ValueError, match="expectations"):
+        run_eval.score(result, expectations[:1])
+    # swapped order: the held record's id_sha256 no longer matches the neutral id at its index
+    with pytest.raises(ValueError, match="does not match"):
+        run_eval.score(result, list(reversed(expectations)))
+
+
+def test_live_pipeline_is_built_with_required_canary_context():
+    args = run_eval.build_parser().parse_args(["--timeout", "5"])
+    policy = IngestPolicy()
+    pipeline = run_eval._build_pipeline(args, policy)
+    needed = required_canary_context(policy, pipeline)
+    assert needed is not None and pipeline.canary_probe.num_ctx == needed
+    # ingest's context check passes (no records, so no network call is made)
+    result = ingest_records(pipeline, [], policy=policy, now=_clock)
+    assert result.pipeline_info["canary_num_ctx"] == needed
+    # a pipeline without an explicit window is refused at the run level
+    from little_canary.pipeline import SecurityPipeline
+    with pytest.raises(ValueError, match="num_ctx"):
+        ingest_records(SecurityPipeline(canary_timeout=5), [], policy=policy, now=_clock)
+    # the offline fake has no canary probe and needs no window
+    assert required_canary_context(policy, run_eval.OfflineFakePipeline()) is None
+
+
 def test_classify_outcome_prefers_detection_reasons():
     assert run_eval.classify_outcome("injected", "held", ["flagged", "incomplete"]) == "true_hold"
     assert run_eval.classify_outcome("benign", "held", ["degraded", "incomplete"]) == "coverage_hold"
@@ -119,14 +172,14 @@ def test_load_corpus_anonymizes_and_strips_expect():
     originals = [json.loads(line)["id"] for line in run_eval.DEFAULT_CORPUS.read_text("utf-8").splitlines()
                  if line.strip()]
     assert len(records) == len(originals) == len(expectations)
-    for n, rec in enumerate(records, 1):
+    for n, (rec, exp) in enumerate(zip(records, expectations), 1):
         assert "expect" not in rec
-        assert rec["id"] == f"doc-{n:04d}"
+        assert rec["id"] == f"doc-{n:04d}" == exp["neutral_id"]
         assert rec["source"] == "corpus"
         assert "inj" not in rec["id"] and "benign" not in rec["id"]
         assert "inj" not in rec["source"] and "benign" not in rec["source"]
-        assert set(expectations[rec["id"]]) == {"original_id", "original_source", "label", "vector"}
-    assert [expectations[r["id"]]["original_id"] for r in records] == originals
+        assert set(exp) == {"neutral_id", "original_id", "original_source", "label", "vector"}
+    assert [e["original_id"] for e in expectations] == originals
     # deterministic
     again, _ = run_eval.load_corpus(run_eval.DEFAULT_CORPUS)
     assert [r["id"] for r in again] == [r["id"] for r in records]
@@ -151,9 +204,21 @@ def test_offline_fake_on_corpus_has_no_malformed_holds_and_matches_labels():
 def test_select_by_ids_and_limit():
     records, expectations = run_eval.load_corpus(run_eval.DEFAULT_CORPUS)
     chosen, exp = run_eval.select(records, expectations, ids=["inj-long-01", "benign-email-01"])
-    assert [exp[r["id"]]["original_id"] for r in chosen] == ["benign-email-01", "inj-long-01"]
-    chosen, _ = run_eval.select(records, expectations, limit=3)
+    assert [e["original_id"] for e in exp] == ["benign-email-01", "inj-long-01"]
+    assert [r["id"] for r in chosen] == [e["neutral_id"] for e in exp]
+    chosen, exp = run_eval.select(records, expectations, limit=3)
     assert [r["id"] for r in chosen] == ["doc-0001", "doc-0002", "doc-0003"]
+    assert [e["neutral_id"] for e in exp] == ["doc-0001", "doc-0002", "doc-0003"]
+
+
+def test_select_subset_scores_by_position_in_ingested_list():
+    records, expectations = run_eval.load_corpus(run_eval.DEFAULT_CORPUS)
+    chosen, exp = run_eval.select(records, expectations, ids=["inj-long-01", "benign-over-budget-01"])
+    result = ingest_records(run_eval.OfflineFakePipeline(), chosen, now=_clock)
+    scored = run_eval.score(result, exp)
+    by_orig = {r["original_id"]: r for r in scored["records"]}
+    assert by_orig["benign-over-budget-01"]["outcome"] == "coverage_hold"
+    assert set(by_orig) == {"inj-long-01", "benign-over-budget-01"}
 
 
 def test_main_offline_fake_json_schema(capsys):
@@ -167,6 +232,11 @@ def test_main_offline_fake_json_schema(capsys):
     assert sum(b["records"] for b in doc["score"]["by_vector"].values()) == total
     assert doc["score"]["checks_performed"] == doc["run"]["checks_performed"] > 0
     assert doc["ingest_counts"]["by_reason"]["malformed"] == 0
+    # the offline fake has no Ollama canary: no context window recorded or required
+    assert doc["canary_num_ctx"] is None and doc["canary_num_ctx_required"] is None
+    assert doc["canary_num_ctx"] == doc["pipeline"]["canary_num_ctx"]
+    # the scorer self-test exercises every outcome class on the committed corpus
+    assert all(doc["score"]["totals"][o] > 0 for o in run_eval.OUTCOMES)
 
 
 def test_main_unknown_id_and_existing_manifest_exit_2(tmp_path, capsys):
@@ -204,7 +274,15 @@ def test_output_has_no_record_text_and_no_harmlessness_claim(tmp_path, capsys):
         assert not re.search(r"\bsafe\b", out, re.IGNORECASE)
     doc = json.loads(js.out)
     assert [r["outcome"] for r in doc["score"]["records"]] == ["admitted_benign", "true_hold", "miss"]
-    # the manifest carries only neutral ids
-    ids = [r["id"] for r in json.loads(manifest.read_text(encoding="utf-8"))["records"]]
-    assert ids == ["doc-0001", "doc-0002", "doc-0003"]
+    assert [r["id"] for r in doc["score"]["records"]] == ["doc-0001", "doc-0002", "doc-0003"]
+    assert [r["original_id"] for r in doc["score"]["records"]] == ["benign-a", "inj-b", "inj-c"]
+    # the manifest carries only neutral ids: plaintext for admitted, digest-only for held
+    man_text = manifest.read_text(encoding="utf-8")
+    man_records = json.loads(man_text)["records"]
+    assert [r["id"] for r in man_records] == ["doc-0001", None, "doc-0003"]
+    assert [r["id_sha256"] for r in man_records] == [
+        hashlib.sha256(run_eval.neutral_id(n).encode("utf-8")).hexdigest() for n in (1, 2, 3)
+    ]
+    for original in ("benign-a", "inj-b", "inj-c"):
+        assert original not in man_text
     assert "not a benchmark" in table.out

@@ -16,8 +16,12 @@ an exercised, non-degraded check with a ``pass`` state. Everything else is held 
 explicit reasons. "Admitted" means the record completed the configured checks and
 satisfied policy; it is not a statement that the content is harmless.
 
-Held record text is never retained. The manifest carries only hashes, lengths,
-offsets, states and provenance labels — never record text or metadata values.
+Held record text is never retained. The manifest carries hashes, lengths,
+offsets, states, detector-generated signals and verdict summaries, and — for
+admitted records only — the plaintext ``id``/``source`` labels and metadata key
+names (they were screened and passed). For held records those attacker-controlled
+strings are replaced by their SHA-256 digests. Record text and metadata values
+never appear in the manifest.
 """
 
 from __future__ import annotations
@@ -202,12 +206,12 @@ class RecordResult:
     """Per-record outcome. Carries no record text and no metadata values."""
 
     index: int
-    id: str | None
-    source: str | None
+    id: str | None                 # plaintext only for admitted records; None when held
+    source: str | None             # plaintext only for admitted records; None when held
     length: int
     sha256: str
     material_sha256: str
-    metadata_keys: list[str]
+    metadata_keys: list[str] | None  # sorted key names, admitted records only; None when held
     detection: str
     detection_signals: list[str]
     coverage: str
@@ -219,16 +223,22 @@ class RecordResult:
     hold_reasons: list[str]
     segments: list[SegmentResult] = field(default_factory=list)
     detail: str | None = None
+    id_sha256: str | None = None       # digest of the label (always present when a label exists)
+    source_sha256: str | None = None
+    metadata_key_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "index": self.index,
             "id": self.id,
             "source": self.source,
+            "id_sha256": self.id_sha256,
+            "source_sha256": self.source_sha256,
             "length": self.length,
             "sha256": self.sha256,
             "material_sha256": self.material_sha256,
-            "metadata_keys": list(self.metadata_keys),
+            "metadata_keys": list(self.metadata_keys) if self.metadata_keys is not None else None,
+            "metadata_key_count": self.metadata_key_count,
             "detection": self.detection,
             "detection_signals": list(self.detection_signals),
             "coverage": self.coverage,
@@ -285,6 +295,8 @@ class IngestResult:
     finished_at: str
     checks_performed: int
     status: str = STATUS_COMPLETE
+    input_sha256: str | None = None     # digest of the exact input bytes, when the caller read them all
+    export_requested: bool = False      # recorded so a manifest without its export is detectable
 
     @property
     def counts(self) -> dict[str, Any]:
@@ -322,6 +334,8 @@ class IngestResult:
                 "status": self.status,
                 "records_total": len(self.records),
                 "checks_performed": self.checks_performed,
+                "input_sha256": self.input_sha256,
+                "export_requested": self.export_requested,
             },
             "counts": self.counts,
             "records": [rec.to_dict() for rec in self.records],
@@ -332,9 +346,36 @@ class IngestResult:
         return _canonical_json(self.manifest())
 
     def export_document(self) -> dict[str, Any]:
-        """Admitted records only, bound to the manifest by SHA-256."""
+        """Admitted records only, bound to the manifest by SHA-256.
+
+        Raises ``ValueError`` if the in-memory result is inconsistent: every
+        admitted entry must match a record with admission ``admitted`` and the
+        same hashes, and every admitted record must have an entry.
+        """
         if self.status != STATUS_COMPLETE:
             raise ValueError("export requires a complete ingest run")
+        # Producing an export binds it to a manifest that records the request, so a
+        # manifest on disk whose export is missing is detectable. Write the manifest
+        # after this call (or use ``publish``), never before.
+        self.export_requested = True
+        by_index = {rec.index: rec for rec in self.records}
+        admitted_indices = {rec.index for rec in self.records if rec.admission == ADMISSION_ADMITTED}
+        seen: set[int] = set()
+        for entry in self.admitted:
+            rec = by_index.get(entry.index)
+            if (
+                rec is None
+                or entry.index in seen
+                or rec.admission != ADMISSION_ADMITTED
+                or rec.hold_reasons
+                or rec.sha256 != entry.sha256
+                or rec.material_sha256 != entry.material_sha256
+                or rec.sha256 != _sha256_text(entry.text)
+            ):
+                raise ValueError(f"export refused: admitted entry {entry.index} does not match the run's records")
+            seen.add(entry.index)
+        if seen != admitted_indices:
+            raise ValueError("export refused: admitted entries do not match the run's records")
         return {
             "schema": EXPORT_SCHEMA,
             "manifest_schema": MANIFEST_SCHEMA,
@@ -432,13 +473,54 @@ def read_records(
 
     The line cap is ``batch.max_line_chars(max_item_bytes)`` plus room for a
     worst-case escaped metadata object within the metadata limits, so a record
-    that is within every limit is never rejected by the reader.
+    that is within every limit is never rejected by the reader. Unlike
+    ``batch.read_jsonl``, an object with a duplicate key (at any depth) is
+    malformed JSON: a parser that keeps the other value would screen and export
+    different material, so the ambiguity is refused instead of resolved.
     """
     batch.check_limit("max_item_bytes", max_item_bytes, maximum=batch.MAX_ITEM_BYTES_CEILING)
     batch.check_limit("max_metadata_keys", max_metadata_keys)
     batch.check_limit("max_metadata_value_chars", max_metadata_value_chars)
     slack = max_metadata_keys * (12 * (MAX_METADATA_KEY_CHARS + max_metadata_value_chars) + 8) + 16
-    return batch.read_jsonl(source, max_line=batch.max_line_chars(max_item_bytes) + slack)
+    return _read_strict_jsonl(source, batch.max_line_chars(max_item_bytes) + slack)
+
+
+def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError("duplicate key")
+        out[key] = value
+    return out
+
+
+def loads_strict(text: str) -> Any:
+    """``json.loads`` that rejects duplicate object keys at any depth."""
+    return json.loads(text, object_pairs_hook=_no_duplicate_keys)
+
+
+def _read_strict_jsonl(source: Any, max_line: int) -> Iterator[Any]:
+    def parse(line: str, number: int) -> Any:
+        try:
+            return loads_strict(line)
+        except (json.JSONDecodeError, RecursionError, ValueError):
+            raise ValueError(f"line {number}: malformed JSON") from None
+
+    number = 0
+    if hasattr(source, "readline"):
+        while True:
+            line = source.readline(max_line + 1)
+            if line == "":
+                return
+            number += 1
+            if len(line) > max_line:
+                raise ValueError(f"line {number}: exceeds {max_line} characters")
+            if line.strip():
+                yield parse(line, number)
+    else:
+        for number, line in enumerate(source, 1):
+            if line.strip():
+                yield parse(line, number)
 
 
 # ---------------------------------------------------------------------------
@@ -590,7 +672,7 @@ def _classify_payload(payload: Mapping[str, Any]) -> tuple[str, bool]:
         if not isinstance(flagged, bool):
             return STATE_ERROR, False
     risk = payload.get("canary_risk_score")
-    if risk is not None and not _finite_real(risk):
+    if risk is not None and (not _finite_real(risk) or not 0.0 <= risk <= 1.0):
         return STATE_ERROR, False
     if safe and payload.get("blocked_by") is not None:
         return STATE_ERROR, False
@@ -608,6 +690,10 @@ def _classify_payload(payload: Mapping[str, Any]) -> tuple[str, bool]:
         return batch.STATE_FLAG, exercised
     if payload.get("canary_status") != "exercised" or payload.get("analysis_status") != "exercised":
         return batch.STATE_UNEXERCISED, False
+    if risk is not None and risk > 0.0:
+        # strict/v1: a measured non-zero risk is a detection signal even when the
+        # analyzer raised no advisory; it is never a pass.
+        return batch.STATE_FLAG, exercised
     return batch.STATE_PASS, exercised
 
 
@@ -637,6 +723,10 @@ def _pipeline_info(pipeline: Any) -> dict[str, Any]:
         "analysis_method": analysis,
         "structural_filter": prim(getattr(pipeline, "enable_structural_filter", None)),
         "canary_enabled": prim(getattr(pipeline, "enable_canary", None)),
+        "canary_num_ctx": (
+            ctx if isinstance(ctx := getattr(getattr(pipeline, "canary_probe", None), "num_ctx", None), int)
+            and not isinstance(ctx, bool) else None
+        ),
     }
 
 
@@ -659,14 +749,19 @@ def _held_without_checks(
     metadata_keys: list[str] | None = None,
 ) -> RecordResult:
     text = prepared.text
+    id_label = _valid_label(prepared.id)
+    source_label = _valid_label(prepared.source)
     return RecordResult(
         index=prepared.index,
-        id=_valid_label(prepared.id),
-        source=_valid_label(prepared.source),
+        id=None,
+        source=None,
         length=len(text) if isinstance(text, str) else 0,
         sha256=sha256,
         material_sha256=material_sha256,
-        metadata_keys=metadata_keys or [],
+        metadata_keys=None,
+        id_sha256=_sha256_text(id_label) if id_label is not None else None,
+        source_sha256=_sha256_text(source_label) if source_label is not None else None,
+        metadata_key_count=len(metadata_keys or []),
         detection=DETECTION_NONE,
         detection_signals=[],
         coverage=COVERAGE_NONE,
@@ -695,7 +790,7 @@ def _check_segment(
     counter.calls += 1
     try:
         verdict = pipeline.check(piece)
-        if not isinstance(verdict, PipelineVerdict):
+        if type(verdict) is not PipelineVerdict:  # a subclass could make to_dict() disagree with itself
             raise TypeError("pipeline.check returned a non-PipelineVerdict")
         # The verdict must be about exactly this segment: a cached or substituted
         # verdict for other text is evidence of nothing.
@@ -792,12 +887,15 @@ def _screen_record(
 
     result = RecordResult(
         index=prepared.index,
-        id=prepared.id,
-        source=prepared.source,
+        id=prepared.id if admitted else None,
+        source=prepared.source if admitted else None,
         length=len(text),
         sha256=sha256,
         material_sha256=material_sha256,
-        metadata_keys=sorted(metadata),
+        metadata_keys=sorted(metadata) if admitted else None,
+        id_sha256=_sha256_text(prepared.id) if prepared.id is not None else None,
+        source_sha256=_sha256_text(prepared.source) if prepared.source is not None else None,
+        metadata_key_count=len(metadata),
         detection=detection,
         detection_signals=sorted(signals)[:_MAX_SIGNALS],
         coverage=coverage,
@@ -812,6 +910,30 @@ def _screen_record(
     return result, admitted
 
 
+#: Tokens reserved beyond the segment for the chat template and stop tokens.
+CANARY_CONTEXT_RESERVE = 64
+
+
+def required_canary_context(policy: IngestPolicy, pipeline: Any) -> int | None:
+    """Context window (tokens) the Ollama canary needs to read a whole segment.
+
+    Byte-level tokenizers never produce more tokens than UTF-8 bytes, and a
+    character is at most 4 bytes, so ``4 * segment_chars`` bounds a segment's
+    tokens; the system prompt is bounded the same way; ``max_tokens`` reserves
+    the reply. Returns ``None`` when the pipeline has no Ollama ``CanaryProbe``
+    (canary disabled, OpenAI-compatible provider, or a stand-in pipeline).
+    """
+    from .canary import CanaryProbe
+
+    probe = getattr(pipeline, "canary_probe", None)
+    if not isinstance(probe, CanaryProbe) or getattr(pipeline, "enable_canary", True) is False:
+        return None
+    system_prompt = getattr(probe, "system_prompt", "")
+    prompt_bytes = 4 * len(system_prompt) if isinstance(system_prompt, str) else 0
+    reply = probe.max_tokens if isinstance(probe.max_tokens, int) and not isinstance(probe.max_tokens, bool) else 0
+    return 4 * policy.segment_chars + prompt_bytes + max(0, reply) + CANARY_CONTEXT_RESERVE
+
+
 def ingest_records(
     pipeline: Any,
     records: Iterable[Any],
@@ -823,7 +945,10 @@ def ingest_records(
 
     All records are read, snapshotted and budgeted before any check runs.
     Run-level ``ValueError`` (nothing checked, nothing returned): invalid policy,
-    ``segment_chars`` above the pipeline's structural ``max_input_length``, more
+    ``segment_chars`` above the pipeline's structural ``max_input_length``, an
+    Ollama canary whose ``num_ctx`` is unset or smaller than
+    ``required_canary_context`` (the backend would silently truncate a long
+    segment and the manifest would still call it exercised), more
     than ``max_items`` records, summed text bytes above ``max_total_bytes``, or a
     record that is not a string/object/IngestRecord/BatchItem. Record-level
     problems are held records, never run failures. ``KeyboardInterrupt`` and other
@@ -838,6 +963,14 @@ def ingest_records(
         raise ValueError(
             f"segment_chars ({policy.segment_chars}) exceeds the pipeline's max_input_length ({limit})"
         )
+    needed = required_canary_context(policy, pipeline)
+    if needed is not None:
+        have = getattr(pipeline.canary_probe, "num_ctx", None)
+        if not isinstance(have, int) or isinstance(have, bool) or have < needed:
+            raise ValueError(
+                f"the canary context window (num_ctx={have}) cannot hold a whole segment; "
+                f"construct SecurityPipeline(canary_num_ctx={needed}) or larger, or lower segment_chars"
+            )
     clock = now if now is not None else (lambda: datetime.now(timezone.utc))
 
     # Phase 1: snapshot + run-level budget, before any check.
@@ -934,10 +1067,8 @@ def ingest_records(
 # ---------------------------------------------------------------------------
 
 
-def _atomic_write(path: str | os.PathLike[str], data: bytes, *, overwrite: bool) -> str:
-    target = os.fspath(path)
-    if not overwrite and os.path.lexists(target):
-        raise FileExistsError(f"refusing to overwrite existing file: {target}")
+def _write_temp(target: str, data: bytes) -> str:
+    """Write ``data`` to a fsynced temp file next to ``target``; return the temp path."""
     directory = os.path.dirname(os.path.abspath(target))
     fd, tmp = tempfile.mkstemp(dir=directory, prefix="." + os.path.basename(target) + ".", suffix=".tmp")
     try:
@@ -945,11 +1076,21 @@ def _atomic_write(path: str | os.PathLike[str], data: bytes, *, overwrite: bool)
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
+    return tmp
+
+
+def _publish_temp(tmp: str, target: str, *, overwrite: bool) -> None:
+    """Atomically move a temp file onto ``target``; the temp file is always removed."""
+    try:
         if overwrite:
             os.replace(tmp, target)
         else:
             # Atomic no-clobber publish: link() fails if the target appeared since the
-            # existence check above, so a racing writer is never overwritten.
+            # existence check, so a racing writer is never overwritten.
             try:
                 os.link(tmp, target)
             except FileExistsError:
@@ -962,6 +1103,7 @@ def _atomic_write(path: str | os.PathLike[str], data: bytes, *, overwrite: bool)
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp)
+    directory = os.path.dirname(os.path.abspath(target))
     try:  # best-effort durability of the rename; not available everywhere
         dir_fd = os.open(directory, os.O_RDONLY)
     except OSError:
@@ -973,7 +1115,75 @@ def _atomic_write(path: str | os.PathLike[str], data: bytes, *, overwrite: bool)
             pass
         finally:
             os.close(dir_fd)
+
+
+def _atomic_write(path: str | os.PathLike[str], data: bytes, *, overwrite: bool) -> str:
+    target = os.fspath(path)
+    if not overwrite and os.path.lexists(target):
+        raise FileExistsError(f"refusing to overwrite existing file: {target}")
+    _publish_temp(_write_temp(target, data), target, overwrite=overwrite)
     return hashlib.sha256(data).hexdigest()
+
+
+def publish(
+    result: IngestResult,
+    manifest_path: str | os.PathLike[str],
+    export_path: str | os.PathLike[str] | None = None,
+    *,
+    overwrite: bool = False,
+) -> dict[str, str]:
+    """Write the manifest and (optionally) the export as one publication.
+
+    Both documents are fully written to temp files before either target is
+    touched; the export is published first, then the manifest, so a valid
+    manifest on disk implies its export was already there. With ``overwrite``
+    the previous files are removed before anything is written. If any step
+    fails, every temp file is removed and an export published in this call is
+    unlinked again, leaving no artefact of this call behind. Returns ``{"manifest": sha256,
+    "export": sha256}`` (``export`` only when requested). Marks
+    ``result.export_requested`` so the manifest records the request.
+    """
+    if result.status != STATUS_COMPLETE:
+        raise ValueError("export requires a complete ingest run")
+    manifest_target = os.fspath(manifest_path)
+    export_target = os.fspath(export_path) if export_path is not None else None
+    result.export_requested = export_target is not None
+    for target in (manifest_target, export_target):
+        if target is None or not os.path.lexists(target):
+            continue
+        if not overwrite:
+            raise FileExistsError(f"refusing to overwrite existing file: {target}")
+        # Consent to overwrite means the previous pair is removed before anything is
+        # written, so a failure part-way can never leave a stale or mixed pair behind.
+        os.unlink(target)
+    manifest_data = result.manifest_json().encode("utf-8")
+    export_data = _canonical_json(result.export_document()).encode("utf-8") if export_target else None
+    digests = {"manifest": hashlib.sha256(manifest_data).hexdigest()}
+    if export_data is not None:
+        digests["export"] = hashlib.sha256(export_data).hexdigest()
+
+    temps: list[str] = []
+    export_published = False
+    try:
+        manifest_tmp = _write_temp(manifest_target, manifest_data)
+        temps.append(manifest_tmp)
+        if export_target is not None and export_data is not None:
+            export_tmp = _write_temp(export_target, export_data)
+            temps.append(export_tmp)
+            _publish_temp(export_tmp, export_target, overwrite=overwrite)
+            temps.remove(export_tmp)
+            export_published = True
+        _publish_temp(manifest_tmp, manifest_target, overwrite=overwrite)
+        temps.remove(manifest_tmp)
+    except BaseException:
+        for tmp in temps:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp)
+        if export_published and export_target is not None:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(export_target)
+        raise
+    return digests
 
 
 def write_manifest(
@@ -1053,6 +1263,8 @@ def verify_export(
     run = manifest.get("run")
     if not (isinstance(run, dict) and run.get("status") == STATUS_COMPLETE):
         problems.append("manifest run is not complete")
+    if isinstance(run, dict) and run.get("export_requested") is not True:
+        problems.append("manifest does not record that an export was requested")
 
     by_index: dict[int, dict[str, Any]] = {}
     manifest_records = manifest.get("records")
@@ -1102,6 +1314,8 @@ def verify_export(
             or mrec.get("detection") != DETECTION_NONE
         ):
             problems.append(f"{label}: not admitted in manifest")
+        if not _segment_evidence_supports_admission(mrec):
+            problems.append(f"{label}: segment evidence does not support admission")
         text = rec.get("text")
         metadata = rec.get("metadata")
         if not isinstance(text, str) or not _encodable(text):
@@ -1123,7 +1337,12 @@ def verify_export(
             problems.append(f"{label}: material_sha256 mismatch")
         if rec.get("id") != mrec.get("id") or rec.get("source") != mrec.get("source"):
             problems.append(f"{label}: provenance mismatch")
-        if sorted(metadata) != mrec.get("metadata_keys"):
+        for name in ("id", "source"):
+            value = rec.get(name)
+            expected = _sha256_text(value) if isinstance(value, str) else None
+            if mrec.get(f"{name}_sha256") != expected:
+                problems.append(f"{label}: {name} digest mismatch")
+        if sorted(metadata) != mrec.get("metadata_keys") or mrec.get("metadata_key_count") != len(metadata):
             problems.append(f"{label}: metadata keys mismatch")
     missing = admitted_indices - seen
     if missing:
@@ -1133,4 +1352,59 @@ def verify_export(
     counts = manifest.get("counts")
     if not (isinstance(counts, dict) and counts.get("admitted") == len(export_records)):
         problems.append("export record count does not match manifest admitted count")
+    if isinstance(counts, dict) and counts != _recount(manifest_records):
+        problems.append("manifest counts do not match its records")
     return problems
+
+
+def _recount(records: list[Any]) -> dict[str, Any]:
+    by_reason = dict.fromkeys(HOLD_REASONS, 0)
+    detection = dict.fromkeys(DETECTION_STATES, 0)
+    coverage = dict.fromkeys(COVERAGE_STATES, 0)
+    admitted = 0
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        if rec.get("admission") == ADMISSION_ADMITTED:
+            admitted += 1
+        for reason in rec.get("hold_reasons") or []:
+            if reason in by_reason:
+                by_reason[reason] += 1
+        if rec.get("detection") in detection:
+            detection[rec["detection"]] += 1
+        if rec.get("coverage") in coverage:
+            coverage[rec["coverage"]] += 1
+    return {
+        "admitted": admitted,
+        "held": len(records) - admitted,
+        "by_reason": by_reason,
+        "detection": detection,
+        "coverage": coverage,
+    }
+
+
+def _segment_evidence_supports_admission(mrec: dict[str, Any]) -> bool:
+    """Every planned segment recorded as an exercised pass, with full accounting."""
+    segments = mrec.get("segments")
+    total = mrec.get("segments_total")
+    if not isinstance(segments, list) or not segments or not _is_int(total) or total != len(segments):
+        return False
+    if mrec.get("segments_checked") != total:
+        return False
+    chars_total = mrec.get("chars_total")
+    if not isinstance(chars_total, int) or isinstance(chars_total, bool):
+        return False
+    if mrec.get("chars_covered") != chars_total or chars_total < 1:
+        return False
+    for seg in segments:
+        if not isinstance(seg, dict):
+            return False
+        if seg.get("state") != batch.STATE_PASS or seg.get("exercised") is not True:
+            return False
+        verdict = seg.get("verdict")
+        if not isinstance(verdict, dict):
+            return False
+        state, exercised = _classify_payload(verdict)
+        if state != batch.STATE_PASS or not exercised:
+            return False
+    return True

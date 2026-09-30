@@ -21,9 +21,16 @@ material, so descriptive corpus ids such as ``inj-meta-title-02`` would show the
 label to the canary. Before ingesting, every record's ``id`` is replaced with a
 deterministic neutral id by corpus line order (``doc-0001``, ``doc-0002``, ...) and
 ``source`` with ``corpus``. The eval-only ``expect`` key is stripped (ingest holds
-unknown keys as malformed). Labels are joined back through the neutral id after the
-run; the manifest (``--manifest``) carries only the neutral ids, and the mapping to
-the original ids is in the ``--json`` document.
+unknown keys as malformed). Labels are joined back by RECORD INDEX (position in the
+ingested list), never by the result's ``id``: ingest reports plaintext ``id`` and
+``source`` only for admitted records (``None`` when held). Each result's
+``id_sha256`` is cross-checked against the neutral id at its index. The manifest
+(``--manifest``) carries neutral ids only (admitted) or their digests (held); the
+mapping to the original ids is in the ``--json`` document.
+
+Canary context: a live Ollama canary is built with ``canary_num_ctx`` sized by
+``required_canary_context`` (ingest refuses a smaller window); the value is
+recorded in the JSON header as ``canary_num_ctx``.
 
 Modes:
 
@@ -63,6 +70,7 @@ from little_canary.ingest import (
     IngestPolicy,
     IngestResult,
     ingest_records,
+    required_canary_context,
     write_manifest,
 )
 from little_canary.pipeline import PipelineVerdict
@@ -79,7 +87,7 @@ CLAIM = (
 )
 ANONYMIZATION = (
     "record ids and sources replaced before ingest (id -> doc-NNNN by corpus line, "
-    f"source -> {NEUTRAL_SOURCE!r}); labels joined back by neutral id after the run"
+    f"source -> {NEUTRAL_SOURCE!r}); labels joined back by record index after the run"
 )
 _DETECTION_REASONS = frozenset({HOLD_BLOCKED, HOLD_FLAGGED})
 _INGEST_KEYS = ("id", "source", "text", "metadata")
@@ -95,17 +103,18 @@ def neutral_id(position: int) -> str:
     return f"doc-{position:04d}"
 
 
-def load_corpus(path: str | os.PathLike[str]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Read the corpus; return ``(records_for_ingest, expectations_by_neutral_id)``.
+def load_corpus(path: str | os.PathLike[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Read the corpus; return ``(records_for_ingest, expectations)``, aligned by position.
 
-    Each ingest record keeps ``text`` and ``metadata`` exactly, has ``id`` replaced by
-    ``doc-NNNN`` (1-based line order among non-blank lines) and ``source`` by
-    ``corpus``, and has no ``expect`` key. Expectations hold ``original_id``,
-    ``original_source``, ``label`` and ``vector`` only (no payload, no text).
-    Raises ``ValueError`` (line number only, never record text) on a bad line.
+    ``expectations[i]`` belongs to ``records[i]``. Each ingest record keeps ``text``
+    and ``metadata`` exactly, has ``id`` replaced by ``doc-NNNN`` (1-based line order
+    among non-blank lines) and ``source`` by ``corpus``, and has no ``expect`` key.
+    Expectations hold ``neutral_id``, ``original_id``, ``original_source``, ``label``
+    and ``vector`` only (no payload, no text). Raises ``ValueError`` (line number
+    only, never record text) on a bad line.
     """
     records: list[dict[str, Any]] = []
-    expectations: dict[str, dict[str, Any]] = {}
+    expectations: list[dict[str, Any]] = []
     seen: set[str] = set()
     with open(path, encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, 1):
@@ -136,34 +145,40 @@ def load_corpus(path: str | os.PathLike[str]) -> tuple[list[dict[str, Any]], dic
                 if key not in _INGEST_KEYS and key != "expect":
                     record[key] = value
             records.append(record)
-            expectations[nid] = {
+            expectations.append({
+                "neutral_id": nid,
                 "original_id": original_id,
                 "original_source": raw.get("source") if isinstance(raw.get("source"), str) else None,
                 "label": expect["label"],
                 "vector": expect.get("vector") if isinstance(expect.get("vector"), str) else "unknown",
-            }
+            })
     return records, expectations
 
 
 def select(
     records: list[dict[str, Any]],
-    expectations: dict[str, dict[str, Any]],
+    expectations: list[dict[str, Any]],
     *,
     ids: Sequence[str] | None = None,
     limit: int | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Subset by original ids and/or the first ``limit`` records, keeping corpus order."""
-    chosen = records
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Subset by original ids and/or the first ``limit`` records, keeping corpus order.
+
+    Returns ``(records, expectations)`` still aligned by position.
+    """
+    if len(records) != len(expectations):
+        raise ValueError("records and expectations are not aligned")
+    pairs = list(zip(records, expectations))
     if ids:
         wanted = set(ids)
-        known = {exp["original_id"] for exp in expectations.values()}
+        known = {exp["original_id"] for exp in expectations}
         unknown = sorted(wanted - known)
         if unknown:
             raise ValueError(f"unknown corpus ids: {', '.join(unknown)}")
-        chosen = [r for r in chosen if expectations[r["id"]]["original_id"] in wanted]
+        pairs = [(r, e) for r, e in pairs if e["original_id"] in wanted]
     if limit is not None:
-        chosen = chosen[:limit]
-    return chosen, {r["id"]: expectations[r["id"]] for r in chosen}
+        pairs = pairs[:limit]
+    return [r for r, _ in pairs], [e for _, e in pairs]
 
 
 # ---------------------------------------------------------------------------
@@ -212,21 +227,44 @@ def _rate(numerator: int, denominator: int) -> dict[str, Any]:
     }
 
 
-def score(result: IngestResult, expectations: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """Score an ingest result against expectations keyed by neutral id.
+def _expectation_for(rec: Any, expectations: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """The expectation at ``rec.index``; cross-checks the neutral id (plaintext or digest)."""
+    index = rec.index
+    if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(expectations):
+        raise ValueError(f"record {index}: no expectation at this index")
+    exp = expectations[index]
+    nid = exp["neutral_id"]
+    if rec.id is not None and rec.id != nid:
+        raise ValueError(f"record {index}: id does not match the neutral id at this index")
+    if rec.id_sha256 is not None and rec.id_sha256 != hashlib.sha256(nid.encode("utf-8")).hexdigest():
+        raise ValueError(f"record {index}: id_sha256 does not match the neutral id at this index")
+    return exp
 
-    Returns per-record outcomes, totals, per-label and per-vector breakdowns, rates
-    (on this corpus, this run), checks performed and segment latency stats. Raises
-    ``ValueError`` if a result record has no expectation.
+
+def score(result: IngestResult, expectations: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Score an ingest result against expectations aligned with the ingested list.
+
+    ``expectations[i]`` belongs to the record ingested at position ``i``; results are
+    joined by ``RecordResult.index``, never by ``RecordResult.id`` (which is ``None``
+    for held records). Returns per-record outcomes, totals, per-label and per-vector
+    breakdowns, rates (on this corpus, this run), checks performed and segment
+    latency stats. Raises ``ValueError`` if the result and expectations do not line
+    up (count, index range, or neutral id / ``id_sha256`` mismatch).
     """
+    if len(result.records) != len(expectations):
+        raise ValueError(
+            f"result has {len(result.records)} records but {len(expectations)} expectations"
+        )
     rows: list[dict[str, Any]] = []
     totals = dict.fromkeys(OUTCOMES, 0)
     by_label: dict[str, dict[str, int]] = {}
     by_vector: dict[str, dict[str, Any]] = {}
+    seen: set[int] = set()
     for rec in result.records:
-        exp = expectations.get(rec.id) if isinstance(rec.id, str) else None
-        if exp is None:
-            raise ValueError(f"record {rec.index}: no expectation for its id")
+        exp = _expectation_for(rec, expectations)
+        if rec.index in seen:
+            raise ValueError(f"record {rec.index}: duplicate index in result")
+        seen.add(rec.index)
         outcome = classify_outcome(exp["label"], rec.admission, rec.hold_reasons)
         totals[outcome] += 1
         label_bucket = by_label.setdefault(exp["label"], {"records": 0, **dict.fromkeys(OUTCOMES, 0)})
@@ -241,7 +279,8 @@ def score(result: IngestResult, expectations: dict[str, dict[str, Any]]) -> dict
         vec_bucket[outcome] += 1
         rows.append(
             {
-                "id": rec.id,
+                "index": rec.index,
+                "id": exp["neutral_id"],
                 "original_id": exp["original_id"],
                 "label": exp["label"],
                 "vector": exp["vector"],
@@ -346,7 +385,7 @@ def render_table(doc: dict[str, Any]) -> str:
         pipe = doc["pipeline"]
         lines.append(
             f"mode: live pipeline (mode={pipe.get('mode')}, canary_model={pipe.get('canary_model')}, "
-            f"analysis={pipe.get('analysis_method')})"
+            f"analysis={pipe.get('analysis_method')}, canary_num_ctx={doc['canary_num_ctx']})"
         )
     corpus = doc["corpus"]
     lines.append(
@@ -400,7 +439,10 @@ def render_table(doc: dict[str, Any]) -> str:
         f"median {_fmt_seconds(lat['median'])} p95 {_fmt_seconds(lat['p95'])} max {_fmt_seconds(lat['max'])}"
     )
     if doc["manifest"] is not None:
-        lines.append(f"manifest: {doc['manifest']['path']} sha256={doc['manifest']['sha256']} (neutral ids)")
+        lines.append(
+            f"manifest: {doc['manifest']['path']} sha256={doc['manifest']['sha256']} "
+            "(neutral ids; held records by digest only)"
+        )
     return "\n".join(lines)
 
 
@@ -453,18 +495,29 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _build_pipeline(args: argparse.Namespace) -> Any:
+def _build_pipeline(args: argparse.Namespace, policy: IngestPolicy) -> Any:
     if args.offline_fake:
         return OfflineFakePipeline(args.fake_marker)
     from little_canary.cli import _default_timeout
     from little_canary.pipeline import SecurityPipeline
 
     timeout = args.timeout if args.timeout is not None else _default_timeout()
+    base = SecurityPipeline(
+        canary_model=args.canary_model,
+        ollama_url=args.ollama_url,
+        mode=args.mode,
+        canary_timeout=timeout,
+    )
+    needed = required_canary_context(policy, base)
+    if needed is None:
+        return base
+    # Size the canary context window to the segment budget (see ingest.required_canary_context).
     return SecurityPipeline(
         canary_model=args.canary_model,
         ollama_url=args.ollama_url,
         mode=args.mode,
         canary_timeout=timeout,
+        canary_num_ctx=needed,
     )
 
 
@@ -489,7 +542,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     records, expectations = select(records, expectations, ids=ids, limit=args.limit)
     if not records:
         raise ValueError("no records selected")
-    pipeline = _build_pipeline(args)
+    pipeline = _build_pipeline(args, policy)
 
     started = time.monotonic()
     result = ingest_records(pipeline, records, policy=policy)
@@ -517,6 +570,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "anonymization": ANONYMIZATION,
         },
         "pipeline": dict(result.pipeline_info),
+        # From the manifest's pipeline block: the Ollama canary context window used for
+        # this run (None when there is no Ollama canary, e.g. the offline fake).
+        "canary_num_ctx": result.pipeline_info.get("canary_num_ctx"),
+        "canary_num_ctx_required": required_canary_context(policy, pipeline),
         "policy": policy.to_dict(),
         "run": {
             "started_at": result.started_at,

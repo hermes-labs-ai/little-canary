@@ -86,6 +86,7 @@ class CanaryProbe:
         max_tokens: int = 256,
         temperature: float = 0.0,
         seed: int = 42,
+        num_ctx: Optional[int] = None,
     ):
         self.model = model
         self.ollama_url = ollama_url.rstrip("/")
@@ -94,6 +95,11 @@ class CanaryProbe:
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.seed = seed
+        #: Explicit Ollama context window (tokens). ``None`` keeps the backend default,
+        #: which may silently truncate prompts longer than that default.
+        if num_ctx is not None and (not isinstance(num_ctx, int) or isinstance(num_ctx, bool) or num_ctx < 1):
+            raise ValueError("num_ctx must be a positive integer or None")
+        self.num_ctx = num_ctx
 
     def test(self, user_input: str) -> CanaryResult:
         """
@@ -120,6 +126,7 @@ class CanaryProbe:
                         "num_predict": self.max_tokens,
                         "temperature": self.temperature,
                         "seed": self.seed,
+                        **({"num_ctx": self.num_ctx} if self.num_ctx is not None else {}),
                     },
                 },
                 timeout=self.timeout,

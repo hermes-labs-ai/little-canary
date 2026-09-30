@@ -12,7 +12,15 @@ from pathlib import Path
 
 import pytest
 
-from little_canary import IngestPolicy, ingest_records, verify_export, write_export, write_manifest
+from little_canary import (
+    IngestPolicy,
+    ingest_records,
+    publish,
+    verify_export,
+    write_export,
+    write_manifest,
+)
+from little_canary.ingest import EXPORT_SCHEMA, MANIFEST_SCHEMA, POLICY_NAME
 from little_canary.pipeline import PipelineVerdict, SecurityAdvisory
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -97,8 +105,7 @@ def _run(records=RECORDS):
 def pair(tmp_path):
     result = _run()
     mpath, epath = tmp_path / "manifest.json", tmp_path / "admitted.json"
-    write_manifest(result, mpath)
-    write_export(result, epath)
+    publish(result, mpath, epath)  # export first, then the manifest that records the request
     return mpath, epath
 
 
@@ -314,3 +321,117 @@ def test_cli_smoke_subprocess(pair):
     assert bad.returncode == 2
     assert "nothing consumed" in bad.stderr
     assert SENTINEL not in ok.stdout + ok.stderr + bad.stdout + bad.stderr
+
+
+# (10) --expect-manifest-sha256 / consistency-vs-authenticity warning ----------
+
+def _msha(mpath):
+    return hashlib.sha256(Path(mpath).read_bytes()).hexdigest()
+
+
+def _main(mpath, epath, *extra):
+    return consumer.main(["--manifest", str(mpath), "--export", str(epath), *extra])
+
+
+@pytest.mark.parametrize("fmt", [str, str.upper, lambda h: f"  {h}\n"], ids=["lower", "upper", "padded"])
+def test_expected_manifest_sha256_match_consumes_without_warning(pair, capsys, fmt):
+    """Semantic I: --expect-manifest-sha256 equal to the manifest file's sha256 (case/whitespace
+    insensitive) consumes the pair and prints no consistency-only warning."""
+    assert _main(*pair, "--expect-manifest-sha256", fmt(_msha(pair[0]))) == 0
+    out, err = capsys.readouterr()
+    assert "consumed indices (verified against the manifest): [0, 6, 9]" in out
+    assert "WARNING" not in err
+    assert SENTINEL not in out + err
+
+
+def test_expected_manifest_sha256_mismatch_refused_exit_2(pair, capsys):
+    """Semantic I: --expect-manifest-sha256 that differs from the manifest bytes => exit 2, nothing consumed."""
+    assert _main(*pair, "--expect-manifest-sha256", "0" * 64) == 2
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "REFUSED: nothing consumed" in err
+    assert "manifest sha256 does not match --expect-manifest-sha256" in err
+    assert SENTINEL not in out + err
+
+
+def test_missing_expected_sha256_prints_consistency_not_authenticity_warning(pair, capsys):
+    """Semantic I: without --expect-manifest-sha256 a WARNING on stderr says the pair is checked for
+    consistency only, not authenticity."""
+    assert _main(*pair) == 0
+    err = capsys.readouterr().err
+    warning = [line for line in err.splitlines() if line.startswith("WARNING:")]
+    assert len(warning) == 1
+    assert "--expect-manifest-sha256" in warning[0]
+    assert "consistency" in warning[0] and "authenticity" in warning[0]
+
+
+def _forge_pair(tmp_path, mark_requested):
+    """A pair written by someone who can write both files: their own run, re-bound by hand."""
+    result = _run(["forged downstream instruction " + SENTINEL])
+    manifest = result.manifest()
+    assert manifest["run"]["export_requested"] is False
+    if mark_requested:
+        manifest["run"]["export_requested"] = True  # verify_export requires it
+    mbytes = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    export = {"schema": EXPORT_SCHEMA, "manifest_schema": MANIFEST_SCHEMA,
+              "manifest_sha256": hashlib.sha256(mbytes).hexdigest(), "policy_name": POLICY_NAME,
+              "records": [a.to_export_dict() for a in result.admitted]}
+    mpath, epath = tmp_path / "forged-manifest.json", tmp_path / "forged-export.json"
+    mpath.write_bytes(mbytes)
+    _dump(epath, export)
+    return mpath, epath
+
+
+def test_forged_consistent_pair_is_refused_only_by_expected_sha256(pair, tmp_path, capsys):
+    """Semantic I: a self-consistent forged pair passes the consistency checks (with the WARNING), and
+    is refused, nothing consumed, when --expect-manifest-sha256 names the trusted run."""
+    trusted = _msha(pair[0])
+    mpath, epath = _forge_pair(tmp_path, mark_requested=True)
+    assert verify_export(_load(epath), _load(mpath), manifest_bytes=mpath.read_bytes()) == []
+    assert _main(mpath, epath) == 0
+    assert "WARNING" in capsys.readouterr().err
+    assert _main(mpath, epath, "--expect-manifest-sha256", trusted) == 2
+    out, err = capsys.readouterr()
+    assert out == "" and "manifest sha256 does not match --expect-manifest-sha256" in err
+    assert SENTINEL not in out + err
+
+
+def test_forged_pair_without_export_request_is_refused(tmp_path):
+    """Semantic I/E: a forged pair whose manifest does not record export_requested is refused."""
+    mpath, epath = _forge_pair(tmp_path, mark_requested=False)
+    assert "manifest does not record that an export was requested" in _refused(mpath, epath)
+
+
+def test_manifest_written_before_export_is_refused(tmp_path, capsys):
+    """Semantic I/D: the old write_manifest-then-write_export order yields a pair the consumer refuses."""
+    result = _run()
+    mpath, epath = tmp_path / "m.json", tmp_path / "e.json"
+    write_manifest(result, mpath)
+    write_export(result, epath)
+    problems = _refused(mpath, epath)
+    assert "manifest does not record that an export was requested" in problems
+    assert _main(mpath, epath) == 2
+    assert SENTINEL not in "".join(capsys.readouterr())
+
+
+# (11) duplicate JSON keys --------------------------------------------------------
+
+@pytest.mark.parametrize("which,old,new", [
+    ("manifest", '"index":0,', '"index":0,"index":0,'),
+    ("export", '"index":0,', '"index":0,"index":0,'),
+    ("export", '"text":', '"text":"shadow ' + SENTINEL + '","text":'),
+    ("export", '"schema":', '"schema":"x","schema":'),
+], ids=["manifest-nested-same-value", "export-nested-same-value", "export-text-shadow", "export-top-level"])
+def test_duplicate_json_keys_refused(pair, capsys, which, old, new):
+    """Semantic I/F: a manifest or export with a duplicate JSON object key (any depth) is refused as
+    'cannot read <file> (ValueError)', exit 2, nothing consumed, no value echoed."""
+    mpath, epath = pair
+    target = mpath if which == "manifest" else epath
+    raw = target.read_text(encoding="utf-8")
+    assert old in raw
+    target.write_text(raw.replace(old, new, 1), encoding="utf-8")
+    assert _refused(mpath, epath) == [f"cannot read {which} (ValueError)"]
+    assert _main(mpath, epath) == 2
+    out, err = capsys.readouterr()
+    assert out == "" and f"cannot read {which} (ValueError)" in err
+    assert SENTINEL not in out + err

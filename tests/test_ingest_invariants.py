@@ -167,7 +167,12 @@ def _assert_admitted_material_screened(result, pipe):
 
 
 def _real(mode="full", response="Here is a short summary of the document.", **kw):
-    """Real SecurityPipeline with the network-facing canary call replaced (no Ollama)."""
+    """Real SecurityPipeline with the network-facing canary call replaced (no Ollama).
+
+    The Ollama canary needs an explicit context window that holds a whole segment
+    (``required_canary_context``), else ingest refuses the run.
+    """
+    kw.setdefault("canary_num_ctx", 20000)
     pipe = SecurityPipeline(mode=mode, **kw)
 
     def fake_test(user_input):
@@ -212,12 +217,18 @@ def test_duck_typed_verdict_is_error_hold():
     assert res.admitted == []
 
 
-def test_benign_verdict_subclass_still_works():
+def test_verdict_subclass_even_benign_is_error_hold():
+    """Semantic C: pipeline.check must return exactly PipelineVerdict; any subclass (whose to_dict
+    could disagree with itself) makes the segment error and the record held."""
     class Sub(PipelineVerdict):
         pass
 
     res, pipe = _run(["plain"], Recorder(lambda t: Sub(**_v(t).__dict__)))
-    assert res.records[0].admission == ADMISSION_ADMITTED
+    rec = res.records[0]
+    assert rec.admission == ADMISSION_HELD
+    assert rec.hold_reasons == [HOLD_ERROR, HOLD_INCOMPLETE]
+    assert rec.segments[0].state == "error" and rec.segments[0].error == "TypeError"
+    assert rec.segments[0].verdict is None and res.admitted == []
     _assert_invariants(res, pipe)
 
 
@@ -668,17 +679,34 @@ def test_metadata_boundaries_accepted_and_screened():
     _assert_invariants(res, pipe)
 
 
-def test_duplicate_json_keys_last_wins_and_first_value_never_exported():
-    # DECISION: json last-wins is acceptable because the screened value IS the exported
-    # value; the discarded first value never reaches check, manifest, or export.
-    src = io.StringIO('{"text": "FIRSTVAL", "text": "LASTVAL", '
-                      '"metadata": {"k": "FIRSTMETA", "k": "LASTMETA"}}\n')
-    records = list(read_records(src))
-    res, pipe = _run(records)
-    assert pipe.calls == ["k: LASTMETA", "LASTVAL"]
-    exported = json.dumps(res.export_document())
-    assert "LASTVAL" in exported and "FIRSTVAL" not in exported
-    assert "FIRST" not in exported + res.manifest_json()
+@pytest.mark.parametrize("line", [
+    '{"text": "FIRSTVAL", "text": "LASTVAL"}',
+    '{"text": "t", "metadata": {"k": "FIRSTMETA", "k": "LASTMETA"}}',
+    '{"text": "t", "metadata": {"k": "v"}, "id": "a", "id": "a"}',
+    '[{"a": 1}, {"deep": {"x": {"y": 1, "y": 2}}}]',
+], ids=["top-level", "metadata", "same-value", "nested-in-array"])
+@pytest.mark.parametrize("as_file", [True, False], ids=["readline", "iterable"])
+def test_duplicate_json_keys_at_any_depth_are_run_level_malformed(line, as_file):
+    """Semantic F: read_records refuses duplicate object keys at any depth as
+    ValueError("line N: malformed JSON") instead of resolving them; no value is echoed."""
+    lines = ['{"text": "ok"}\n', line + "\n"]
+    src = io.StringIO("".join(lines)) if as_file else lines
+    with pytest.raises(ValueError) as info:
+        list(read_records(src))
+    assert str(info.value) == "line 2: malformed JSON"
+    assert "FIRST" not in str(info.value) and "LAST" not in str(info.value)
+
+
+def test_loads_strict_rejects_duplicates_and_matches_json_otherwise():
+    """Semantic F: loads_strict (exported from little_canary.ingest) raises on duplicate keys at any
+    depth and otherwise equals json.loads."""
+    from little_canary.ingest import loads_strict
+
+    for bad in ('{"a": 1, "a": 1}', '{"a": {"b": 1, "b": 2}}', '[[{"c": 0, "c": 0}]]'):
+        with pytest.raises(ValueError):
+            loads_strict(bad)
+    good = '{"a": {"b": [1, {"c": "d"}]}, "e": null, "A": 2}'
+    assert loads_strict(good) == json.loads(good)
 
 
 def test_hostile_metadata_mapping_cannot_smuggle_unvalidated_values():
@@ -794,6 +822,151 @@ def test_verify_rejects_forged_admission_even_with_rehash_if_state_inconsistent(
     held["admission"] = ADMISSION_ADMITTED  # hold_reasons/detection still say held
     _rehash(export, manifest)
     assert verify_export(export, manifest) != []
+
+
+# -- Semantic E: verify_export checks the manifest's own evidence ----------------
+# _pair(): 0 {"alpha", id a, metadata k} admitted (2 segments: metadata, text),
+#          1 "BLK held" held, 2 {"gamma", source s} admitted (2 segments), 3 "delta" admitted.
+
+
+def _seg(i, j):
+    return lambda m: m["records"][i]["segments"][j]
+
+
+def _set(getter, key, value):
+    def mutate(m):
+        getter(m)[key] = value
+    return mutate
+
+
+def _rec(i):
+    return lambda m: m["records"][i]
+
+
+def _swap_records(m):
+    m["records"][2], m["records"][3] = m["records"][3], m["records"][2]
+
+
+def _drop_last_segment(m):
+    m["records"][0]["segments"].pop()
+
+
+def _flagged_advisory(m):
+    m["records"][0]["segments"][1]["verdict"]["advisory"] = {
+        "flagged": True, "severity": "low", "signals": ["x"], "message": "m"}
+
+
+def _zero_chars(m):
+    m["records"][3].update(chars_total=0, chars_covered=0)
+
+
+def _bump(path):
+    def mutate(m):
+        node = m
+        for key in path[:-1]:
+            node = node[key]
+        node[path[-1]] += 1
+    return mutate
+
+
+_EVIDENCE = "record {}: segment evidence does not support admission"
+_MANIFEST_MUTATIONS = [
+    ("export_requested_false", _set(lambda m: m["run"], "export_requested", False),
+     "manifest does not record that an export was requested"),
+    ("export_requested_missing", lambda m: m["run"].pop("export_requested"),
+     "manifest does not record that an export was requested"),
+    ("export_requested_truthy", _set(lambda m: m["run"], "export_requested", 1),
+     "manifest does not record that an export was requested"),
+    ("segment_state_flag", _set(_seg(0, 1), "state", "flag"), _EVIDENCE.format(0)),
+    ("segment_not_exercised", _set(_seg(0, 0), "exercised", False), _EVIDENCE.format(0)),
+    ("segment_verdict_missing", _set(_seg(0, 1), "verdict", None), _EVIDENCE.format(0)),
+    ("verdict_risk_positive", _set(lambda m: m["records"][0]["segments"][1]["verdict"],
+                                   "canary_risk_score", 0.5), _EVIDENCE.format(0)),
+    ("verdict_risk_null", _set(lambda m: m["records"][0]["segments"][1]["verdict"],
+                               "canary_risk_score", None), _EVIDENCE.format(0)),
+    ("verdict_canary_failed", _set(lambda m: m["records"][3]["segments"][0]["verdict"],
+                                   "canary_status", "failed"), _EVIDENCE.format(3)),
+    ("verdict_flagged_advisory", _flagged_advisory, _EVIDENCE.format(0)),
+    ("segments_checked_short", _set(_rec(0), "segments_checked", 1), _EVIDENCE.format(0)),
+    ("segment_dropped", _drop_last_segment, _EVIDENCE.format(0)),
+    ("segments_total_inflated", lambda m: m["records"][0].update(segments_total=3, segments_checked=3),
+     _EVIDENCE.format(0)),
+    ("segments_empty", lambda m: m["records"][3].update(segments=[], segments_total=0, segments_checked=0),
+     _EVIDENCE.format(3)),
+    ("chars_covered_below_total", _bump(["records", 2, "chars_total"]), _EVIDENCE.format(2)),
+    ("chars_zero", _zero_chars, _EVIDENCE.format(3)),
+    ("counts_by_reason", _bump(["counts", "by_reason", "blocked"]), "manifest counts do not match its records"),
+    ("counts_detection", _bump(["counts", "detection", "none"]), "manifest counts do not match its records"),
+    ("counts_coverage", _bump(["counts", "coverage", "none"]), "manifest counts do not match its records"),
+    ("counts_held", _bump(["counts", "held"]), "manifest counts do not match its records"),
+    ("index_not_position", _set(_rec(1), "index", 7),
+     "manifest record at position 1: duplicate or out-of-order index"),
+    ("records_swapped", _swap_records, "manifest record at position 2: duplicate or out-of-order index"),
+    ("records_total", _bump(["run", "records_total"]), "manifest records_total does not match the record list"),
+    ("id_plaintext", _set(_rec(0), "id", "b"), "record 0: provenance mismatch"),
+    ("source_plaintext", _set(_rec(2), "source", "t"), "record 2: provenance mismatch"),
+    ("id_digest_other", _set(_rec(0), "id_sha256", _sha("b")), "record 0: id digest mismatch"),
+    ("id_digest_missing", _set(_rec(0), "id_sha256", None), "record 0: id digest mismatch"),
+    ("id_digest_for_absent_id", _set(_rec(3), "id_sha256", _sha("x")), "record 3: id digest mismatch"),
+    ("source_digest", _set(_rec(2), "source_sha256", "0" * 64), "record 2: source digest mismatch"),
+    ("metadata_key_count", _set(_rec(0), "metadata_key_count", 2), "record 0: metadata keys mismatch"),
+    ("metadata_keys", _set(_rec(0), "metadata_keys", ["k", "z"]), "record 0: metadata keys mismatch"),
+    ("metadata_keys_null", _set(_rec(3), "metadata_keys", None), "record 3: metadata keys mismatch"),
+]
+
+
+def test_manifest_mutation_baseline_pair_is_valid():
+    """Semantic E: the unmutated pair (export produced before the manifest) verifies, and the manifest's
+    segment evidence, counts, indices and label digests are the ones the mutations below break."""
+    export, manifest = _pair()
+    assert manifest["run"]["export_requested"] is True
+    assert verify_export(export, manifest) == []
+    assert [len(r["segments"]) for r in manifest["records"]] == [2, 1, 2, 1]
+
+
+@pytest.mark.parametrize("mutate,expected", [c[1:] for c in _MANIFEST_MUTATIONS],
+                         ids=[c[0] for c in _MANIFEST_MUTATIONS])
+def test_verify_rejects_rehashed_manifest_whose_evidence_does_not_support_the_export(mutate, expected):
+    """Semantic E: even with manifest_sha256 re-bound, verify_export reports a manifest that lacks
+    export_requested, whose segment evidence does not support admission of an exported record, whose
+    counts differ from a recount, whose indices are not unique positions, whose records_total is wrong,
+    or whose id/source plaintext, digests or metadata key names/count disagree with the export."""
+    export, manifest = _pair()
+    mutate(manifest)
+    _rehash(export, manifest)
+    problems = verify_export(export, manifest)
+    assert expected in problems, problems
+    assert "manifest_sha256 does not match the manifest" not in problems
+
+
+def _material(rec):
+    doc = {"id": rec["id"], "source": rec["source"],
+           "metadata": dict(sorted(rec["metadata"].items())), "text": rec["text"]}
+    return _sha(json.dumps(doc, sort_keys=True, ensure_ascii=True, separators=(",", ":")))
+
+
+def test_verify_rejects_forged_admission_with_consistent_summary_fields():
+    """Semantic E: a held record forged to admitted with consistent summary fields, recount and re-bound
+    hash is still refused because its recorded segment evidence (state, then verdict payload) is not an
+    exercised pass."""
+    export, manifest = _pair()
+    held = manifest["records"][1]
+    held.update(admission=ADMISSION_ADMITTED, hold_reasons=[], detection=DETECTION_NONE,
+                coverage=COVERAGE_COMPLETE, metadata_keys=[])
+    manifest["counts"]["admitted"] += 1
+    manifest["counts"]["held"] -= 1
+    manifest["counts"]["by_reason"][HOLD_BLOCKED] -= 1
+    manifest["counts"]["detection"]["block"] -= 1
+    manifest["counts"]["detection"]["none"] += 1
+    rec = {"index": 1, "id": None, "source": None, "metadata": {}, "text": "BLK held"}
+    rec.update(sha256=_sha(rec["text"]), material_sha256=_material(rec))
+    export["records"].insert(1, rec)
+    _rehash(export, manifest)
+    assert verify_export(export, manifest) == [_EVIDENCE.format(1)]
+
+    held["segments"][0]["state"] = "pass"  # state forged, payload still a block
+    _rehash(export, manifest)
+    assert verify_export(export, manifest) == [_EVIDENCE.format(1)]
 
 
 def test_manifest_and_logs_never_contain_text_or_metadata_values(caplog):

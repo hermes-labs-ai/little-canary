@@ -230,10 +230,13 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Experimental. Check every JSONL record ({text, id?, source?, metadata?} or a "
             "JSON string) and admit or hold it under the strict/v1 policy. Writes a "
-            "text-free manifest; --export writes admitted records only. Admitted means "
-            "the record completed the configured checks and satisfied policy. "
-            "Exit 0: every record admitted; 1: held for detection only (blocked/flagged); "
-            "2: invalid input/config (nothing written) or any operational/coverage hold."
+            "manifest that carries no record text or metadata values (labels and key "
+            "names appear in plaintext only for admitted records; digests otherwise); "
+            "--export writes admitted records only. Admitted means the record completed "
+            "the configured checks and satisfied policy. Exit 0: every record admitted; "
+            "1: held for detection only (blocked/flagged); 2: run completed but some "
+            "record was held for an operational/coverage reason; 3: nothing was written "
+            "(invalid input/config, empty input, or a write failure)."
         ),
     )
     ingest_parser.add_argument(
@@ -430,10 +433,34 @@ def _ingest_exit_code(records) -> int:
     return code
 
 
+class _HashingReader:
+    """readline() passthrough that digests every byte handed to the JSONL reader."""
+
+    def __init__(self, handle):
+        import hashlib
+
+        self._handle = handle
+        self._hash = hashlib.sha256()
+        self.complete = False
+
+    def readline(self, size=-1):
+        line = self._handle.readline(size)
+        if line == "":
+            self.complete = True  # EOF reached: the digest covers the whole input
+        else:
+            self._hash.update(line.encode("utf-8"))
+        return line
+
+    def hexdigest(self):
+        return self._hash.hexdigest() if self.complete else None
+
+
 def _run_ingest(args) -> int:
-    """Exit 2: invalid input/config or empty input (nothing written), or any record held
-    for an operational/coverage reason; 1: else any record held for detection;
-    0: non-empty and every record admitted. Record text is never printed."""
+    """Exit 3: nothing written (invalid input/config, empty input, write failure);
+    2: run completed and written, but some record was held for an operational/coverage
+    reason; 1: else some record held for detection; 0: non-empty and every record
+    admitted. Record text is never printed."""
+    import io
     import sys
 
     from little_canary.batch import MAX_ITEM_BYTES_CEILING, check_limit
@@ -441,16 +468,26 @@ def _run_ingest(args) -> int:
         POLICY_NAME,
         IngestPolicy,
         ingest_records,
+        publish,
         read_records,
-        write_export,
-        write_manifest,
+        required_canary_context,
     )
     from little_canary.pipeline import SecurityPipeline
 
     problem = _check_ingest_targets(args)
     if problem is not None:
         print(f"error: {problem}", file=sys.stderr)
-        return 2
+        return 3
+    if args.overwrite:
+        # Consent to replace means the previous pair is removed before the run starts:
+        # a failed run can never leave a stale pair that still verifies.
+        for path in (args.manifest, args.export):
+            if path is not None and os.path.lexists(path):
+                try:
+                    os.unlink(path)
+                except OSError as exc:
+                    print(f"error: cannot remove {path} ({type(exc).__name__})", file=sys.stderr)
+                    return 3
 
     try:
         limits = {
@@ -474,6 +511,20 @@ def _run_ingest(args) -> int:
             mode=args.mode,
             canary_timeout=timeout,
         )
+        # Size the canary's context window to the segment budget so a long segment is
+        # never silently truncated by the backend while the manifest calls it exercised.
+        needed = required_canary_context(policy, pipeline)
+        if needed is not None:
+            pipeline = SecurityPipeline(
+                canary_model=args.canary_model,
+                ollama_url=args.ollama_url,
+                mode=args.mode,
+                canary_timeout=timeout,
+                canary_num_ctx=needed,
+            )
+        for flag, path in (("--manifest", args.manifest), ("--export", args.export)):
+            if path is not None and not os.access(os.path.dirname(os.path.abspath(path)) or ".", os.W_OK):
+                raise OSError(f"{flag} directory is not writable: {os.path.dirname(os.path.abspath(path))}")
         reader_limits = {
             "max_item_bytes": args.max_item_bytes,
             "max_metadata_keys": args.max_metadata_keys,
@@ -481,33 +532,42 @@ def _run_ingest(args) -> int:
         }
         # All records are read and budgeted before the first check, so malformed
         # JSON or a run-level limit fails here with zero checks and nothing written.
+        # The input is always decoded as strict UTF-8 (never the locale), and digested.
         if args.input == "-":
-            result = ingest_records(pipeline, read_records(sys.stdin, **reader_limits), policy=policy)
+            raw = getattr(sys.stdin, "buffer", None)
+            # Decode stdin as strict UTF-8 regardless of locale; a text-only stand-in
+            # (tests) has no buffer and is used as-is.
+            stream = (
+                io.TextIOWrapper(raw, encoding="utf-8", errors="strict", newline="")
+                if raw is not None
+                else sys.stdin
+            )
+            reader = _HashingReader(stream)
+            result = ingest_records(pipeline, read_records(reader, **reader_limits), policy=policy)
         else:
-            with open(args.input, encoding="utf-8") as handle:
-                result = ingest_records(pipeline, read_records(handle, **reader_limits), policy=policy)
+            with open(args.input, encoding="utf-8", errors="strict", newline="") as handle:
+                reader = _HashingReader(handle)
+                result = ingest_records(pipeline, read_records(reader, **reader_limits), policy=policy)
+        result.input_sha256 = reader.hexdigest()
     except (OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 2
+        return 3
     except SystemExit as exc:  # invalid LITTLE_CANARY_TIMEOUT: report as invalid config
         if exc.code not in (None, 0):
             print(exc.code, file=sys.stderr)
-        return 2
+        return 3
 
     if not result.records:
         print("error: no records in input; nothing written", file=sys.stderr)
-        return 2
+        return 3
 
     try:
-        manifest_sha = write_manifest(result, args.manifest, overwrite=args.overwrite)
-        export_sha = (
-            write_export(result, args.export, overwrite=args.overwrite)
-            if args.export is not None
-            else None
-        )
+        digests = publish(result, args.manifest, args.export, overwrite=args.overwrite)
     except (OSError, ValueError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
+        print(f"error: {exc}; nothing written", file=sys.stderr)
+        return 3
+    manifest_sha = digests["manifest"]
+    export_sha = digests.get("export")
 
     code = _ingest_exit_code(result.records)
     if args.json:
@@ -528,6 +588,7 @@ def _run_ingest(args) -> int:
         "detection: " + " ".join(f"{k}={v}" for k, v in counts["detection"].items()),
         "coverage: " + " ".join(f"{k}={v}" for k, v in counts["coverage"].items()),
         f"checks performed: {result.checks_performed}",
+        f"input sha256={result.input_sha256}",
         f"manifest: {args.manifest} sha256={manifest_sha}",
         (
             f"export: {args.export} sha256={export_sha} ({len(result.admitted)} admitted records)"

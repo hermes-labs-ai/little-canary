@@ -31,7 +31,7 @@ from collections.abc import Sequence
 from typing import Any, Callable
 
 from little_canary import verify_export
-from little_canary.ingest import HOLD_REASONS
+from little_canary.ingest import HOLD_REASONS, loads_strict
 
 
 class Refused(Exception):
@@ -71,7 +71,7 @@ def _load_with_bytes(path: str, label: str) -> tuple[Any, bytes]:
     try:
         with open(path, "rb") as handle:
             raw = handle.read()
-        return json.loads(raw.decode("utf-8")), raw
+        return loads_strict(raw.decode("utf-8")), raw  # duplicate keys are refused, never resolved
     except (OSError, ValueError) as exc:
         raise Refused([f"cannot read {label} ({type(exc).__name__})"]) from None
 
@@ -167,11 +167,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Consume a verified little-canary ingest export.")
     parser.add_argument("--manifest", required=True, help="manifest JSON written by `little-canary ingest`")
     parser.add_argument("--export", required=True, help="export JSON written by `little-canary ingest --export`")
+    parser.add_argument(
+        "--expect-manifest-sha256",
+        default=None,
+        help=(
+            "The manifest sha256 printed by the `little-canary ingest` run you trust. "
+            "Verification without it proves only that the two files are consistent with "
+            "each other, not that they came from a screening run."
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
         manifest, manifest_bytes = _load_with_bytes(args.manifest, "manifest")
         export = _load(args.export, "export")
+        if args.expect_manifest_sha256 is not None:
+            actual = hashlib.sha256(manifest_bytes).hexdigest()
+            if actual != args.expect_manifest_sha256.strip().lower():
+                raise Refused(["manifest sha256 does not match --expect-manifest-sha256"])
+        else:
+            print(
+                "WARNING: no --expect-manifest-sha256 given; the pair is checked for consistency only, "
+                "not for authenticity (anyone who can write both files can forge a matching pair)",
+                file=sys.stderr,
+            )
         consumed = consume_documents(manifest, export, _stub_downstream, manifest_bytes=manifest_bytes)
     except Refused as refusal:
         print("REFUSED: nothing consumed", file=sys.stderr)
