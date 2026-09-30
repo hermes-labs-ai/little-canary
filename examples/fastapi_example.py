@@ -53,10 +53,13 @@ def _verdict_to_response(verdict: Any) -> dict[str, Any]:
     }
 
 
-def call_model(message: str, advisory_prefix: str = "") -> str:
+def call_model(*, user_message: str, system_prompt: str = "") -> str:
     """Replace with your production model call."""
-    prompt = f"{advisory_prefix}\n\n{message}" if advisory_prefix else message
-    return f"[Production model would respond to: {prompt[:80]}...]"
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_message})
+    return f"[Production model would receive {len(messages)} message(s)]"
 
 
 def screen_then_answer(
@@ -85,11 +88,11 @@ def screen_then_answer(
             "verdict": verdict_payload,
         }
 
-    advisory_prefix = verdict.advisory.to_system_prefix() if verdict.advisory else ""
+    advisory_system_prompt = verdict.advisory.to_system_prefix() if verdict.advisory else ""
     return {
         "status": "answered",
         "allowed": True,
-        "response": model(message, advisory_prefix=advisory_prefix),
+        "response": model(user_message=message, system_prompt=advisory_system_prompt),
         "verdict": verdict_payload,
     }
 
