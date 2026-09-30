@@ -1677,3 +1677,35 @@ def test_publish_alias_check_runs_before_overwrite_unlink(tmp_path):
     with pytest.raises(ValueError, match="different files"):
         publish(result, existing, tmp_path / "alias" / "m.json", overwrite=True)
     assert existing.read_bytes() == b"KEEP"
+
+
+def test_gate_recheck_covers_the_caller_clock_and_model_swap(monkeypatch):
+    """Invariant (gate re-check is the last thing before the first check): neither the
+    injectable clock nor a mid-read model swap on the same probe object can get past it."""
+    from little_canary.canary import CanaryProbe
+    from little_canary.pipeline import SecurityPipeline
+
+    lengths = {"qwen2.5:1.5b": 32768, "tiny": 2048}
+    queries = []
+    monkeypatch.setattr(
+        CanaryProbe, "context_length", lambda self: queries.append(self.model) or lengths[self.model]
+    )
+    # (a) a clock that flips the canary on after the gate ran
+    pipeline = SecurityPipeline(enable_canary=False)
+
+    def hostile_clock():
+        pipeline.enable_canary = True
+        return datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    with pytest.raises(ValueError, match="num_ctx"):
+        ingest_records(pipeline, ["one"], now=hostile_clock)
+    # (b) the same probe object pointed at a smaller-context model mid-read
+    sized = SecurityPipeline(canary_num_ctx=20000)
+
+    def swapping_records():
+        yield "one"
+        sized.canary_probe.model = "tiny"
+
+    with pytest.raises(ValueError, match="trained context length"):
+        ingest_records(sized, swapping_records())
+    assert queries == ["qwen2.5:1.5b", "tiny"]  # re-queried because the model changed

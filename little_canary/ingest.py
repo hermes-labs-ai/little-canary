@@ -1000,13 +1000,14 @@ def required_canary_context(policy: IngestPolicy, pipeline: Any) -> int | None:
 
 
 def _check_canary_context(
-    policy: IngestPolicy, pipeline: Any, verified: tuple[int, int] | None = None
-) -> tuple[int, int] | None:
+    policy: IngestPolicy, pipeline: Any, verified: tuple[Any, ...] | None = None
+) -> tuple[Any, ...] | None:
     """Refuse before any check unless the canary can read every whole segment.
 
-    Returns ``(id(probe), trained_context_length)`` for an Ollama canary so a
-    later re-check of the same probe object can reuse the trained length
-    (``verified``) instead of querying ``/api/show`` again; ``None`` otherwise.
+    Returns ``(probe, model, ollama_url, trained_context_length)`` for an Ollama
+    canary so a later re-check of the same probe object, model and endpoint can
+    reuse the trained length (``verified``) instead of querying ``/api/show``
+    again; ``None`` otherwise.
 
     Ollama: ``num_ctx`` must be set and at least ``required_canary_context``, and
     the model's trained context length (``CanaryProbe.context_length()``, from
@@ -1043,8 +1044,13 @@ def _check_canary_context(
             f"the canary context window (num_ctx={have}) cannot hold a whole segment; "
             f"construct SecurityPipeline(canary_num_ctx={needed}) or larger, or lower segment_chars"
         )
-    if verified is not None and verified[0] == id(probe):
-        trained: int | None = verified[1]
+    if (
+        verified is not None
+        and verified[0] is probe
+        and verified[1] == getattr(probe, "model", None)
+        and verified[2] == getattr(probe, "ollama_url", None)
+    ):
+        trained: int | None = verified[3]
     else:
         trained = probe.context_length()
     if trained is None:
@@ -1057,7 +1063,7 @@ def _check_canary_context(
             f"the canary model's trained context length ({trained}) is smaller than the "
             f"{needed} tokens a whole segment may need; lower segment_chars or use a larger-context model"
         )
-    return (id(probe), trained)
+    return (probe, getattr(probe, "model", None), getattr(probe, "ollama_url", None), trained)
 
 
 def ingest_records(
@@ -1106,10 +1112,11 @@ def ingest_records(
                 raise ValueError(f"ingest exceeds the limit of {policy.max_total_bytes} total bytes")
         prepared.append(item)
 
-    # Reading the records may have run caller code; re-verify the pipeline right
-    # before the first check so a mid-read change cannot bypass the gate.
-    _check_canary_context(policy, pipeline, verified)
     started_at = _iso_utc(clock())
+    # Reading the records (and the caller's clock) may have run caller code;
+    # re-verify the pipeline right before the first check so a mid-read change
+    # cannot bypass the gate.
+    _check_canary_context(policy, pipeline, verified)
     counter = _Counter()
     results: list[RecordResult] = []
     admitted: list[AdmittedRecord] = []
@@ -1275,7 +1282,8 @@ def publish(
     manifest on disk implies its export was already there. With ``overwrite``
     the previous files are removed before anything is written. If any step
     fails, every temp file is removed and an export published in this call is
-    unlinked again, leaving no artefact of this call behind. Returns ``{"manifest": sha256,
+    unlinked again, leaving no artefact of this call behind (an empty temp file
+    created in the instant before it is registered can remain). Returns ``{"manifest": sha256,
     "export": sha256}`` (``export`` only when requested). Marks
     ``result.export_requested`` so the manifest records the request.
     """
