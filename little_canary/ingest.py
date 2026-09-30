@@ -401,16 +401,23 @@ def _material_sha256(
     ).hexdigest()
 
 
-def _union_length(ranges: list[tuple[int, int]]) -> int:
+def _covered_chars(segments: list[SegmentResult]) -> int:
+    """Characters whose owning segment completed an exercised check.
+
+    Each segment owns the characters from its start up to the next segment's
+    start (the last segment owns up to its end), so overlaps are attributed
+    exactly once and ``chars_covered == chars_total`` holds iff every segment
+    was exercised. An unexercised window in the middle is never masked by the
+    overlap of its neighbours.
+    """
     total = 0
-    cur_start = cur_end = -1
-    for start, end in sorted(ranges):
-        if start > cur_end:
-            total += max(0, cur_end - cur_start)
-            cur_start, cur_end = start, end
-        else:
-            cur_end = max(cur_end, end)
-    total += max(0, cur_end - cur_start)
+    for kind in (SEGMENT_METADATA, SEGMENT_TEXT):
+        ordered = sorted((s for s in segments if s.kind == kind), key=lambda s: s.start)
+        for pos, seg in enumerate(ordered):
+            if not seg.exercised:
+                continue
+            own_end = ordered[pos + 1].start if pos + 1 < len(ordered) else seg.end
+            total += max(0, min(own_end, seg.end) - seg.start)
     return total
 
 
@@ -449,25 +456,56 @@ class _Prepared:
     malformed: str | None = None
 
 
+def _exact_str(value: Any) -> bool:
+    """True only for a plain ``str``: subclasses can lie about length, slicing, encoding."""
+    return type(value) is str
+
+
+def _plain(value: Any) -> Any:
+    """Copy any ``str`` (including subclasses) into a plain ``str`` of its real contents.
+
+    A ``str`` subclass can override ``__len__``, ``__getitem__``, ``encode`` or
+    ``__str__`` so that what is budgeted, segmented, checked or hashed differs from
+    what would be exported. The copy is made once, before any check, and is the
+    only value ever validated, screened, hashed and exported. Non-strings pass
+    through unchanged so validation can reject them.
+    """
+    if isinstance(value, str) and not _exact_str(value):
+        return str.__getitem__(value, slice(None))
+    return value
+
+
 def _snapshot(raw: Any, index: int) -> _Prepared:
-    """Read every field exactly once into a private snapshot; shape errors are run-level."""
+    """Read every field exactly once into a private snapshot; shape errors are run-level.
+
+    Text, labels, metadata keys and values are copied into plain ``str`` values
+    (see ``_plain``) and metadata is copied exactly once, here, before any check
+    runs; validation, screening, hashing and export all use these copies.
+    """
     if isinstance(raw, IngestRecord):
-        return _Prepared(index, raw.text, raw.id, raw.source, raw.metadata)
-    if isinstance(raw, batch.BatchItem):
-        return _Prepared(index, raw.text, raw.id, raw.source, None)
-    if isinstance(raw, str):
-        return _Prepared(index, raw, None, None, None)
-    if isinstance(raw, Mapping):
+        prepared = _Prepared(index, raw.text, raw.id, raw.source, raw.metadata)
+    elif isinstance(raw, batch.BatchItem):
+        prepared = _Prepared(index, raw.text, raw.id, raw.source, None)
+    elif isinstance(raw, str):
+        prepared = _Prepared(index, raw, None, None, None)
+    elif isinstance(raw, Mapping):
         snap = dict(raw)
         prepared = _Prepared(
             index, snap.get("text"), snap.get("id"), snap.get("source"), snap.get("metadata")
         )
-        if any(not isinstance(k, str) or k not in _RECORD_KEYS for k in snap):
+        if any(not _exact_str(k) or k not in _RECORD_KEYS for k in snap):
             prepared.malformed = f"record {index}: unknown_keys"
-        return prepared
-    raise ValueError(
-        f"record {index}: must be a string, object, IngestRecord or BatchItem"
-    )
+    else:
+        raise ValueError(
+            f"record {index}: must be a string, object, IngestRecord or BatchItem"
+        )
+    if isinstance(prepared.metadata, Mapping):
+        # The one and only read of the caller's mapping, taken before any check.
+        prepared.metadata = {_plain(k): _plain(v) for k, v in prepared.metadata.items()}
+    prepared.text = _plain(prepared.text)
+    prepared.id = _plain(prepared.id)
+    prepared.source = _plain(prepared.source)
+    return prepared
 
 
 def _encodable(value: str) -> bool:
@@ -486,11 +524,11 @@ def _validate_metadata(meta: Any, index: int, policy: IngestPolicy) -> str | Non
     if len(meta) > policy.max_metadata_keys:
         return f"record {index}: 'metadata' exceeds {policy.max_metadata_keys} keys"
     for key, value in meta.items():
-        if not isinstance(key, str) or key == "" or len(key) > MAX_METADATA_KEY_CHARS:
+        if not _exact_str(key) or key == "" or len(key) > MAX_METADATA_KEY_CHARS:
             return f"record {index}: metadata keys must be non-empty strings of at most {MAX_METADATA_KEY_CHARS} characters"
         if not _encodable(key):
             return f"record {index}: metadata key is not valid Unicode (lone surrogate)"
-        if not isinstance(value, str):
+        if not _exact_str(value):
             return f"record {index}: metadata values must be strings"
         if len(value) > policy.max_metadata_value_chars:
             return f"record {index}: metadata value exceeds {policy.max_metadata_value_chars} characters"
@@ -523,22 +561,64 @@ def _text_bytes_for_budget(text: Any, remaining: int) -> int | None:
 # ---------------------------------------------------------------------------
 
 
-def _is_exercised(verdict: PipelineVerdict) -> bool:
-    return (
-        verdict.degraded is False
-        and verdict.canary_status == "exercised"
-        and verdict.analysis_status == "exercised"
-        and verdict.canary_risk_score is not None
+def _finite_real(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _classify_payload(payload: Mapping[str, Any]) -> tuple[str, bool]:
+    """Map one recorded verdict payload to ``(state, exercised)``.
+
+    Decided from the single ``to_dict()`` snapshot that the manifest records, so
+    admission is always supported by the recorded evidence. Mistyped or
+    self-contradictory verdicts (non-bool flags, a ``blocked_by`` on a passing
+    verdict, a non-finite or mistyped risk score, a non-bool advisory flag) are
+    ``error``. State mirrors ``batch.classify`` precedence; ``exercised`` is the
+    separate coverage fact: not degraded, canary and analysis both exercised, and
+    a finite risk score was measured (true for a canary block or flag, false for
+    a structural block that skipped the canary).
+    """
+    safe = payload.get("safe")
+    degraded = payload.get("degraded")
+    if not isinstance(safe, bool) or not isinstance(degraded, bool):
+        return STATE_ERROR, False
+    advisory = payload.get("advisory")
+    flagged: Any = None
+    if advisory is not None:
+        if not isinstance(advisory, Mapping):
+            return STATE_ERROR, False
+        flagged = advisory.get("flagged")
+        if not isinstance(flagged, bool):
+            return STATE_ERROR, False
+    risk = payload.get("canary_risk_score")
+    if risk is not None and not _finite_real(risk):
+        return STATE_ERROR, False
+    if safe and payload.get("blocked_by") is not None:
+        return STATE_ERROR, False
+    exercised = (
+        degraded is False
+        and payload.get("canary_status") == "exercised"
+        and payload.get("analysis_status") == "exercised"
+        and risk is not None
     )
+    if not safe:
+        return batch.STATE_BLOCK, exercised
+    if degraded:
+        return batch.STATE_DEGRADED, False
+    if flagged:
+        return batch.STATE_FLAG, exercised
+    if payload.get("canary_status") != "exercised" or payload.get("analysis_status") != "exercised":
+        return batch.STATE_UNEXERCISED, False
+    return batch.STATE_PASS, exercised
 
 
-def _signals(verdict: PipelineVerdict) -> list[str]:
+def _signals(payload: Mapping[str, Any]) -> list[str]:
     out = []
-    if isinstance(verdict.blocked_by, str):
-        out.append(verdict.blocked_by[:_MAX_SIGNAL_CHARS])
-    advisory = verdict.advisory
-    if advisory is not None and getattr(advisory, "flagged", False):
-        raw = getattr(advisory, "signals", None)
+    blocked_by = payload.get("blocked_by")
+    if isinstance(blocked_by, str):
+        out.append(blocked_by[:_MAX_SIGNAL_CHARS])
+    advisory = payload.get("advisory")
+    if isinstance(advisory, Mapping) and advisory.get("flagged") is True:
+        raw = advisory.get("signals")
         if isinstance(raw, (list, tuple)):
             out.extend(s[:_MAX_SIGNAL_CHARS] for s in raw if isinstance(s, str))
     return out
@@ -617,12 +697,23 @@ def _check_segment(
         verdict = pipeline.check(piece)
         if not isinstance(verdict, PipelineVerdict):
             raise TypeError("pipeline.check returned a non-PipelineVerdict")
-        state = batch.classify(verdict)
+        # The verdict must be about exactly this segment: a cached or substituted
+        # verdict for other text is evidence of nothing.
+        if not _exact_str(verdict.input) or not str.__eq__(piece, verdict.input):
+            raise ValueError("verdict input does not match the checked segment")
+        snapshot = verdict.to_dict()
+        if not isinstance(snapshot, dict):
+            raise TypeError("verdict.to_dict() did not return a dict")
         # redacted at construction: the in-memory result never retains raw text
-        payload = {k: v for k, v in verdict.to_dict().items() if k not in batch._RAW_TEXT_KEYS}
-        exercised = _is_exercised(verdict)
-        signals = _signals(verdict)
-        latency = float(verdict.total_latency)
+        payload = {k: v for k, v in snapshot.items() if k not in batch._RAW_TEXT_KEYS}
+        # Every decision below reads the recorded snapshot, never the live object.
+        state, exercised = _classify_payload(payload)
+        if state == STATE_ERROR:
+            raise ValueError("verdict is mistyped or self-contradictory")
+        signals = _signals(payload)
+        latency = float(payload.get("total_latency", 0.0))
+        if not math.isfinite(latency):
+            latency = 0.0
     except Exception as exc:  # BaseException (e.g. KeyboardInterrupt) propagates
         logger.error("Ingest segment check failed (%s)", type(exc).__name__)
         seg.error = type(exc).__name__
@@ -687,8 +778,7 @@ def _screen_record(
     if STATE_NOT_CHECKED in states or coverage != COVERAGE_COMPLETE:
         reasons.append(HOLD_INCOMPLETE)
 
-    covered = _union_length([(s.start, s.end) for s in exercised if s.kind == SEGMENT_TEXT]) + \
-        _union_length([(s.start, s.end) for s in exercised if s.kind == SEGMENT_METADATA])
+    covered = _covered_chars(segments)
 
     admitted = not reasons
     # Defence in depth: admission must imply every separate state is clean.
@@ -792,7 +882,7 @@ def ingest_records(
             continue
 
         text: str = item.text
-        metadata: dict[str, str] = dict(item.metadata) if item.metadata is not None else {}
+        metadata: dict[str, str] = item.metadata if item.metadata is not None else {}  # the phase-1 copy
         meta_text = "\n".join(_metadata_lines(item.id, item.source, metadata))
         text_plan = segment_text(text, policy.segment_chars, policy.segment_overlap)
         meta_plan = (
@@ -855,11 +945,23 @@ def _atomic_write(path: str | os.PathLike[str], data: bytes, *, overwrite: bool)
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp, target)
-    except BaseException:
+        if overwrite:
+            os.replace(tmp, target)
+        else:
+            # Atomic no-clobber publish: link() fails if the target appeared since the
+            # existence check above, so a racing writer is never overwritten.
+            try:
+                os.link(tmp, target)
+            except FileExistsError:
+                raise FileExistsError(f"refusing to overwrite existing file: {target}") from None
+            except OSError:
+                # Filesystem without hard links: best-effort re-check, then rename.
+                if os.path.lexists(target):
+                    raise FileExistsError(f"refusing to overwrite existing file: {target}") from None
+                os.replace(tmp, target)
+    finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp)
-        raise
     try:  # best-effort durability of the rename; not available everywhere
         dir_fd = os.open(directory, os.O_RDONLY)
     except OSError:
@@ -904,12 +1006,20 @@ def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def verify_export(export_doc: Any, manifest: Any) -> list[str]:
+_EXPORT_KEYS = frozenset({"schema", "manifest_schema", "manifest_sha256", "policy_name", "records"})
+
+
+def verify_export(
+    export_doc: Any, manifest: Any, *, manifest_bytes: bytes | None = None
+) -> list[str]:
     """Return every inconsistency between an export and its manifest ([] = consistent).
 
-    Checks schemas, the manifest hash binding, that every exported record is
-    admitted in the manifest with complete coverage and no detection, that the
-    exported set equals the admitted set, and that ``sha256``/``material_sha256``
+    Checks schemas and the exact export field set, the manifest hash binding
+    (over the canonical manifest and, when ``manifest_bytes`` is given, over the
+    raw file bytes too), that every exported record is admitted in the manifest
+    with complete coverage and no detection, that the exported sequence equals
+    the admitted sequence in manifest order, that manifest indices are unique and
+    match ``run.records_total``, and that ``sha256``/``material_sha256``
     recomputed from the exported text and metadata match. Problems name record
     indices only, never text.
     """
@@ -918,6 +1028,8 @@ def verify_export(export_doc: Any, manifest: Any) -> list[str]:
         return ["export is not an object"]
     if not isinstance(manifest, dict):
         return ["manifest is not an object"]
+    if set(export_doc) != _EXPORT_KEYS:
+        problems.append("export has unexpected or missing top-level fields")
     if export_doc.get("schema") != EXPORT_SCHEMA:
         problems.append("export schema mismatch")
     if export_doc.get("manifest_schema") != MANIFEST_SCHEMA or manifest.get("schema") != MANIFEST_SCHEMA:
@@ -928,6 +1040,11 @@ def verify_export(export_doc: Any, manifest: Any) -> list[str]:
         digest = None
     if digest is None or export_doc.get("manifest_sha256") != digest:
         problems.append("manifest_sha256 does not match the manifest")
+    if manifest_bytes is not None and (
+        not isinstance(manifest_bytes, (bytes, bytearray))
+        or hashlib.sha256(bytes(manifest_bytes)).hexdigest() != export_doc.get("manifest_sha256")
+    ):
+        problems.append("manifest_sha256 does not match the manifest file bytes")
     policy = manifest.get("policy")
     if export_doc.get("policy_name") != POLICY_NAME or not (
         isinstance(policy, dict) and policy.get("name") == export_doc.get("policy_name")
@@ -942,18 +1059,26 @@ def verify_export(export_doc: Any, manifest: Any) -> list[str]:
     if not isinstance(manifest_records, list):
         problems.append("manifest records missing")
         manifest_records = []
-    for rec in manifest_records:
-        if isinstance(rec, dict) and _is_int(rec.get("index")):
-            by_index[rec["index"]] = rec
-    admitted_indices = {
-        i for i, rec in by_index.items() if rec.get("admission") == ADMISSION_ADMITTED
-    }
+    admitted_order: list[int] = []
+    for pos, rec in enumerate(manifest_records):
+        if not (isinstance(rec, dict) and _is_int(rec.get("index"))):
+            problems.append(f"manifest record at position {pos}: malformed")
+            continue
+        if rec["index"] in by_index or rec["index"] != pos:
+            problems.append(f"manifest record at position {pos}: duplicate or out-of-order index")
+        by_index[rec["index"]] = rec
+        if rec.get("admission") == ADMISSION_ADMITTED:
+            admitted_order.append(rec["index"])
+    admitted_indices = set(admitted_order)
+    if not (isinstance(run, dict) and run.get("records_total") == len(manifest_records)):
+        problems.append("manifest records_total does not match the record list")
 
     export_records = export_doc.get("records")
     if not isinstance(export_records, list):
         problems.append("export records missing")
         return problems
     seen: set[int] = set()
+    order: list[int] = []
     for pos, rec in enumerate(export_records):
         if not isinstance(rec, dict) or not _is_int(rec.get("index")):
             problems.append(f"export record at position {pos}: malformed")
@@ -965,6 +1090,7 @@ def verify_export(export_doc: Any, manifest: Any) -> list[str]:
         if idx in seen:
             problems.append(f"{label}: duplicated in export")
         seen.add(idx)
+        order.append(idx)
         mrec = by_index.get(idx)
         if mrec is None:
             problems.append(f"{label}: not in manifest")
@@ -1002,6 +1128,8 @@ def verify_export(export_doc: Any, manifest: Any) -> list[str]:
     missing = admitted_indices - seen
     if missing:
         problems.append(f"admitted records missing from export: {sorted(missing)}")
+    if order != admitted_order and not missing and seen <= admitted_indices:
+        problems.append("export records are not in manifest order")
     counts = manifest.get("counts")
     if not (isinstance(counts, dict) and counts.get("admitted") == len(export_records)):
         problems.append("export record count does not match manifest admitted count")

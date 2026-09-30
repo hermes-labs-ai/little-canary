@@ -481,6 +481,7 @@ def test_writers_are_atomic_on_failure(writer, tmp_path, monkeypatch):
         raise OSError("disk full")
 
     monkeypatch.setattr(os, "replace", boom)
+    monkeypatch.setattr(os, "link", boom)  # the no-clobber publish path
     with pytest.raises(OSError, match="disk full"):
         writer(result, target)
     assert not target.exists()
@@ -676,3 +677,19 @@ def test_read_records_bounds_lines_and_accepts_max_metadata(tmp_path):
     assert len(recs) == 1
     with pytest.raises(ValueError, match="exceeds"):
         list(read_records(io.StringIO(json.dumps("x" * 10**6) + "\n"), max_item_bytes=10))
+
+
+def test_verify_export_binds_to_raw_manifest_bytes(tmp_path):
+    """Invariant 11 (raw bytes): the export hash also matches the manifest file bytes exactly."""
+    result, _ = _run(["ok", "BLOCK"])
+    manifest_path = tmp_path / "m.json"
+    write_manifest(result, manifest_path)
+    raw = manifest_path.read_bytes()
+    export = result.export_document()
+    manifest = json.loads(raw)
+    assert verify_export(export, manifest, manifest_bytes=raw) == []
+    # A whitespace-variant file parses to the same document but is not the bound bytes.
+    variant = json.dumps(manifest, indent=2).encode("utf-8")
+    assert json.loads(variant) == manifest
+    problems = verify_export(export, manifest, manifest_bytes=variant)
+    assert any("file bytes" in p for p in problems)
