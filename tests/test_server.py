@@ -49,6 +49,7 @@ def canary_server():
     yield port, mock_pipeline
 
     httpd.shutdown()
+    httpd.server_close()
     server_mod._pipeline = original_pipeline
 
 
@@ -283,3 +284,28 @@ def test_run_server_logs_readiness_and_shuts_down(ready, monkeypatch, caplog):
     mock_server.shutdown.assert_called_once_with()
     assert "Shutting down" in caplog.text
     assert ("server ready" if ready else "DEGRADED") in caplog.text
+
+
+def test_create_server_binds_loopback_and_initializes_pipeline(monkeypatch):
+    import little_canary.server as server_mod
+
+    original_pipeline = server_mod._pipeline
+    with patch.object(server_mod, "SecurityPipeline") as pipeline:
+        httpd = server_mod.create_server(
+            port=0, mode="block", canary_model="offline-test",
+            ollama_url="http://127.0.0.1:11434", canary_timeout=2.0,
+        )
+    try:
+        assert httpd.server_address[0] == "127.0.0.1"
+        assert httpd.server_address[1] > 0
+        assert httpd.socket.fileno() >= 0
+        assert httpd.RequestHandlerClass is server_mod._CanaryHandler
+        assert server_mod._pipeline is pipeline.return_value
+        pipeline.assert_called_once_with(
+            canary_model="offline-test", ollama_url="http://127.0.0.1:11434",
+            mode="block", canary_timeout=2.0,
+        )
+    finally:
+        httpd.server_close()
+        monkeypatch.setattr(server_mod, "_pipeline", original_pipeline)
+    assert httpd.socket.fileno() == -1
