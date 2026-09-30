@@ -38,6 +38,7 @@ little-canary --version
 little-canary demo  # offline replay; runs with zero extra dependencies
 little-canary demo --live --backend ollama --model qwen2.5:1.5b --endpoint http://127.0.0.1:11434
 little-canary serve --help
+little-canary ingest --help
 pytest -q
 ruff check little_canary tests
 mypy little_canary

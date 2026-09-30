@@ -7,11 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
-## [Unreleased]
+## [0.5.0] - Unreleased
 
 ### Added
 
 - `little-canary screen` and `little_canary.batch.screen_batch`: batch pre-screening with independent per-item verdicts, provenance (index/id/source/SHA-256), per-item errors reported as `degraded` (never `pass`), no echo of item text, and all-or-nothing admission with item-count, per-item and aggregate byte limits. Safety semantics of `SecurityPipeline.check` are unchanged.
+- Experimental Ingest surface: the `little-canary ingest` CLI and the Python module `little_canary.ingest` (`ingest_records`, `IngestPolicy`, `IngestRecord`, `IngestResult`, `write_manifest`, `write_export`, `verify_export`). Each JSONL record (`text`, optional `id`, `source`, `metadata`) is checked through `SecurityPipeline.check` and admitted or held under the `strict/v1` policy.
+- Three separate per-record states: detection (`none`/`flag`/`block`), coverage (`complete`/`partial`/`none`) and admission (`admitted`/`held`). A record is admitted only with detection `none`, coverage `complete` and every segment `pass`.
+- Hold reasons, all listed when they apply: `malformed`, `over_budget`, `blocked`, `flagged`, `degraded`, `unexercised`, `error`, `incomplete`. Record-level validation failures (including unknown top-level keys and non-string metadata values) hold the record instead of coercing it.
+- Deterministic segmentation with a per-record budget (`--segment-chars`, `--segment-overlap`, `--max-segments`, `--max-item-bytes`) and character-level coverage accounting. A record over budget is held with zero checks; a record is never partly scanned and reported as screened.
+- `id`, `source` and `metadata` are screened as material, before the text, because the export emits them downstream.
+- Manifest `little-canary-ingest-manifest/v1`, always written when a run completes, with hashes, lengths, offsets and states only (no record text).
+- Opt-in export `little-canary-ingest-export/v1` (`--export`): only admitted records, exact snapshot text, per-record `sha256`/`material_sha256`, and the `manifest_sha256` it is bound to; atomic writes, no overwrite without `--overwrite`.
+- Consumer example `examples/ingest_consumer.py`, which refuses an export that fails `verify_export`.
+- Evaluation tooling in `benchmarks/ingest_eval/` (corpus and `run_eval.py`) that scores detector misses and false holds separately from operational/coverage holds.
+
+**Experimental.** The Ingest command, schemas and `strict/v1` policy are experimental.
+
+**Not claimed.** Admitted means the record completed every configured check and satisfied the policy; it is not a statement that the content is harmless. This release makes no detection-rate or latency claim for Ingest. PDF, DOCX, OCR and mailbox input are out of scope. Runtime fail-open routing is unchanged, and a fail-open (`degraded`) verdict never becomes ingest admission.
+
+### Unchanged
+
+- Runtime `SecurityPipeline.check`, `screen`, `serve` and `demo` semantics are untouched by Ingest.
 
 ### Fixed
 

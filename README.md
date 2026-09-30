@@ -115,7 +115,7 @@ The default remains `qwen2.5:1.5b`. Select an installed model with `serve --cana
 
 ## Pre-screen a batch of documents or messages
 
-> **Unreleased — source install only.** Batch pre-screening was merged after the `0.4.0` release, so the published `pip install little-canary` (0.4.0) does **not** include `little-canary screen` or `little_canary.batch`. Until the next release, install from source:
+> **Ships in 0.5.0 — unreleased at the time of writing; source install until published.** The `0.4.0` package on PyPI does **not** include `little-canary screen` or `little_canary.batch`. Until `0.5.0` is published, install from source:
 >
 > ```bash
 > pip install "git+https://github.com/hermes-labs-ai/little-canary.git"
@@ -131,6 +131,42 @@ printf '%s\n' '{"id":"m1","source":"inbox","text":"Quarterly numbers attached."}
 Input is JSONL: each line is a JSON string or `{"text", "id"?, "source"?}`. Output is one `little-canary-batch/v1` JSON document with per-item `state` (`pass`, `flag`, `block`, `degraded`, `unexercised`), provenance (`index`, `id`, `source`, `sha256`, `length`) and the standard verdict. Item text is never echoed, in the JSON output or in the Python result objects. An item whose check raises is `degraded`, never `pass`. Admission is all-or-nothing and happens before any check runs: malformed JSON, lone Unicode surrogates, non-string labels, or any breach of `--max-items` (default 1000), `--max-item-bytes` (UTF-8 bytes of one text, default 65536, at most 64 MiB) or `--max-total-bytes` (all texts, default 8 MiB) rejects the whole batch — nothing is truncated. Lines are read in bounded chunks, so an oversized line is refused before it is fully allocated; `id`/`source` labels are capped at 256 characters. The pipeline's own `max_input_length` policy still applies per item. Exit status: `2` if the input is empty or invalid or any item is `degraded`/`unexercised` (a coverage hold is never masked by a block elsewhere in the batch); otherwise `1` if any item is `block`/`flag`; otherwise `0` (non-empty, every item `pass`). `pass` requires both the canary and analysis layers to have run. Screening is advisory input-risk sensing with the same coverage limits as a single check.
 
 Worked examples with input, output and limits, each derived from committed evidence (recorded capture, public JailBench case, host SDK types), are in [`docs/examples/`](docs/examples/README.md).
+
+## Ingest documents (experimental)
+
+> **Experimental. Ships in 0.5.0 — unreleased at the time of writing; source install (as above) until published.**
+
+`little-canary ingest` (Python: `from little_canary import ingest_records`) runs every record of a JSONL file through the same `SecurityPipeline.check` and decides, per record, whether it is `admitted` or `held` under the `strict/v1` policy. It always writes a text-free evidence manifest (`little-canary-ingest-manifest/v1`) and, only when you ask for it, an export (`little-canary-ingest-export/v1`) that contains nothing but the admitted records, bound by hash to that manifest.
+
+```bash
+little-canary ingest records.jsonl --manifest manifest.json --export admitted.json
+```
+
+Each line is a JSON string (text only) or an object:
+
+```json
+{"id":"doc-1","source":"shared-drive","metadata":{"title":"Q3 notes","author":"ops"},"text":"Quarterly numbers attached."}
+```
+
+`text` is required and non-empty; `id`, `source` and `metadata` (string keys to string values) are optional. Unknown top-level keys, non-string metadata values, or metadata beyond the limits (`--max-metadata-keys` 32, keys up to 128 characters, `--max-metadata-value-chars` 1024) make the record `malformed`: it is held, never coerced or rewritten. `id`, `source` and `metadata` are emitted by the export and can reach downstream context, so they are screened as material (before the text), not trusted. Use `-` to read stdin. The default stdout is a short summary with no record text; `--json` prints the manifest to stdout instead of the summary.
+
+Every record carries three separate states:
+
+- **detection** (`none`, `flag`, `block`) — what the detector observed on the material it actually checked.
+- **coverage** (`complete`, `partial`, `none`) — how much of the record's material (text and metadata) completed an exercised check: canary and analysis ran and the verdict was not degraded.
+- **admission** (`admitted`, `held`) — the policy decision and the only state the export reads. A record is admitted only when detection is `none`, coverage is `complete`, and every segment passed; `none` detection with `partial` coverage is held.
+
+A held record lists every hold reason that applies: `malformed` (failed validation; nothing checked), `over_budget` (needs more segments or bytes than the policy allows; nothing checked), `blocked`, `flagged`, `degraded` (runtime fail-open routing), `unexercised` (canary or analysis did not run), `error` (the check raised or returned something other than a verdict), and `incomplete` (some segment was never checked). Runtime fail-open never becomes admission.
+
+**Budget and segmentation — never partial.** Text and metadata material are split deterministically into overlapping segments (`--segment-chars` 3500, `--segment-overlap` 500) and each segment is checked; `--segment-chars` above the pipeline's `max_input_length` (4000) is a configuration error. A record that needs more than `--max-segments` (8, text plus metadata) or whose text exceeds `--max-item-bytes` (65536) is held as `over_budget` with zero checks. By default, checking a record stops at the first segment that holds it; the rest are `not_checked` and the record is also `incomplete`. Coverage counts each character once across overlaps. A record is never partly scanned and reported as screened. As with `screen`, `--max-items` (1000) and `--max-total-bytes` (8 MiB) reject the whole run before any check.
+
+**Export is opt-in and hash-bound.** `--export` writes only admitted records, with their exact snapshot text (never truncated or normalized), metadata, `sha256` and `material_sha256`, plus the `manifest_sha256` of the canonical manifest. Held record text is never written anywhere; the manifest holds only hashes, lengths, offsets and states. Files are written atomically; existing paths are refused unless `--overwrite`; the manifest and export paths must differ and may not be the input file or a directory. If the export write fails after the manifest was written, the manifest stays and the exit status is `2`. Before consuming an export, call `little_canary.verify_export(export, manifest)` and refuse on any problem, as [`examples/ingest_consumer.py`](https://github.com/hermes-labs-ai/little-canary/blob/main/examples/ingest_consumer.py) does.
+
+Exit status: `0` when the run completed and every record (non-empty input) was admitted; `1` when every held record was held for detection (`blocked`/`flagged`, including the `incomplete` that follows an early stop after a block or flag); `2` for invalid input or configuration or empty input (nothing written), or when any record was held for `malformed`, `over_budget`, `degraded`, `unexercised`, `error`, or `incomplete` without a `blocked`/`flagged` reason (an operational or coverage hold is never masked by a detection hold elsewhere in the run). Whenever the run completes, the manifest (and export, if requested) is written regardless of exit status; an interrupted run writes neither.
+
+Admitted means the record completed every configured check and satisfied the policy; it is not a statement that the content is harmless.
+
+`screen` reports independent per-item verdicts; `ingest` turns the same checks into a per-record admission decision with an evidence manifest and an optional export. Neither changes `SecurityPipeline.check`.
 
 ## Reading a verdict
 
