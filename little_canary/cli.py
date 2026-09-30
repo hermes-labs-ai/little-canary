@@ -8,6 +8,7 @@ Sub-commands
 serve   Start the persistent HTTP detection server.
 demo    Run the offline replay demo (default) or a loopback live contrast.
 screen  Pre-screen a JSONL batch of documents/messages, one verdict per item.
+ingest  (Experimental) Admit or hold JSONL records; write a manifest and optional export.
 """
 
 from __future__ import annotations
@@ -221,6 +222,93 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-items", type=int, default=1000,
         help="Refuse batches larger than this instead of truncating (default: 1000)",
     )
+
+    # -- ingest -------------------------------------------------------------
+    ingest_parser = subparsers.add_parser(
+        "ingest",
+        help="(Experimental) Admit or hold JSONL records; write a manifest and optional export",
+        description=(
+            "Experimental. Check every JSONL record ({text, id?, source?, metadata?} or a "
+            "JSON string) and admit or hold it under the strict/v1 policy. Writes a "
+            "text-free manifest; --export writes admitted records only. Admitted means "
+            "the record completed the configured checks and satisfied policy. "
+            "Exit 0: every record admitted; 1: held for detection only (blocked/flagged); "
+            "2: invalid input/config (nothing written) or any operational/coverage hold."
+        ),
+    )
+    ingest_parser.add_argument(
+        "input",
+        nargs="?",
+        default="-",
+        help="JSONL file to read, or - for stdin (default: -)",
+    )
+    ingest_parser.add_argument(
+        "--manifest", required=True, metavar="PATH",
+        help="Where to write the evidence manifest (required)",
+    )
+    ingest_parser.add_argument(
+        "--export", default=None, metavar="PATH",
+        help="Also write an export of admitted records only (opt-in)",
+    )
+    ingest_parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Replace existing manifest/export files (default: refuse)",
+    )
+    ingest_parser.add_argument(
+        "--mode", choices=["block", "advisory", "full"], default="full",
+        help="Pipeline mode (default: full)",
+    )
+    ingest_parser.add_argument(
+        "--canary-model", default="qwen2.5:1.5b",
+        help="Ollama model tag for the canary probe (default: qwen2.5:1.5b)",
+    )
+    ingest_parser.add_argument(
+        "--ollama-url", default="http://127.0.0.1:11434",
+        help="Explicit Ollama origin (default: http://127.0.0.1:11434)",
+    )
+    ingest_parser.add_argument(
+        "--timeout", type=timeout_type, default=None,
+        help=f"Seconds per canary call (default: {TIMEOUT_ENV_VAR} or {DEFAULT_CANARY_TIMEOUT:g})",
+    )
+    ingest_parser.add_argument(
+        "--segment-chars", type=int, default=3500,
+        help=(
+            "Max characters per checked segment; must not exceed the pipeline's "
+            "max_input_length, 4000 (default: 3500)"
+        ),
+    )
+    ingest_parser.add_argument(
+        "--segment-overlap", type=int, default=500,
+        help="Characters shared by consecutive segments (default: 500)",
+    )
+    ingest_parser.add_argument(
+        "--max-segments", type=int, default=8,
+        help="Per-record segment budget, text plus metadata; more is held over_budget (default: 8)",
+    )
+    ingest_parser.add_argument(
+        "--max-item-bytes", type=int, default=64 * 1024,
+        help="Hold any record whose text exceeds this many UTF-8 bytes (default: 65536)",
+    )
+    ingest_parser.add_argument(
+        "--max-items", type=int, default=1000,
+        help="Refuse runs with more records than this (default: 1000)",
+    )
+    ingest_parser.add_argument(
+        "--max-total-bytes", type=int, default=8 * 1024 * 1024,
+        help="Refuse runs whose texts total more than this many bytes (default: 8388608)",
+    )
+    ingest_parser.add_argument(
+        "--max-metadata-keys", type=int, default=32,
+        help="Max metadata keys per record; more is malformed (default: 32)",
+    )
+    ingest_parser.add_argument(
+        "--max-metadata-value-chars", type=int, default=1024,
+        help="Max characters per metadata value; more is malformed (default: 1024)",
+    )
+    ingest_parser.add_argument(
+        "--json", action="store_true",
+        help="Print the manifest JSON to stdout instead of the summary",
+    )
     return parser
 
 
@@ -284,6 +372,174 @@ def _run_screen(args) -> int:
     return 0
 
 
+def _same_path(a: str, b: str) -> bool:
+    if os.path.realpath(a) == os.path.realpath(b):
+        return True
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _check_ingest_targets(args) -> str | None:
+    """Return an error message if the output paths are unusable; nothing is written."""
+    targets = [("--manifest", args.manifest)]
+    if args.export is not None:
+        targets.append(("--export", args.export))
+        if _same_path(args.manifest, args.export):
+            return "--manifest and --export must be different paths"
+    for flag, path in targets:
+        if args.input != "-" and _same_path(path, args.input):
+            return f"{flag} must not be the input file"
+        if os.path.isdir(path):
+            return f"{flag} {path} is a directory"
+        if os.path.lexists(path) and not args.overwrite:
+            return f"{flag} {path} already exists (use --overwrite to replace it)"
+    return None
+
+
+def _ingest_exit_code(records) -> int:
+    """2 if any record is held for an operational/coverage reason, else 1 if any is
+    held for detection, else 0.
+
+    ``incomplete`` on a record that is also ``blocked``/``flagged`` is the recorded
+    consequence of that detection (checking stopped, or a structural block skipped
+    the canary), so it counts as a detection hold, like the same input under
+    ``screen``. ``incomplete`` without a detection reason is a coverage hold.
+    """
+    from little_canary.ingest import (
+        HOLD_BLOCKED,
+        HOLD_DEGRADED,
+        HOLD_ERROR,
+        HOLD_FLAGGED,
+        HOLD_MALFORMED,
+        HOLD_OVER_BUDGET,
+        HOLD_UNEXERCISED,
+    )
+
+    operational = {HOLD_MALFORMED, HOLD_OVER_BUDGET, HOLD_DEGRADED, HOLD_UNEXERCISED, HOLD_ERROR}
+    detection = {HOLD_BLOCKED, HOLD_FLAGGED}
+    code = 0
+    for rec in records:
+        reasons = set(rec.hold_reasons)
+        if not reasons:
+            continue
+        if reasons & operational or not reasons & detection:
+            return 2
+        code = 1
+    return code
+
+
+def _run_ingest(args) -> int:
+    """Exit 2: invalid input/config or empty input (nothing written), or any record held
+    for an operational/coverage reason; 1: else any record held for detection;
+    0: non-empty and every record admitted. Record text is never printed."""
+    import sys
+
+    from little_canary.batch import MAX_ITEM_BYTES_CEILING, check_limit
+    from little_canary.ingest import (
+        POLICY_NAME,
+        IngestPolicy,
+        ingest_records,
+        read_records,
+        write_export,
+        write_manifest,
+    )
+    from little_canary.pipeline import SecurityPipeline
+
+    problem = _check_ingest_targets(args)
+    if problem is not None:
+        print(f"error: {problem}", file=sys.stderr)
+        return 2
+
+    try:
+        limits = {
+            "segment_chars": args.segment_chars,
+            "segment_overlap": args.segment_overlap,
+            "max_segments": args.max_segments,
+            "max_item_bytes": args.max_item_bytes,
+            "max_items": args.max_items,
+            "max_total_bytes": args.max_total_bytes,
+            "max_metadata_keys": args.max_metadata_keys,
+            "max_metadata_value_chars": args.max_metadata_value_chars,
+        }
+        for name, value in limits.items():
+            check_limit(name, value, maximum=MAX_ITEM_BYTES_CEILING if name == "max_item_bytes" else None)
+        policy = IngestPolicy(**limits)
+        policy.validate()
+        timeout = args.timeout if args.timeout is not None else _default_timeout()
+        pipeline = SecurityPipeline(
+            canary_model=args.canary_model,
+            ollama_url=args.ollama_url,
+            mode=args.mode,
+            canary_timeout=timeout,
+        )
+        reader_limits = {
+            "max_item_bytes": args.max_item_bytes,
+            "max_metadata_keys": args.max_metadata_keys,
+            "max_metadata_value_chars": args.max_metadata_value_chars,
+        }
+        # All records are read and budgeted before the first check, so malformed
+        # JSON or a run-level limit fails here with zero checks and nothing written.
+        if args.input == "-":
+            result = ingest_records(pipeline, read_records(sys.stdin, **reader_limits), policy=policy)
+        else:
+            with open(args.input, encoding="utf-8") as handle:
+                result = ingest_records(pipeline, read_records(handle, **reader_limits), policy=policy)
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except SystemExit as exc:  # invalid LITTLE_CANARY_TIMEOUT: report as invalid config
+        if exc.code not in (None, 0):
+            print(exc.code, file=sys.stderr)
+        return 2
+
+    if not result.records:
+        print("error: no records in input; nothing written", file=sys.stderr)
+        return 2
+
+    try:
+        manifest_sha = write_manifest(result, args.manifest, overwrite=args.overwrite)
+        export_sha = (
+            write_export(result, args.export, overwrite=args.overwrite)
+            if args.export is not None
+            else None
+        )
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    code = _ingest_exit_code(result.records)
+    if args.json:
+        print(result.manifest_json())
+        return code
+
+    counts = result.counts
+    reasons = " ".join(f"{k}={v}" for k, v in counts["by_reason"].items() if v) or "none"
+    outcome = {
+        0: "every record admitted",
+        1: "held for detection only (blocked/flagged)",
+        2: "held for an operational/coverage reason",
+    }[code]
+    lines = [
+        f"ingest ({POLICY_NAME}): {len(result.records)} records, "
+        f"{counts['admitted']} admitted, {counts['held']} held",
+        f"hold reasons: {reasons}",
+        "detection: " + " ".join(f"{k}={v}" for k, v in counts["detection"].items()),
+        "coverage: " + " ".join(f"{k}={v}" for k, v in counts["coverage"].items()),
+        f"checks performed: {result.checks_performed}",
+        f"manifest: {args.manifest} sha256={manifest_sha}",
+        (
+            f"export: {args.export} sha256={export_sha} ({len(result.admitted)} admitted records)"
+            if export_sha is not None
+            else "export: not requested"
+        ),
+        f"exit {code}: {outcome}",
+    ]
+    print("\n".join(lines))
+    return code
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
 
@@ -320,6 +576,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "screen":
         return _run_screen(args)
+
+    if args.command == "ingest":
+        return _run_ingest(args)
 
     parser.print_help()
     return 1
