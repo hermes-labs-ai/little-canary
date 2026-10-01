@@ -28,7 +28,7 @@ The machine-readable source of truth for this page is
 |---|---|---|---|---|---|
 | Claude Code | 2.1.261 | `UserPromptSubmit` | **yes** — `{"decision":"block"}` | yes | no |
 | OpenCode | 1.18.32 | `chat.message` | **no** — warning only | yes | no |
-| Pi | 0.87.1 | `input` | **yes** — `{"action":"handled"}` | yes | no |
+| Pi | 0.87.1 and 0.99.2 | `input` | **yes** — `{"action":"handled"}` | yes | no |
 | Codex CLI | 0.154.0 | `UserPromptSubmit` | **yes** — `{"decision":"block"}` | yes, install route certified; interception not observed | no |
 | Gemini CLI | 0.32.1 | `BeforeAgent` | **yes** — `{"decision":"deny"}` | yes | no |
 | OpenClaw | 2026.9.5 and 2026.9.6 | `before_agent_run` | **yes** — `{ "outcome": "block" }` | yes, supported embedded/CLI runners | no |
@@ -74,6 +74,11 @@ in an isolated profile. In a print-mode run, a loopback service returning
 reported the block and exited without a model call. Offline tests cover clean,
 flagged, degraded, and unavailable-service results. This is host-dispatch
 evidence using a synthetic verdict, not a live-model detection test.
+Pi 0.99.2 also installed the extension natively with
+`pi install git:github.com/hermes-labs-ai/little-canary@<commit>` in an isolated
+profile; the same synthetic `safe: false` verdict was handled before any model
+call, and a degraded verdict continued with a coverage warning. The npm
+package is not published.
 
 The recommended advisory service mode emits warnings and lets input continue.
 The Pi extension handles input only when the service explicitly returns an
