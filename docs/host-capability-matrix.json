@@ -143,7 +143,7 @@
     {
       "id": "pi",
       "name": "Pi",
-      "observed_version": "0.87.1",
+      "observed_version": "0.87.1 and 0.99.2",
       "shipped_artifact": "plugins/pi",
       "doc_anchor": "### Pi",
       "inbound": {
