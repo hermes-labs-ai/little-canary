@@ -218,5 +218,11 @@ def run_server(
         except KeyboardInterrupt:
             logger.info("🐤 Shutting down...")
             server.shutdown()
-    finally:
+    except BaseException as exc:
+        try:
+            server.server_close()
+        except BaseException as close_error:
+            raise exc from close_error
+        raise
+    else:
         server.server_close()

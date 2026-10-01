@@ -386,3 +386,48 @@ def test_run_server_closes_on_other_post_construction_errors(failure_site, monke
     else:
         httpd.serve_forever.assert_not_called()
         httpd.shutdown.assert_not_called()
+
+
+@pytest.mark.parametrize("failure_site", ["health_check", "serve_forever", "shutdown"])
+def test_run_server_preserves_original_error_when_close_also_fails(failure_site, monkeypatch):
+    import little_canary.server as server_mod
+
+    pipeline = MagicMock()
+    pipeline.health_check.return_value = {"ready": True}
+    monkeypatch.setattr(server_mod, "_pipeline", pipeline)
+    httpd = MagicMock()
+    failure = RuntimeError("offline lifecycle failure")
+    close_failure = OSError("offline close failure")
+    httpd.server_close.side_effect = close_failure
+    if failure_site == "health_check":
+        pipeline.health_check.side_effect = failure
+    elif failure_site == "serve_forever":
+        httpd.serve_forever.side_effect = failure
+    else:
+        httpd.serve_forever.side_effect = KeyboardInterrupt
+        httpd.shutdown.side_effect = failure
+
+    with patch.object(server_mod, "create_server", return_value=httpd), pytest.raises(RuntimeError) as caught:
+        server_mod.run_server(port=0)
+
+    assert caught.value is failure
+    assert caught.value.__cause__ is close_failure
+    httpd.server_close.assert_called_once_with()
+
+
+def test_run_server_propagates_close_error_after_normal_return(monkeypatch):
+    import little_canary.server as server_mod
+
+    pipeline = MagicMock()
+    pipeline.health_check.return_value = {"ready": True}
+    monkeypatch.setattr(server_mod, "_pipeline", pipeline)
+    httpd = MagicMock()
+    failure = OSError("offline close failure")
+    httpd.server_close.side_effect = failure
+
+    with patch.object(server_mod, "create_server", return_value=httpd), pytest.raises(OSError) as caught:
+        server_mod.run_server(port=0)
+
+    assert caught.value is failure
+    httpd.server_close.assert_called_once_with()
+    httpd.shutdown.assert_not_called()
