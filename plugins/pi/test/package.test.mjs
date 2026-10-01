@@ -13,8 +13,20 @@ test("Pi package version matches the core release", () => {
   const core = readFileSync(resolve(root, "../../little_canary/__init__.py"), "utf8");
   const version = core.match(/^__version__ = "([^"]+)"/m)?.[1];
   assert.equal(manifest.version, version);
+});
+
+test("README documents the working Git install, not the unpublished npm package", () => {
   const readme = readFileSync(resolve(root, "README.md"), "utf8");
-  assert.ok(readme.includes(`pi install npm:${manifest.name}@${version}`));
+  assert.ok(readme.includes("pi install git:github.com/hermes-labs-ai/little-canary\n"));
+  assert.ok(!/pi install npm:\S+@/.test(readme));
+});
+
+test("repository-root manifest exposes only the Pi extension to Git installs", () => {
+  const rootManifest = JSON.parse(readFileSync(resolve(root, "../../package.json"), "utf8"));
+  assert.equal(rootManifest.private, true);
+  assert.deepEqual(rootManifest.pi, { extensions: ["./plugins/pi/index.js"] });
+  assert.deepEqual(rootManifest.engines, manifest.engines);
+  assert.equal(rootManifest.dependencies, undefined);
 });
 
 test("npm archive contains only the standalone Pi package", () => {
