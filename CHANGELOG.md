@@ -13,6 +13,10 @@ Benchmark and latency figures in entries before `0.3.3` are historical release n
 
 - `little-canary screen` and `little_canary.batch.screen_batch`: batch pre-screening with independent per-item verdicts, provenance (index/id/source/SHA-256), per-item errors reported as `degraded` (never `pass`), no echo of item text, and all-or-nothing admission with item-count, per-item and aggregate byte limits. Safety semantics of `SecurityPipeline.check` are unchanged.
 
+### Fixed
+
+- Pi install: the documented `pi install npm:@hermes-labs/little-canary-pi@0.4.0` returned 404 because the npm package was never published. A private root `package.json` now exposes only `plugins/pi/index.js`, so `pi install git:github.com/hermes-labs-ai/little-canary` works natively.
+
 ## [0.4.0] - 2026-09-29
 
 Minor release. Bare `little-canary demo` now works out of the box with a

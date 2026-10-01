@@ -74,6 +74,11 @@ in an isolated profile. In a print-mode run, a loopback service returning
 reported the block and exited without a model call. Offline tests cover clean,
 flagged, degraded, and unavailable-service results. This is host-dispatch
 evidence using a synthetic verdict, not a live-model detection test.
+Pi 0.99.2 also installed the extension natively with
+`pi install git:github.com/hermes-labs-ai/little-canary@<commit>` in an isolated
+profile; the same synthetic `safe: false` verdict was handled before any model
+call, and a degraded verdict continued with a coverage warning. The npm
+package is not published.
 
 The recommended advisory service mode emits warnings and lets input continue.
 The Pi extension handles input only when the service explicitly returns an
