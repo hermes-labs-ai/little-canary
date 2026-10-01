@@ -2,6 +2,7 @@
 
 import json
 import threading
+from functools import partial
 from http.client import HTTPConnection
 from unittest.mock import MagicMock, patch
 
@@ -282,6 +283,10 @@ def test_run_server_logs_readiness_and_shuts_down(ready, monkeypatch, caplog):
     create.assert_called_once()
     mock_server.serve_forever.assert_called_once_with()
     mock_server.shutdown.assert_called_once_with()
+    mock_server.server_close.assert_called_once_with()
+    assert mock_server.method_calls[-2:] == [
+        ("shutdown", (), {}), ("server_close", (), {}),
+    ]
     assert "Shutting down" in caplog.text
     assert ("server ready" if ready else "DEGRADED") in caplog.text
 
@@ -310,3 +315,74 @@ def test_create_server_binds_loopback_and_initializes_pipeline(monkeypatch):
         httpd.server_close()
         server_mod._pipeline = original_pipeline
     assert httpd.socket.fileno() == -1
+
+
+@pytest.mark.parametrize("exit_path", ["interrupt", "serve_error", "health_error", "return"])
+def test_run_server_closes_real_socket_and_allows_rebind(exit_path, monkeypatch):
+    from http.server import HTTPServer
+
+    import little_canary.server as server_mod
+
+    pipeline = MagicMock()
+    pipeline.health_check.return_value = {"ready": True}
+    failure = RuntimeError("offline lifecycle failure")
+    if exit_path == "health_error":
+        pipeline.health_check.side_effect = failure
+    monkeypatch.setattr(server_mod, "_pipeline", pipeline)
+
+    httpd = HTTPServer(("127.0.0.1", 0), server_mod._CanaryHandler)
+    address = httpd.server_address
+    if exit_path == "return":
+        monkeypatch.setattr(httpd, "serve_forever", MagicMock())
+    else:
+        # Exercise the real serving loop, including its shutdown-event cleanup.
+        monkeypatch.setattr(httpd, "serve_forever", partial(httpd.serve_forever, poll_interval=0.001))
+        monkeypatch.setattr(
+            httpd, "service_actions",
+            MagicMock(side_effect=KeyboardInterrupt if exit_path == "interrupt" else failure),
+        )
+
+    try:
+        with patch.object(server_mod, "create_server", return_value=httpd):
+            if exit_path in {"serve_error", "health_error"}:
+                with pytest.raises(RuntimeError) as caught:
+                    server_mod.run_server(port=address[1])
+                assert caught.value is failure
+            else:
+                server_mod.run_server(port=address[1])
+
+        with HTTPServer(address, server_mod._CanaryHandler):
+            assert httpd.socket.fileno() == -1
+    finally:
+        # Preserve isolation even when this regression fails against old code.
+        httpd.server_close()
+
+
+@pytest.mark.parametrize("failure_site", ["pipeline_assertion", "startup_log", "shutdown"])
+def test_run_server_closes_on_other_post_construction_errors(failure_site, monkeypatch):
+    import little_canary.server as server_mod
+
+    pipeline = MagicMock()
+    pipeline.health_check.return_value = {"ready": True}
+    monkeypatch.setattr(server_mod, "_pipeline", None if failure_site == "pipeline_assertion" else pipeline)
+    httpd = MagicMock()
+    failure = RuntimeError("offline lifecycle failure")
+    if failure_site == "shutdown":
+        httpd.serve_forever.side_effect = KeyboardInterrupt
+        httpd.shutdown.side_effect = failure
+    if failure_site == "startup_log":
+        monkeypatch.setattr(server_mod.logger, "info", MagicMock(side_effect=failure))
+
+    with patch.object(server_mod, "create_server", return_value=httpd):
+        expected = AssertionError if failure_site == "pipeline_assertion" else RuntimeError
+        with pytest.raises(expected) as caught:
+            server_mod.run_server(port=0)
+        if expected is RuntimeError:
+            assert caught.value is failure
+
+    httpd.server_close.assert_called_once_with()
+    if failure_site == "shutdown":
+        httpd.shutdown.assert_called_once_with()
+    else:
+        httpd.serve_forever.assert_not_called()
+        httpd.shutdown.assert_not_called()
