@@ -70,6 +70,16 @@ and coverage diagnostics without changing the default canary or detector rules.
 
 ### Added
 
+- Document/tool-result guard with overlapping chunks and an explicit local
+  context-classifier option (`qwen3.5:4b`). It holds unavailable or incomplete
+  inspection and returns the original text only after all chunks pass. A local
+  Agents SDK example enforces this boundary on each documentation fetch.
+
+- Packaged `little-canary check` command: live stdin inspection with explicit
+  forwarding decisions, coverage, layer reasons, and exit codes. The README
+  includes isolated installation, local Ollama setup, and the known benign
+  quotation false positive. Existing library routing and detectors are unchanged.
+
 - Local exercise of Qwen3.5 2B, Liquid LFM2.5 1.2B, and Gemma 3 1B through
   the CLI, Python pipeline, and Hermes Agent model-selection paths. The
   default remains `qwen2.5:1.5b`.
