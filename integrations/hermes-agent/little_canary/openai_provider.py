@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from typing import Any
 
 import requests  # type: ignore[import-untyped]
 
@@ -93,7 +94,7 @@ class OpenAICanaryProbe:
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
 
-            payload = {
+            payload: dict[str, Any] = {
                 "model": self.model,
                 "messages": [
                     {"role": "system", "content": self.system_prompt},
@@ -353,7 +354,7 @@ class OpenAILLMJudge:
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
 
-            payload = {
+            payload: dict[str, Any] = {
                 "model": self.model,
                 "messages": [
                     {"role": "system", "content": JUDGE_SYSTEM_PROMPT},

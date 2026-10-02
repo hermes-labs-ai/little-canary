@@ -35,7 +35,7 @@ class StructuralFilter:
     def __init__(
         self,
         max_input_length: int = 4000,
-        custom_patterns: list[tuple[str, str]] = None,
+        custom_patterns: list[tuple[str, str]] | None = None,
     ):
         self.max_input_length = max_input_length
         self.custom_patterns = custom_patterns or []
