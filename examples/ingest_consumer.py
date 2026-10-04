@@ -5,9 +5,13 @@ Produce the pair first (the export is opt-in and holds admitted records only):
 
     little-canary ingest records.jsonl --manifest manifest.json --export admitted.json
 
-Then consume it:
+Then consume it, pinning the manifest sha256 that the ingest run printed:
 
-    python examples/ingest_consumer.py --manifest manifest.json --export admitted.json
+    python examples/ingest_consumer.py --manifest manifest.json --export admitted.json --expect-manifest-sha256 <sha256>
+
+Without the pin the consumer refuses, unless ``--allow-unpinned`` is given: the
+pair is then checked for consistency only (with a warning), and anyone who can
+write both files can forge one that passes.
 
 All-or-nothing: the consumer verifies the whole pair before handing anything
 downstream. On any problem it exits 2 having consumed nothing. It does not trust
@@ -176,12 +180,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=(
             "The manifest sha256 printed by the `little-canary ingest` run you trust. "
             "Verification without it proves only that the two files are consistent with "
-            "each other, not that they came from a screening run."
+            "each other, not that they came from a screening run. Required unless --allow-unpinned."
+        ),
+    )
+    parser.add_argument(
+        "--allow-unpinned",
+        action="store_true",
+        help=(
+            "Consume without --expect-manifest-sha256: the pair is then checked for consistency "
+            "only, and anyone who can write both files can forge one that passes."
         ),
     )
     args = parser.parse_args(argv)
 
     try:
+        if args.expect_manifest_sha256 is None and not args.allow_unpinned:
+            raise Refused([
+                "no --expect-manifest-sha256 given; pin the manifest sha256 printed by the ingest run "
+                "you trust, or pass --allow-unpinned to accept a pair checked for consistency only"
+            ])
         manifest, manifest_bytes = _load_with_bytes(args.manifest, "manifest")
         export = _load(args.export, "export")
         if args.expect_manifest_sha256 is not None:
@@ -190,7 +207,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise Refused(["manifest sha256 does not match --expect-manifest-sha256"])
         else:
             print(
-                "WARNING: no --expect-manifest-sha256 given; the pair is checked for consistency only, "
+                "WARNING: --allow-unpinned without --expect-manifest-sha256; the pair is checked for consistency only, "
                 "not for authenticity (anyone who can write both files can forge a matching pair)",
                 file=sys.stderr,
             )

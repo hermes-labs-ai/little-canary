@@ -307,18 +307,18 @@ def test_missing_or_unreadable_file_refused_exit_2(pair, capsys, which, content)
         target.write_bytes(content)
     problems = _refused(mpath, epath)
     assert len(problems) == 1 and problems[0].startswith(f"cannot read {which}")
-    assert consumer.main(["--manifest", str(mpath), "--export", str(epath)]) == 2
+    assert consumer.main(["--manifest", str(mpath), "--export", str(epath), "--allow-unpinned"]) == 2
     assert SENTINEL not in "".join(capsys.readouterr())
 
 
 def test_directory_path_refused_exit_2(pair, tmp_path):
-    assert consumer.main(["--manifest", str(tmp_path), "--export", str(pair[1])]) == 2
+    assert consumer.main(["--manifest", str(tmp_path), "--export", str(pair[1]), "--allow-unpinned"]) == 2
 
 
 # (8) main exit codes + (9) no text in output -----------------------------------
 
 def test_main_exit_0_lists_consumed_and_held_without_text(pair, capsys):
-    assert consumer.main(["--manifest", str(pair[0]), "--export", str(pair[1])]) == 0
+    assert consumer.main(["--manifest", str(pair[0]), "--export", str(pair[1]), "--allow-unpinned"]) == 0
     out, err = capsys.readouterr()
     assert "consumed indices (verified against the manifest): [0, 6, 9]" in out
     assert "held record 1: blocked" in out
@@ -333,7 +333,7 @@ def test_main_exit_2_on_refusal_without_text(pair, capsys):
     export["records"][0]["text"] = export["records"][0]["text"].replace("alpha", "alphA")
     export["records"].append(_held_export_record(2, _text(2)))
     _dump(epath, export)
-    assert consumer.main(["--manifest", str(mpath), "--export", str(epath)]) == 2
+    assert consumer.main(["--manifest", str(mpath), "--export", str(epath), "--allow-unpinned"]) == 2
     out, err = capsys.readouterr()
     assert out == ""
     assert "REFUSED: nothing consumed" in err
@@ -348,7 +348,8 @@ def test_main_requires_both_paths():
 
 def test_cli_smoke_subprocess(pair):
     env = dict(os.environ, PYTHONPATH=str(ROOT))
-    cmd = [sys.executable, str(CONSUMER_PATH), "--manifest", str(pair[0]), "--export", str(pair[1])]
+    cmd = [sys.executable, str(CONSUMER_PATH), "--manifest", str(pair[0]), "--export", str(pair[1]),
+           "--expect-manifest-sha256", _msha(pair[0])]
     ok = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
     assert ok.returncode == 0, ok.stderr
     assert "[0, 6, 9]" in ok.stdout
@@ -376,6 +377,10 @@ def _msha(mpath):
 
 
 def _main(mpath, epath, *extra):
+    """Run the consumer; ``--allow-unpinned`` is added unless a pin is given, so a refusal is due to
+    the pair itself (the unpinned default refusal is tested separately)."""
+    if "--expect-manifest-sha256" not in extra:
+        extra = (*extra, "--allow-unpinned")
     return consumer.main(["--manifest", str(mpath), "--export", str(epath), *extra])
 
 
@@ -400,10 +405,32 @@ def test_expected_manifest_sha256_mismatch_refused_exit_2(pair, capsys):
     assert SENTINEL not in out + err
 
 
-def test_missing_expected_sha256_prints_consistency_not_authenticity_warning(pair, capsys):
-    """Semantic I: without --expect-manifest-sha256 a WARNING on stderr says the pair is checked for
-    consistency only, not authenticity."""
-    assert _main(*pair) == 0
+def test_missing_expected_sha256_is_refused_by_default(pair, capsys, monkeypatch):
+    """Final review F3: without --expect-manifest-sha256 (and without --allow-unpinned) the consumer
+    fails closed: exit 2, nothing consumed, and it says how to pin or opt out."""
+    got = []
+    monkeypatch.setattr(consumer, "_stub_downstream", got.append)
+    assert consumer.main(["--manifest", str(pair[0]), "--export", str(pair[1])]) == 2
+    out, err = capsys.readouterr()
+    assert got == [] and out == ""
+    assert "REFUSED: nothing consumed" in err
+    assert "no --expect-manifest-sha256 given" in err and "--allow-unpinned" in err
+    assert SENTINEL not in out + err
+
+
+def test_cli_subprocess_unpinned_is_refused_by_default(pair):
+    """Final review F3: the example run as a script with no pin exits 2 and consumes nothing."""
+    env = dict(os.environ, PYTHONPATH=str(ROOT))
+    cmd = [sys.executable, str(CONSUMER_PATH), "--manifest", str(pair[0]), "--export", str(pair[1])]
+    proc = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 2 and proc.stdout == ""
+    assert "nothing consumed" in proc.stderr and "--allow-unpinned" in proc.stderr
+
+
+def test_allow_unpinned_prints_consistency_not_authenticity_warning(pair, capsys):
+    """Semantic I: with --allow-unpinned and no --expect-manifest-sha256 a WARNING on stderr says the
+    pair is checked for consistency only, not authenticity."""
+    assert consumer.main(["--manifest", str(pair[0]), "--export", str(pair[1]), "--allow-unpinned"]) == 0
     err = capsys.readouterr().err
     warning = [line for line in err.splitlines() if line.startswith("WARNING:")]
     assert len(warning) == 1
@@ -429,12 +456,15 @@ def _forge_pair(tmp_path, mark_requested):
 
 
 def test_forged_consistent_pair_is_refused_only_by_expected_sha256(pair, tmp_path, capsys):
-    """Semantic I: a self-consistent forged pair passes the consistency checks (with the WARNING), and
-    is refused, nothing consumed, when --expect-manifest-sha256 names the trusted run."""
+    """Semantic I: a self-consistent forged pair passes the consistency checks (consumed, with the
+    WARNING, only under --allow-unpinned), is refused unpinned by default, and is refused, nothing
+    consumed, when --expect-manifest-sha256 names the trusted run."""
     trusted = _msha(pair[0])
     mpath, epath = _forge_pair(tmp_path, mark_requested=True)
     assert verify_export(_load(epath), _load(mpath), manifest_bytes=mpath.read_bytes()) == []
-    assert _main(mpath, epath) == 0
+    assert consumer.main(["--manifest", str(mpath), "--export", str(epath)]) == 2
+    assert "no --expect-manifest-sha256 given" in capsys.readouterr().err
+    assert _main(mpath, epath, "--allow-unpinned") == 0
     assert "WARNING" in capsys.readouterr().err
     assert _main(mpath, epath, "--expect-manifest-sha256", trusted) == 2
     out, err = capsys.readouterr()
