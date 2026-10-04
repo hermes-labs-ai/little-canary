@@ -53,10 +53,9 @@ from little_canary.ingest import (
 )
 from little_canary.pipeline import PipelineVerdict, SecurityAdvisory, SecurityPipeline
 
-# Most tests drive stand-in pipelines, which need the explicit opt-in (their manifests record
-# canary_context_verified false); a real SecurityPipeline is fully gated either way.
-gated_ingest_records = ingest_records
-ingest_records = functools.partial(gated_ingest_records, unverified_pipeline=True)
+# Stand-in pipelines need the explicit opt-in (their manifests record canary_context_verified
+# false); a real SecurityPipeline is fully gated either way.
+ingest_records = functools.partial(ingest_records, unverified_pipeline=True)
 
 SENTINEL = "SENTINEL-w7-4d91e2"
 
