@@ -1,6 +1,7 @@
 """`little-canary ingest` CLI: exit codes, file writing rules, output hygiene."""
 
 import errno
+import functools
 import hashlib
 import io
 import json
@@ -15,6 +16,7 @@ import requests
 
 from little_canary import batch, verify_export
 from little_canary import canary as canary_module
+from little_canary import ingest as ingest_module
 from little_canary.canary import DEFAULT_CANARY_SYSTEM_PROMPT
 from little_canary.cli import main
 from little_canary.ingest import MAX_METADATA_KEY_CHARS
@@ -25,6 +27,8 @@ SENTINEL_META = "SENTINEL-META-9b2d-do-not-print"
 SENTINEL_ID = "SENTINEL-ID-71aa-do-not-print"
 SENTINEL_SOURCE = "SENTINEL-SOURCE-5e03-do-not-print"
 SENTINEL_KEY = "SENTINEL-KEY-c8f6-do-not-print"
+# The one problem verify_export reports for a pair produced through a stand-in pipeline.
+UNVERIFIED = "manifest does not record a verified canary context window"
 
 
 class UnexpectedRequest(BaseException):
@@ -128,11 +132,20 @@ def _jsonl(*records):
     return "".join(json.dumps(r) + "\n" for r in records)
 
 
-def _run(argv, capsys, stdin="", pipeline=None):
-    """``stdin`` is a str (text-only stand-in, no ``.buffer``) or a ready stream object."""
+def _run(argv, capsys, stdin="", pipeline=None, unverified=True):
+    """``stdin`` is a str (text-only stand-in, no ``.buffer``) or a ready stream object.
+
+    The CLI never opts in to an unverified pipeline; ``unverified`` adds the opt-in
+    (as the stand-in needs) by patching ``ingest_records``, so these manifests record
+    ``canary_context_verified: false``.
+    """
     pipeline = pipeline if pipeline is not None else FakePipeline()
     stream = io.StringIO(stdin) if isinstance(stdin, str) else stdin
+    ingest = ingest_module.ingest_records
+    if unverified:
+        ingest = functools.partial(ingest, unverified_pipeline=True)
     with patch("little_canary.pipeline.SecurityPipeline", return_value=pipeline), \
+            patch("little_canary.ingest.ingest_records", ingest), \
             patch("sys.stdin", stream):
         code = main(argv)
     out = capsys.readouterr()
@@ -249,10 +262,20 @@ def test_export_contains_only_admitted_and_verifies(paths, capsys):
     export = json.loads(paths.export.read_text())
     assert [r["index"] for r in export["records"]] == [0, 3]
     assert [r["text"] for r in export["records"]] == ["keep me", "also keep"]
-    assert verify_export(export, manifest) == []
+    assert verify_export(export, manifest) == [UNVERIFIED]
     assert _summary_sha(out.out, "manifest") == hashlib.sha256(paths.manifest.read_bytes()).hexdigest()
     assert _summary_sha(out.out, "export") == hashlib.sha256(paths.export.read_bytes()).hexdigest()
     assert export["manifest_sha256"] == hashlib.sha256(paths.manifest.read_bytes()).hexdigest()
+
+
+def test_cli_never_opts_in_to_an_unverified_pipeline(paths, capsys):
+    """Final review F1: the CLI never passes unverified_pipeline, so a pipeline that is not a
+    SecurityPipeline is refused: exit 3, zero checks, nothing written."""
+    code, out, p = _run(["ingest", "-", "--manifest", str(paths.manifest), "--export", str(paths.export)],
+                        capsys, stdin=_jsonl("fine"), unverified=False)
+    assert code == 3 and p.calls == 0
+    assert "ingest needs a SecurityPipeline" in out.err
+    assert list(paths.dir.iterdir()) == []
 
 
 def test_existing_manifest_refused_without_overwrite_before_any_check(paths, capsys):
@@ -276,7 +299,7 @@ def test_overwrite_replaces_existing_files(paths, capsys):
     code, _, _ = _ingest(paths, capsys, ["fine"], "--export", str(paths.export), "--overwrite")
     assert code == 0
     manifest = json.loads(paths.manifest.read_text())
-    assert verify_export(json.loads(paths.export.read_text()), manifest) == []
+    assert verify_export(json.loads(paths.export.read_text()), manifest) == [UNVERIFIED]
 
 
 def test_same_manifest_and_export_path_exits_3(paths, capsys):
@@ -472,7 +495,7 @@ def test_overwrite_successful_rerun_replaces_both(paths, capsys):
     export = json.loads(paths.export.read_text())
     assert paths.manifest.read_bytes() != first_manifest and paths.export.read_bytes() != first_export
     assert [r["text"] for r in export["records"]] == ["second", "third"]
-    assert verify_export(export, manifest) == []
+    assert verify_export(export, manifest) == [UNVERIFIED]
     assert sorted(p.name for p in paths.dir.iterdir()) == ["export.json", "manifest.json"]
 
 
@@ -695,6 +718,7 @@ def test_real_pipeline_sizes_canary_context_and_holds_degraded(paths, capsys, ht
     manifest = json.loads(paths.manifest.read_text())
     assert manifest["pipeline"]["canary_num_ctx"] == _EXPECTED_NUM_CTX
     assert manifest["pipeline"]["canary_context_length"] == 32768
+    assert manifest["pipeline"]["canary_context_verified"] is True
     rec = manifest["records"][0]
     assert rec["admission"] == "held" and "degraded" in rec["hold_reasons"]
     assert code == 2 and "exit 2" in out.out

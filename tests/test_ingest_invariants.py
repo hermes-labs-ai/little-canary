@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import functools
 import hashlib
 import io
 import json
@@ -51,6 +52,11 @@ from little_canary.ingest import (
     write_manifest,
 )
 from little_canary.pipeline import PipelineVerdict, SecurityAdvisory, SecurityPipeline
+
+# Most tests drive stand-in pipelines, which need the explicit opt-in (their manifests record
+# canary_context_verified false); a real SecurityPipeline is fully gated either way.
+gated_ingest_records = ingest_records
+ingest_records = functools.partial(gated_ingest_records, unverified_pipeline=True)
 
 SENTINEL = "SENTINEL-w7-4d91e2"
 
@@ -136,6 +142,18 @@ def _clock():
 def _run(records, pipe=None, **policy_kw):
     pipe = pipe if pipe is not None else Recorder()
     return ingest_records(pipe, records, policy=IngestPolicy(**policy_kw), now=_clock), pipe
+
+
+def _run_verified(records, pipe=None, **policy_kw):
+    """``_run``, standing in for a SecurityPipeline run whose canary context passed the gate.
+
+    A stand-in's manifest records ``canary_context_verified: false``, which
+    ``verify_export`` always refuses; pairs that exercise verify_export's other
+    checks need the flag set so every other problem stays observable.
+    """
+    res, pipe = _run(records, pipe, **policy_kw)
+    res.pipeline_info["canary_context_verified"] = True
+    return res, pipe
 
 
 def _sha(s):
@@ -893,7 +911,7 @@ def test_export_metadata_equals_screened_snapshot():
 def _pair():
     recs = [{"text": "alpha", "id": "a", "metadata": {"k": "v"}}, "BLK held",
             {"text": "gamma", "source": "s"}, "delta"]
-    res, _ = _run(recs)
+    res, _ = _run_verified(recs)
     return res.export_document(), res.manifest()
 
 
@@ -1131,7 +1149,7 @@ _OVERLAP_POLICY = {"segment_chars": 10, "segment_overlap": 4, "max_segments": 40
 
 def _published(tmp_path, records, **policy_kw):
     """A valid pair as publish() wrote it: (export, manifest, manifest bytes)."""
-    res, _ = _run(records, **policy_kw)
+    res, _ = _run_verified(records, **policy_kw)
     tmp_path.mkdir(parents=True, exist_ok=True)
     mpath, epath = tmp_path / "m.json", tmp_path / "e.json"
     publish(res, mpath, epath)

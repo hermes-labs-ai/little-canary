@@ -1,6 +1,7 @@
 """examples/ingest_consumer.py: held, tampered or unassessed records never reach downstream."""
 
 import copy
+import functools
 import hashlib
 import importlib.util
 import json
@@ -23,6 +24,11 @@ from little_canary import (
 )
 from little_canary.ingest import EXPORT_SCHEMA, MANIFEST_SCHEMA, POLICY_NAME
 from little_canary.pipeline import PipelineVerdict, SecurityAdvisory
+
+# Most tests drive stand-in pipelines, which need the explicit opt-in (their manifests record
+# canary_context_verified false); a real SecurityPipeline is fully gated either way.
+gated_ingest_records = ingest_records
+ingest_records = functools.partial(gated_ingest_records, unverified_pipeline=True)
 
 ROOT = Path(__file__).resolve().parent.parent
 CONSUMER_PATH = ROOT / "examples" / "ingest_consumer.py"
@@ -121,7 +127,14 @@ def _material(rec):
 
 
 def _run(records=RECORDS):
-    return ingest_records(FakePipeline(), records, policy=POLICY, now=_clock)
+    """A stand-in run marked as a SecurityPipeline run whose canary context passed the gate.
+
+    A stand-in's manifest records ``canary_context_verified: false``, which the
+    consumer always refuses; these tests exercise the consumer's other checks.
+    """
+    result = ingest_records(FakePipeline(), records, policy=POLICY, now=_clock)
+    result.pipeline_info["canary_context_verified"] = True
+    return result
 
 
 @pytest.fixture
@@ -344,6 +357,16 @@ def test_cli_smoke_subprocess(pair):
     assert bad.returncode == 2
     assert "nothing consumed" in bad.stderr
     assert SENTINEL not in ok.stdout + ok.stderr + bad.stdout + bad.stderr
+
+
+def test_pair_from_an_unverified_pipeline_is_refused(tmp_path):
+    """Final review F1: a pair whose manifest records canary_context_verified false (a stand-in run
+    with unverified_pipeline=True) is refused whole, even though every other check passes."""
+    result = ingest_records(FakePipeline(), RECORDS, policy=POLICY, now=_clock)
+    assert result.pipeline_info["canary_context_verified"] is False
+    mpath, epath = tmp_path / "manifest.json", tmp_path / "admitted.json"
+    publish(result, mpath, epath)
+    assert _refused(mpath, epath) == ["manifest does not record a verified canary context window"]
 
 
 # (10) --expect-manifest-sha256 / consistency-vs-authenticity warning ----------

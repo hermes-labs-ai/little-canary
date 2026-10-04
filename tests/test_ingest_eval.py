@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import re
@@ -13,6 +14,11 @@ from benchmarks.ingest_eval import run_eval
 from little_canary import IngestPolicy, ingest_records
 from little_canary.ingest import required_canary_context
 from little_canary.pipeline import PipelineVerdict
+
+# Most tests drive stand-in pipelines, which need the explicit opt-in (their manifests record
+# canary_context_verified false); a real SecurityPipeline is fully gated either way.
+gated_ingest_records = ingest_records
+ingest_records = functools.partial(gated_ingest_records, unverified_pipeline=True)
 
 SENTINEL = "SENTINEL-4c1e-must-not-appear"
 

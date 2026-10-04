@@ -125,7 +125,9 @@ Ollama's `/api/show` does not report a trained context length at least that
 large for the canary model, including when the backend is unreachable. The
 value used is recorded as
 `canary_num_ctx` in the `--json` header (`null` for the offline fake, which has
-no canary).
+no canary). The offline fake runs with `ingest_records(..., unverified_pipeline=True)`,
+so its manifest records `pipeline.canary_context_verified: false` and `verify_export`
+refuses it.
 
 ```sh
 # scorer self-test, no model (deterministic stand-in; NOT a detector result)

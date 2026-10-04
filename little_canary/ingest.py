@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from . import batch
-from .pipeline import PipelineVerdict
+from .pipeline import PipelineVerdict, SecurityPipeline
 
 logger = logging.getLogger("little_canary.ingest")
 
@@ -773,7 +773,7 @@ def _signals(payload: Mapping[str, Any]) -> list[str]:
     return out
 
 
-def _pipeline_info(pipeline: Any) -> dict[str, Any]:
+def _pipeline_info(pipeline: Any, context_verified: bool) -> dict[str, Any]:
     def prim(value: Any) -> Any:
         return value if isinstance(value, (str, bool)) or value is None else None
 
@@ -788,6 +788,7 @@ def _pipeline_info(pipeline: Any) -> dict[str, Any]:
         "canary_enabled": prim(getattr(pipeline, "enable_canary", None)),
         "canary_num_ctx": _int_or_none(getattr(getattr(pipeline, "canary_probe", None), "num_ctx", None)),
         "canary_context_length": _int_or_none(getattr(getattr(pipeline, "canary_probe", None), "last_context_length", None)),
+        "canary_context_verified": context_verified,
     }
 
 
@@ -999,8 +1000,21 @@ def required_canary_context(policy: IngestPolicy, pipeline: Any) -> int | None:
     return 4 * policy.segment_chars + prompt_bytes + max(0, reply) + CANARY_CONTEXT_RESERVE
 
 
+def _is_security_pipeline(pipeline: Any) -> bool:
+    """A ``SecurityPipeline`` whose ``check`` is the library's own, so the gate's probe is the one checked."""
+    return (
+        isinstance(pipeline, SecurityPipeline)
+        and type(pipeline).check is SecurityPipeline.check
+        and "check" not in getattr(pipeline, "__dict__", {})
+    )
+
+
 def _check_canary_context(
-    policy: IngestPolicy, pipeline: Any, verified: tuple[Any, ...] | None = None
+    policy: IngestPolicy,
+    pipeline: Any,
+    verified: tuple[Any, ...] | None = None,
+    *,
+    unverified_pipeline: bool = False,
 ) -> tuple[Any, ...] | None:
     """Refuse before any check unless the canary can read every whole segment.
 
@@ -1008,6 +1022,12 @@ def _check_canary_context(
     canary so a later re-check of the same probe object, model and endpoint can
     reuse the trained length (``verified``) instead of querying ``/api/show``
     again; ``None`` otherwise.
+
+    Only a ``SecurityPipeline`` (without an overridden ``check``) can be
+    verified: for a wrapper or stand-in the gate cannot know which canary, if
+    any, its ``check`` reaches. Any other pipeline is refused unless
+    ``unverified_pipeline`` is set, and then the run records
+    ``canary_context_verified: false`` (see ``ingest_records``).
 
     Ollama: ``num_ctx`` must be set and at least ``required_canary_context``, and
     the model's trained context length (``CanaryProbe.context_length()``, from
@@ -1020,6 +1040,12 @@ def _check_canary_context(
     from .analyzer import BehavioralAnalyzer
     from .canary import CanaryProbe
 
+    if not unverified_pipeline and not _is_security_pipeline(pipeline):
+        raise ValueError(
+            "ingest needs a SecurityPipeline: the canary context window of a wrapper or stand-in "
+            "pipeline cannot be verified; pass unverified_pipeline=True to run it anyway "
+            "(the manifest then records canary_context_verified false and verify_export refuses it)"
+        )
     if getattr(pipeline, "enable_canary", True) is False:
         return None
     if getattr(pipeline, "use_judge", False) is True or (
@@ -1072,19 +1098,28 @@ def ingest_records(
     *,
     policy: IngestPolicy | None = None,
     now: Callable[[], datetime] | None = None,
+    unverified_pipeline: bool = False,
 ) -> IngestResult:
     """Screen every record's material and decide admission under ``policy``.
 
     All records are read, snapshotted and budgeted before any check runs.
     Run-level ``ValueError`` (nothing checked, nothing returned): invalid policy,
-    ``segment_chars`` above the pipeline's structural ``max_input_length``, an
-    Ollama canary whose ``num_ctx`` is unset or smaller than
+    ``segment_chars`` above the pipeline's structural ``max_input_length``, a
+    pipeline that is not a ``SecurityPipeline`` (unless ``unverified_pipeline``),
+    an Ollama canary whose ``num_ctx`` is unset or smaller than
     ``required_canary_context`` (the backend would silently truncate a long
     segment and the manifest would still call it exercised), more
     than ``max_items`` records, summed text bytes above ``max_total_bytes``, or a
     record that is not a string/object/IngestRecord/BatchItem. Record-level
     problems are held records, never run failures. ``KeyboardInterrupt`` and other
     ``BaseException`` propagate, so no partial result exists.
+
+    ``unverified_pipeline=True`` (tests, stand-ins, the eval's ``--offline-fake``)
+    runs a wrapper or stand-in pipeline whose canary context cannot be verified.
+    Records are still screened and admitted in memory, but the manifest records
+    ``pipeline.canary_context_verified: false`` and ``verify_export`` refuses
+    every such pair. ``canary_context_verified`` is ``true`` only for a
+    ``SecurityPipeline`` whose Ollama canary passed the context gate.
     """
     policy = policy if policy is not None else IngestPolicy()
     if not isinstance(policy, IngestPolicy):
@@ -1095,8 +1130,8 @@ def ingest_records(
         raise ValueError(
             f"segment_chars ({policy.segment_chars}) exceeds the pipeline's max_input_length ({limit})"
         )
-    verified = _check_canary_context(policy, pipeline)
-    clock = now if now is not None else (lambda: datetime.now(timezone.utc))
+    verified = _check_canary_context(policy, pipeline, unverified_pipeline=unverified_pipeline)
+    clock =now if now is not None else (lambda: datetime.now(timezone.utc))
 
     # Phase 1: snapshot + run-level budget, before any check.
     prepared: list[_Prepared] = []
@@ -1116,7 +1151,8 @@ def ingest_records(
     # Reading the records (and the caller's clock) may have run caller code;
     # re-verify the pipeline right before the first check so a mid-read change
     # cannot bypass the gate.
-    _check_canary_context(policy, pipeline, verified)
+    rechecked = _check_canary_context(policy, pipeline, verified, unverified_pipeline=unverified_pipeline)
+    context_verified = rechecked is not None and _is_security_pipeline(pipeline)
     counter = _Counter()
     results: list[RecordResult] = []
     admitted: list[AdmittedRecord] = []
@@ -1183,7 +1219,7 @@ def ingest_records(
         records=results,
         admitted=admitted,
         policy=policy,
-        pipeline_info=_pipeline_info(pipeline),
+        pipeline_info=_pipeline_info(pipeline, context_verified),
         started_at=started_at,
         finished_at=_iso_utc(clock()),
         checks_performed=counter.calls,
@@ -1393,7 +1429,9 @@ def verify_export(
     raw file bytes too), that every exported record is admitted in the manifest
     with complete coverage and no detection, that the exported sequence equals
     the admitted sequence in manifest order, that manifest indices are unique and
-    match ``run.records_total``, and that ``sha256``/``material_sha256``
+    match ``run.records_total``, that ``pipeline.canary_context_verified`` is
+    ``true`` (a run with an unverified pipeline is always refused, even when it
+    exports nothing), and that ``sha256``/``material_sha256``
     recomputed from the exported text and metadata match. Problems name record
     indices only, never text.
     """
@@ -1429,6 +1467,9 @@ def verify_export(
         problems.append("manifest run is not complete")
     if isinstance(run, dict) and run.get("export_requested") is not True:
         problems.append("manifest does not record that an export was requested")
+    pipeline_info = manifest.get("pipeline")
+    if not (isinstance(pipeline_info, dict) and pipeline_info.get("canary_context_verified") is True):
+        problems.append("manifest does not record a verified canary context window")
 
     by_index: dict[int, dict[str, Any]] = {}
     manifest_records = manifest.get("records")

@@ -39,6 +39,8 @@ Modes:
 * ``--offline-fake``: a deterministic stand-in that reports every segment as fully
   exercised and blocks a segment whose text contains ``--fake-marker``
   (case-insensitive). It is a **scorer self-test**, not a detector result.
+  It runs with ``unverified_pipeline=True``, so its manifest records
+  ``canary_context_verified: false``.
 
 Exit codes: ``0`` the run completed and was scored (holds are results, not
 failures); ``2`` invalid input or configuration (nothing scored).
@@ -545,7 +547,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     pipeline = _build_pipeline(args, policy)
 
     started = time.monotonic()
-    result = ingest_records(pipeline, records, policy=policy)
+    # The offline fake is a stand-in, so its manifest records canary_context_verified false.
+    result = ingest_records(pipeline, records, policy=policy, unverified_pipeline=args.offline_fake)
     wall = time.monotonic() - started
 
     manifest = None
