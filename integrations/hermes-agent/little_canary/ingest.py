@@ -866,7 +866,11 @@ def _check_segment(
         if not isinstance(snapshot, dict):
             raise TypeError("verdict.to_dict() did not return a dict")
         # redacted at construction: the in-memory result never retains raw text
-        payload = {k: v for k, v in snapshot.items() if k not in batch._RAW_TEXT_KEYS}
+        redacted = {k: v for k, v in snapshot.items() if k not in batch._RAW_TEXT_KEYS}
+        # Round-trip through the manifest serialization: plain JSON types only, so a field
+        # type with lying comparisons cannot make admission disagree with what is recorded,
+        # and an unserializable verdict fails here rather than at publication.
+        payload = json.loads(_canonical_json(redacted))
         # Every decision below reads the recorded snapshot, never the live object.
         state, exercised = _classify_payload(payload)
         if state == STATE_ERROR:

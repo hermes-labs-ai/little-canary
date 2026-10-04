@@ -286,6 +286,60 @@ def test_verdict_subclass_even_benign_is_error_hold():
     _assert_invariants(res, pipe)
 
 
+class _EqAll(str):
+    """A str whose comparisons all say "equal"."""
+
+    def __eq__(self, other):
+        return True
+
+    def __ne__(self, other):
+        return False
+
+    __hash__ = str.__hash__
+
+
+class _Zeroish(float):
+    """A float that never compares greater than anything."""
+
+    def __gt__(self, other):
+        return False
+
+
+@pytest.mark.parametrize("field,value,recorded,state,reasons", [
+    ("canary_status", _EqAll("failed"), "failed", "unexercised", ["unexercised", HOLD_INCOMPLETE]),
+    ("analysis_status", _EqAll("failed"), "failed", "unexercised", ["unexercised", HOLD_INCOMPLETE]),
+    ("analysis_method", _EqAll("regex"), "regex", "pass", []),
+    ("canary_risk_score", _Zeroish(0.9), 0.9, "flag", ["flagged"]),
+    ("canary_risk_score", _Zeroish(0.0), 0.0, "pass", []),
+], ids=["canary_status", "analysis_status", "method_benign", "risk_nonzero", "risk_zero"])
+def test_lying_field_types_cannot_make_admission_disagree_with_the_manifest(field, value, recorded, state, reasons):
+    """Final review F2: admission is classified from the serialized snapshot (plain JSON types), so a
+    str/float subclass with lying comparisons is judged by the value the manifest records. The
+    recorded segment state, the admission decision and verify_export all agree."""
+    res, pipe = _run_verified(["plain"], Recorder(lambda t: _v(t, **{field: value})))
+    rec = res.records[0]
+    mrec = json.loads(res.manifest_json())["records"][0]
+    assert type(rec.segments[0].verdict[field]) is type(recorded)  # plain str/float, not the subclass
+    assert mrec["segments"][0]["verdict"][field] == recorded
+    assert rec.segments[0].state == mrec["segments"][0]["state"] == state
+    assert rec.hold_reasons == mrec["hold_reasons"] == reasons
+    assert (rec.admission == ADMISSION_ADMITTED) == (reasons == []) == bool(res.admitted)
+    # The export holds exactly what the recorded evidence supports.
+    assert verify_export(res.export_document(), json.loads(res.manifest_json())) == []
+    _assert_invariants(res, pipe)
+
+
+def test_unserializable_verdict_field_is_an_error_hold_at_check_time(tmp_path):
+    """Final review F2: a verdict field the manifest cannot serialize is an error hold when the
+    segment is checked, not an admission that only fails later at publication."""
+    res, _ = _run(["plain"], Recorder(lambda t: _v(t, analysis_method=object())))
+    rec = res.records[0]
+    assert rec.admission == ADMISSION_HELD and res.admitted == []
+    assert rec.segments[0].state == "error" and rec.segments[0].error == "TypeError"
+    publish(res, tmp_path / "m.json", tmp_path / "e.json")
+    assert json.loads((tmp_path / "e.json").read_bytes())["records"] == []
+
+
 @pytest.mark.parametrize("safe,degraded,expected", [
     (False, True, [HOLD_BLOCKED, HOLD_INCOMPLETE]),
     (True, True, ["degraded", HOLD_INCOMPLETE]),
