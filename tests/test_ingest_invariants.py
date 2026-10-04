@@ -271,6 +271,19 @@ def test_duck_typed_verdict_is_error_hold():
     assert res.admitted == []
 
 
+def test_empty_segment_plan_is_held_incomplete_never_complete():
+    """Final review INFO (iv): a record whose segment plan is empty (unreachable through
+    ingest_records, which rejects empty text first) has coverage none and is held incomplete."""
+    from little_canary.ingest import _Counter, _Prepared, _screen_record
+
+    pipe = Recorder()
+    rec, admitted = _screen_record(pipe, _Prepared(0, "", None, None, {}), {}, [], "", [],
+                                   IngestPolicy(), _Counter(), _sha(""), "0" * 64)
+    assert admitted is False and pipe.calls == []
+    assert rec.coverage == "none" and rec.admission == ADMISSION_HELD
+    assert rec.hold_reasons == [HOLD_INCOMPLETE]
+
+
 def test_verdict_subclass_even_benign_is_error_hold():
     """Semantic C: pipeline.check must return exactly PipelineVerdict; any subclass (whose to_dict
     could disagree with itself) makes the segment error and the record held."""

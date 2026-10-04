@@ -932,7 +932,9 @@ def _screen_record(
         detection = DETECTION_NONE
 
     exercised = [s for s in segments if s.exercised]
-    if len(exercised) == len(segments):
+    if not segments:
+        coverage = COVERAGE_NONE  # an empty plan checked nothing; never complete (held incomplete below)
+    elif len(exercised) == len(segments):
         coverage = COVERAGE_COMPLETE
     elif not exercised:
         coverage = COVERAGE_NONE
