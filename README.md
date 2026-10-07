@@ -81,6 +81,7 @@ twins. Cloud model: ~0.5 s/message, ~$0.035/1,000 scans. The author cautions the
 benchmark is exploratory rather than a clean held-out evaluation — read it as
 directional, the way we do.
 Source: [A prompt-injection gate for my AI agent](https://juraj.bednar.io/en/blog-en/2026/09/28/a-prompt-injection-gate-for-my-ai-agent-what-worked-what-didnt-and-the-benchmark/)
+Disclosure: Hermes Labs uses Jev in its own lab work; the benchmark above is independent.
 
 ## Quick start (2 minutes)
 
