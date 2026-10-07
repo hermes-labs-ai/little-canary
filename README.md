@@ -91,7 +91,7 @@ pip install little-canary
 little-canary demo
 ```
 
-In under two minutes you'll see the whole loop: one clean input → `PASS`, one injected input → `BLOCK`.
+In under two minutes you'll see the whole loop: one clean input → `PASS`, one injected input → `BLOCK`. Abridged output:
 
 ```text
 CASE       clean
@@ -101,7 +101,7 @@ SIGNALS    none
 VERDICT    PASS
 CASE       c1-05
 RISK       1.0
-SIGNALS    persona_shift, instruction_echo, canary_compromise
+SIGNALS    persona_shift, instruction_echo, canary_compromise, canary_compromise
 VERDICT    BLOCK
 REPLAY     VERIFIED
 ```

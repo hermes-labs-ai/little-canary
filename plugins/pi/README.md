@@ -26,6 +26,9 @@ Pi clones the repository and loads only `plugins/pi/index.js`, which the root
 `package.json` declares. To pin, append `@<commit>` with a commit that contains
 that root manifest. Pi does not move a pinned ref on update.
 
+The npm package `@hermes-labs/little-canary-pi` has not been published, so
+`pi install npm:@hermes-labs/little-canary-pi` does not work yet.
+
 The extension sends the current input to `http://127.0.0.1:18421/check`. Set
 `LITTLE_CANARY_ENDPOINT` to another HTTP loopback `/check` URL if needed. The
 package does not include the Python service or model weights.
