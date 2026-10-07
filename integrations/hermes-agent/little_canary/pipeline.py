@@ -329,6 +329,7 @@ class SecurityPipeline:
         api_key: str = "",
         base_url: str = "",
         on_unexercised: Callable[[PipelineVerdict], None] | None = None,
+        canary_num_ctx: int | None = None,
     ):
         if mode not in self.VALID_MODES:
             raise ValueError(f"mode must be one of {self.VALID_MODES}, got '{mode}'")
@@ -388,6 +389,9 @@ class SecurityPipeline:
             }
             if canary_system_prompt:
                 canary_kwargs["system_prompt"] = canary_system_prompt
+            if canary_num_ctx is not None:
+                # Explicit Ollama context window; default None leaves runtime behavior unchanged.
+                canary_kwargs["num_ctx"] = canary_num_ctx
             self.canary_probe = CanaryProbe(**canary_kwargs)
 
         # Analysis: LLM judge (if specified) or regex analyzer (fallback)
