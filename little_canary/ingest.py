@@ -1024,7 +1024,7 @@ def _is_security_pipeline(pipeline: Any) -> bool:
     try:
         from .openai_provider import OpenAICanaryProbe
     except ImportError:  # pragma: no cover
-        OpenAICanaryProbe = ()
+        OpenAICanaryProbe = ()  # type: ignore[assignment,misc]
 
     if type(pipeline) is not SecurityPipeline:
         return False
