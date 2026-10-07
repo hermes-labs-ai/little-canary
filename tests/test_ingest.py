@@ -1391,16 +1391,21 @@ def test_stand_in_pipeline_without_ollama_probe_is_unaffected():
 _UNVERIFIED = "manifest does not record a verified canary context window"
 
 
-def _recording_canary(pipe):
-    """Replace the canary's network call; record the num_ctx in effect for each call."""
+def _recording_canary(pipe, monkeypatch):
+    """Replace the canary's network call; record the num_ctx in effect for each call.
+
+    Patched at class level (not on the instance): the ingest gate (R1) refuses
+    a probe whose ``test`` is shadowed in the instance dict, so test doubles
+    must not use instance assignment.
+    """
     seen = []
 
-    def test(user_input):
-        seen.append(pipe.canary_probe.num_ctx)
+    def test(self, user_input):
+        seen.append(self.num_ctx)
         return CanaryResult(response="Here is a short summary of the document.", latency=0.0,
                             model="m", system_prompt="s", user_input=user_input, success=True)
 
-    pipe.canary_probe.test = test
+    monkeypatch.setattr(CanaryProbe, "test", test)
     return seen
 
 
@@ -1420,7 +1425,7 @@ def test_wrapped_default_security_pipeline_is_refused_not_admitted(monkeypatch):
     zero checks, zero /api/show calls and zero canary calls."""
     show = _api_show(monkeypatch, {"general.architecture": "llama", "llama.context_length": 4096})
     inner = SecurityPipeline()
-    seen = _recording_canary(inner)
+    seen = _recording_canary(inner, monkeypatch)
     with pytest.raises(ValueError, match="ingest needs a SecurityPipeline"):
         gated_ingest_records(_Wrapper(inner), ["a" * 3500], now=_clock)
     assert seen == [] and show == []
@@ -1431,7 +1436,7 @@ def test_wrapped_pipeline_with_opt_in_records_unverified_and_verify_export_refus
     canary_context_verified false and verify_export refuses the pair (its only problem)."""
     _api_show(monkeypatch, {"general.architecture": "llama", "llama.context_length": 4096})
     inner = SecurityPipeline()
-    _recording_canary(inner)
+    _recording_canary(inner, monkeypatch)
     result = gated_ingest_records(_Wrapper(inner), ["a" * 3500], now=_clock, unverified_pipeline=True)
     export = result.export_document()
     manifest = json.loads(result.manifest_json())
@@ -1477,13 +1482,69 @@ def test_pipeline_shapes_that_cannot_be_verified_are_refused(shape, monkeypatch)
     assert show == []
 
 
+class _RunCheckOverride(SecurityPipeline):
+    """R1 x1: subclass rerouting the private check hook."""
+
+    def _run_check(self, text):
+        return super()._run_check(text)
+
+
+class _GetattributeReroute(SecurityPipeline):
+    """R1 x4: subclass rerouting the private check hook via __getattribute__."""
+
+    def __getattribute__(self, name):
+        if name == "_run_check":
+            inner = object.__getattribute__(self, "canary_probe")
+            return lambda text: inner.test(text)
+        return object.__getattribute__(self, name)
+
+
+class _ClassSpoofCopiedCheck(_Wrapper):
+    """R1 x5: __class__ spoof (isinstance True) with the real check copied."""
+
+    check = SecurityPipeline.check
+
+    @property
+    def __class__(self):
+        return SecurityPipeline
+
+
+@pytest.mark.parametrize("shape", ["subclass_run_check", "instance_run_check",
+                                   "instance_probe_test", "subclass_getattribute",
+                                   "class_spoof_copied_check"])
+def test_gate_refuses_r1_private_hook_shapes(shape, monkeypatch):
+    """R1: the gate keys on the exact check path. A subclass overriding
+    _run_check, an instance _run_check, an instance canary_probe.test, a
+    subclass rerouting via __getattribute__, and a __class__ spoof with the
+    real check copied are all refused without the opt-in — even though each
+    would reach a *different*, unsized object through a private hook."""
+    show = _api_show(monkeypatch, {"general.architecture": "qwen2", "qwen2.context_length": 32768})
+    if shape == "subclass_run_check":
+        pipe = _RunCheckOverride(canary_num_ctx=20000)
+    elif shape == "instance_run_check":
+        pipe = SecurityPipeline(canary_num_ctx=20000)
+        pipe._run_check = lambda text: SecurityPipeline._run_check(pipe, text)
+    elif shape == "instance_probe_test":
+        pipe = SecurityPipeline(canary_num_ctx=20000)
+        pipe.canary_probe.test = lambda text: SecurityPipeline(canary_num_ctx=20000).canary_probe.test(text)
+    elif shape == "subclass_getattribute":
+        pipe = _GetattributeReroute(canary_num_ctx=20000)
+    else:
+        pipe = _ClassSpoofCopiedCheck(SecurityPipeline())
+        assert isinstance(pipe, SecurityPipeline)
+        assert type(pipe).check is SecurityPipeline.check
+    with pytest.raises(ValueError, match="ingest needs a SecurityPipeline"):
+        gated_ingest_records(pipe, ["Meeting notes."], now=_clock)
+    assert show == []
+
+
 def test_bare_security_pipeline_is_verified_and_its_pair_verifies(monkeypatch):
     """F1: the CLI shape (a bare SecurityPipeline whose sized Ollama canary passed the gate) records
     canary_context_verified true and its pair verifies; the opt-in does not change that."""
     _api_show(monkeypatch, {"general.architecture": "qwen2", "qwen2.context_length": 32768})
     for opt_in in (False, True):
         pipe = SecurityPipeline(mode="advisory", canary_num_ctx=20000)
-        seen = _recording_canary(pipe)
+        seen = _recording_canary(pipe, monkeypatch)
         result = gated_ingest_records(pipe, ["Meeting notes: ship on Friday."], now=_clock,
                                       unverified_pipeline=opt_in)
         assert result.records[0].admission == "admitted" and seen == [20000]

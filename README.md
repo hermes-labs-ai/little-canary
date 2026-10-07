@@ -12,7 +12,7 @@ Little Canary runs untrusted text through a powerless "canary" model first and w
 [![Python 3.9+](https://img.shields.io/pypi/pyversions/little-canary)](https://pypi.org/project/little-canary/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-2ea44f)](https://github.com/hermes-labs-ai/little-canary/blob/main/LICENSE)
 
-[Quick start](#quick-start-2-minutes) · [Integrations](#put-it-in-front-of-your-agent) · [How it works](#the-idea) · [Research](#research) · [Website](https://littlecanary.ai)
+[Quick start](#quick-start-2-minutes) · [Integrations](#put-it-in-front-of-your-agent) · [How it works](#the-idea) · [Evaluation](#how-well-does-it-work) · [Research](#research) · [Website](https://littlecanary.ai)
 
 </div>
 
@@ -36,6 +36,52 @@ Structural checks run alongside to catch known attack shapes. The canary can rev
 
 Little Canary is developed by [Hermes Labs](https://hermes-labs.ai).
 
+## How well does it work?
+
+Short version: we publish our corpora and our method, not a detection-rate headline.
+Our [benchmarks guide](https://github.com/hermes-labs-ai/little-canary/blob/main/benchmarks/README.md)
+states the claim boundary explicitly — a historical aggregate rate was withdrawn when a
+rerun didn't reproduce it, and we won't publish a new percentage without a frozen,
+preregistered evaluation. We'd rather you know the edges than find them in production.
+
+What we stand behind today:
+
+| Corpus | Contents | What it's for |
+| --- | --- | --- |
+| `prompts.json` | 160 attacks + 20 safe/mixed cases | Structural decision vector, adversarial case selection |
+| `prompts_fp_realistic.json` | 40 benign hard negatives | Case-by-case false-positive investigation |
+| `jailbench_injection_cases.json` | 5 embedded-injection attacks + 5 matched benign controls | Regression probe (report positives and controls separately, never pooled) |
+
+Reproduce it:
+
+```sh
+python3 benchmarks/red_team_runner.py --corpus jailbench-injection --mode structural-only --headless --output /tmp/jailbench-structural.jsonl
+python3 benchmarks/red_team_runner.py --corpus jailbench-injection --mode pipeline --model qwen2.5:1.5b --timeout 30 --headless --output /tmp/jailbench-pipeline.jsonl
+```
+
+### External evidence: decision-model gates
+
+Independent researcher Juraj Bednář benchmarked prompt-injection gates built on
+*decision models* — a related but different mechanism from the canary probe.
+(His gate asks a decision model two questions about extracted text; the canary
+probe watches a powerless model's behavior.) **His numbers are not Little
+Canary's numbers.** They are the closest public measurement of the
+model-judgment layer, cited here so you can judge the approach class, not this
+product.
+
+| Detector | Test AUC | Caught¹ | Test false positives |
+| --- | --- | --- | --- |
+| Jev (cloud decision model) | 0.981 | 88.9% | 3.5% |
+| Nimble 9B, 4-bit (local via Ollama) | 0.927 | 80.6% | 3.5% |
+
+¹ Thresholds fitted on the dev split at 2% false positives. 718 test items
+(433 attacks): BIPIA emails, deepset injections, Gandalf attempts, 300 Nostr
+posts + 10 web pages as benign, hidden-attack carriers paired against benign
+twins. Cloud model: ~0.5 s/message, ~$0.035/1,000 scans. The author cautions the
+benchmark is exploratory rather than a clean held-out evaluation — read it as
+directional, the way we do.
+Source: [A prompt-injection gate for my AI agent](https://juraj.bednar.io/en/blog-en/2026/09/28/a-prompt-injection-gate-for-my-ai-agent-what-worked-what-didnt-and-the-benchmark/)
+
 ## Quick start (2 minutes)
 
 No model download needed. The offline demo ships with the package and runs with zero extra dependencies:
@@ -45,7 +91,22 @@ pip install little-canary
 little-canary demo
 ```
 
-You'll see one clean input → `PASS` and one injected input → `BLOCK`, with the recorded canary responses, the signals found, and the verdict for each. The offline replay verifies the analyzer against a packaged recorded capture — it makes no model call and no network call.
+In under two minutes you'll see the whole loop: one clean input → `PASS`, one injected input → `BLOCK`.
+
+```text
+CASE       clean
+RESPONSE   "The capital of France is Paris."
+RISK       0.0
+SIGNALS    none
+VERDICT    PASS
+CASE       c1-05
+RISK       1.0
+SIGNALS    persona_shift, instruction_echo, canary_compromise
+VERDICT    BLOCK
+REPLAY     VERIFIED
+```
+
+The offline replay verifies the analyzer against a packaged recorded capture — it makes no model call and no network call.
 
 ### Screen in code without a model
 
@@ -160,7 +221,7 @@ A held record lists every hold reason that applies: `malformed` (failed validati
 
 **Budget and segmentation — never partial.** Text and metadata material are split deterministically into overlapping segments (`--segment-chars` 3500, `--segment-overlap` 500) and each segment is checked; `--segment-chars` above the pipeline's `max_input_length` (4000) is a configuration error. A record that needs more than `--max-segments` (8, text plus metadata) or whose text exceeds `--max-item-bytes` (65536) is held as `over_budget` with zero checks. The reader also caps the length of one JSONL line (about six characters per allowed text byte, plus fixed room for labels and for metadata within the metadata limits; see `little_canary.ingest.read_records`): a line longer than that refuses the whole run before any check (exit `3`, nothing written), whatever the per-record `over_budget` rule would have said. By default, checking a record stops at the first segment that holds it; the rest are `not_checked` and the record is also `incomplete`. Coverage counts each character once across overlaps. A record is never partly scanned and reported as screened. As with `screen`, `--max-items` (1000) and `--max-total-bytes` (8 MiB) reject the whole run before any check.
 
-**Canary context verification.** Each segment goes to the canary in one call, so before any check `ingest` verifies that the canary can read a whole segment. Two conditions must hold. (a) The Ollama canary's `num_ctx` is at least `4 × segment_chars + 4 × len(system prompt) + max_tokens + 64` (`little_canary.required_canary_context`), a worst case of one token per UTF-8 byte; the CLI sets `num_ctx` to exactly this value. (b) The model's trained context length, as reported by Ollama's `/api/show`, is at least that value too, because Ollama caps `num_ctx` at the trained length and then truncates the prompt. If either condition fails, or the trained length cannot be read (backend unreachable, model unknown, or no context length reported), the run is refused before any check (CLI exit `3`, nothing written). For `ingest`, an Ollama backend that cannot be reached at the start is therefore a run-level refusal, not a per-record `degraded` hold as it is in `screen`; a check that fails during the run still holds its record as `degraded`. The manifest records both values as `pipeline.canary_num_ctx` and `pipeline.canary_context_length`. From Python, pass a `SecurityPipeline` constructed with `SecurityPipeline(canary_num_ctx=required_canary_context(policy, pipeline))` or larger; a smaller or unset `num_ctx` makes `ingest_records` raise `ValueError` before any check. Only a `SecurityPipeline` itself can be verified: a wrapper, a stand-in, or a subclass or instance that overrides `check` also raises `ValueError` before any check, because the gate cannot know which canary that object's `check` reaches. `ingest_records(..., unverified_pipeline=True)` runs such a pipeline anyway (for tests and stand-ins); its records are still screened, but the manifest records `pipeline.canary_context_verified: false` and `verify_export` refuses the pair. `pipeline.canary_context_verified` is `true` only when a `SecurityPipeline`'s Ollama canary passed this verification. Ingest in 0.5.0 does not support `provider="openai"` (its context window cannot be sized or verified) or `judge_model` (the judge has no sized context window): with the canary enabled, either one raises `ValueError` with that reason before any check. `SecurityPipeline(enable_canary=False)` runs, but no record can be admitted: its segments are held `unexercised`, or `blocked` when the structural filter blocks them. `SecurityPipeline(canary_num_ctx=None)`, the default, sends no `num_ctx` and leaves Runtime behavior unchanged. This verification assumes a genuine Ollama server that applies the requested `num_ctx` and serves the same model for the whole run; the trained length is read once at the start, and the verdict carries no prompt token count, so a backend or proxy that ignores `num_ctx` is not detected.
+**Canary context verification.** Each segment goes to the canary in one call, so before any check `ingest` verifies that the canary can read a whole segment. Two conditions must hold. (a) The Ollama canary's `num_ctx` is at least `4 × segment_chars + 4 × len(system prompt) + max_tokens + 64` (`little_canary.required_canary_context`), a worst case of one token per UTF-8 byte; the CLI sets `num_ctx` to exactly this value. (b) The model's trained context length, as reported by Ollama's `/api/show`, is at least that value too, because Ollama caps `num_ctx` at the trained length and then truncates the prompt. If either condition fails, or the trained length cannot be read (backend unreachable, model unknown, or no context length reported), the run is refused before any check (CLI exit `3`, nothing written). For `ingest`, an Ollama backend that cannot be reached at the start is therefore a run-level refusal, not a per-record `degraded` hold as it is in `screen`; a check that fails during the run still holds its record as `degraded`. The manifest records both values as `pipeline.canary_num_ctx` and `pipeline.canary_context_length`. From Python, pass a `SecurityPipeline` constructed with `SecurityPipeline(canary_num_ctx=required_canary_context(policy, pipeline))` or larger; a smaller or unset `num_ctx` makes `ingest_records` raise `ValueError` before any check. Only a `SecurityPipeline` itself can be verified — exact type (not a subclass), its own `CanaryProbe` (exact type), and no instance-level overrides of `check`, `_run_check`, `_fire_callbacks`, `test`, or `context_length`: a wrapper, a stand-in, a subclass, or an instance that overrides any of these also raises `ValueError` before any check, because the gate cannot know which canary that object's `check` reaches. `ingest_records(..., unverified_pipeline=True)` runs such a pipeline anyway (for tests and stand-ins); its records are still screened, but the manifest records `pipeline.canary_context_verified: false` and `verify_export` refuses the pair. `pipeline.canary_context_verified` is `true` only when a `SecurityPipeline`'s Ollama canary passed this verification. Ingest in 0.5.0 does not support `provider="openai"` (its context window cannot be sized or verified) or `judge_model` (the judge has no sized context window): with the canary enabled, either one raises `ValueError` with that reason before any check. `SecurityPipeline(enable_canary=False)` runs, but no record can be admitted: its segments are held `unexercised`, or `blocked` when the structural filter blocks them. `SecurityPipeline(canary_num_ctx=None)`, the default, sends no `num_ctx` and leaves Runtime behavior unchanged. This verification assumes a genuine Ollama server that applies the requested `num_ctx` and serves the same model for the whole run; the trained length is read once at the start, and the verdict carries no prompt token count, so a backend or proxy that ignores `num_ctx` is not detected.
 
 **What the manifest contains.** Hashes, lengths, offsets, states and hold reasons; validation details, which name a field and a limit but not the value; detector-generated signals, per-segment verdict summaries with the raw input fields removed, and the exception type name of a check that raised; the Little Canary version; the pipeline configuration (mode, provider, canary model, analysis method, `canary_num_ctx`, `canary_context_length`, `canary_context_verified`; never URLs or keys); the policy; timestamps; counts; `run.input_sha256`; and `run.export_requested`. For admitted records only, which were screened and passed, the `id`/`source` labels and the metadata key names appear in plaintext. Held records carry `id_sha256`/`source_sha256` digests and a `metadata_key_count` instead, with `id`, `source` and `metadata_keys` set to `null`. Record text and metadata values never appear in the manifest. The CLI sets `run.input_sha256` to the SHA-256 of the exact input bytes, binding the manifest to its input; from Python it stays `null` unless the caller sets `result.input_sha256`.
 

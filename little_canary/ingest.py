@@ -1007,12 +1007,37 @@ def required_canary_context(policy: IngestPolicy, pipeline: Any) -> int | None:
 
 
 def _is_security_pipeline(pipeline: Any) -> bool:
-    """A ``SecurityPipeline`` whose ``check`` is the library's own, so the gate's probe is the one checked."""
-    return (
-        isinstance(pipeline, SecurityPipeline)
-        and type(pipeline).check is SecurityPipeline.check
-        and "check" not in getattr(pipeline, "__dict__", {})
-    )
+    """A ``SecurityPipeline`` itself, reaching the library's own canary probe.
+
+    R1 (2026-10-07): the gate keys on the exact shapes the checks travel
+    through. The pipeline must be a ``SecurityPipeline`` (not a subclass —
+    a subclass ``__getattribute__`` or a copied ``check`` can route around the
+    probe), with no instance-dict entries for ``check``, ``_run_check`` or
+    ``_fire_callbacks``. Its ``canary_probe`` must be a ``CanaryProbe`` (not a
+    subclass), with no instance-dict entries for ``test`` or
+    ``context_length``. An ``OpenAICanaryProbe`` is let through so the
+    provider='openai' refusal below names its own reason. Anything else is
+    refused unless the caller opts in with ``unverified_pipeline=True``.
+    """
+    from .canary import CanaryProbe
+
+    try:
+        from .openai_provider import OpenAICanaryProbe
+    except ImportError:  # pragma: no cover
+        OpenAICanaryProbe = ()
+
+    if type(pipeline) is not SecurityPipeline:
+        return False
+    pipeline_dict = getattr(pipeline, "__dict__", {})
+    if any(name in pipeline_dict for name in ("check", "_run_check", "_fire_callbacks")):
+        return False
+    probe = getattr(pipeline, "canary_probe", None)
+    if isinstance(probe, OpenAICanaryProbe):
+        return True
+    if type(probe) is not CanaryProbe:
+        return False
+    probe_dict = getattr(probe, "__dict__", {})
+    return "test" not in probe_dict and "context_length" not in probe_dict
 
 
 def _check_canary_context(
