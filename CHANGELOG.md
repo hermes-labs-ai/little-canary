@@ -9,9 +9,10 @@ Benchmark and latency figures in entries before `0.3.3` are historical release n
 
 ## [Unreleased]
 
-- Ingest refuses pipelines with callbacks that can mutate screening configuration between segments.
+- Ingest refuses configured callbacks and screens verified runs with an owned configuration snapshot so callbacks installed later cannot mutate the screened probe.
 - No-clobber publication fails when hard links are unavailable rather than using a racy replace fallback.
-- The Ingest eval runner rejects duplicate JSON keys and manifest paths that alias its corpus, including hard links.
+- The Ingest eval runner rejects duplicate JSON keys and manifest paths that alias its corpus, including hard links; publication uses a pinned directory handle so a parent symlink redirect cannot overwrite the corpus.
+- Publication rollback checks inode ownership before removing a target and preserves concurrent replacements.
 - Corrected the eval API name and package descriptions; 0.5.0 is published, while Ingest remains experimental.
 
 ## [0.5.0] - 2026-10-07

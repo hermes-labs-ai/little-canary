@@ -1696,3 +1696,55 @@ def test_callback_added_while_reading_records_is_refused(ollama_ctx):
 
     with pytest.raises(ValueError, match="does not support pipeline callbacks"):
         ingest_records(pipe, records())
+
+
+@pytest.mark.parametrize("replace_export", [False, True])
+def test_publish_failure_preserves_concurrent_writer(tmp_path, monkeypatch, replace_export):
+    import errno
+
+    export = tmp_path / "export.json"
+    manifest = tmp_path / "manifest.json"
+    real_link = os.link
+
+    def race(src, dst):
+        if dst == str(manifest):
+            if replace_export:
+                replacement = tmp_path / "replacement"
+                replacement.write_bytes(b"CONCURRENT_EXPORT")
+                os.replace(replacement, export)
+            manifest.write_bytes(b"CONCURRENT_MANIFEST")
+            raise OSError(errno.EOPNOTSUPP, "links unavailable")
+        return real_link(src, dst)
+
+    monkeypatch.setattr(os, "link", race)
+    with pytest.raises(OSError):
+        publish(_result(), manifest, export)
+    assert manifest.read_bytes() == b"CONCURRENT_MANIFEST"
+    if replace_export:
+        assert export.read_bytes() == b"CONCURRENT_EXPORT"
+    else:
+        assert not export.exists()
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_verified_run_owns_config_when_callback_installed_mid_check(monkeypatch, ollama_ctx):
+    from little_canary.canary import CanaryProbe
+
+    pipe = SecurityPipeline(canary_num_ctx=20000, enable_structural_filter=False)
+    contexts = []
+    callbacks = []
+
+    def probe_test(self, text):
+        contexts.append(self.num_ctx)
+        pipe._on_pass = lambda verdict: callbacks.append(verdict)
+        pipe.canary_probe.num_ctx = 1
+        return CanaryResult(response="Here is a short summary of the document.", latency=0,
+                            model="m", system_prompt="s", user_input=text, success=True)
+
+    monkeypatch.setattr(CanaryProbe, "test", probe_test)
+    res = ingest_records(pipe, ["x" * 30], policy=IngestPolicy(segment_chars=10, segment_overlap=0))
+    assert res.records[0].admission == ADMISSION_ADMITTED
+    assert contexts == [20000, 20000, 20000]
+    assert callbacks == []
+    assert res.pipeline_info["canary_num_ctx"] == 20000
+    assert res.pipeline_info["canary_context_verified"] is True
