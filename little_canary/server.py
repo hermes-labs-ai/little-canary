@@ -196,24 +196,33 @@ def run_server(
         canary_timeout=canary_timeout,
     )
 
-    assert _pipeline is not None
-    health = _pipeline.health_check()
-    logger.info("🐤 Little Canary server starting...")
-    logger.info("   Mode: %s", mode)
-    logger.info("   Model: %s", canary_model)
-    logger.info("   Ollama: %s", health.get("endpoint_origin", "invalid"))
-    logger.info("   Available: %s", health.get("canary_available", "unknown"))
-    logger.info("   Port: %s", port)
-    if health.get("ready"):
-        logger.info("🐤 Canary server ready on http://127.0.0.1:%d", port)
-    else:
-        logger.warning(
-            "🐤 Canary server listening — DEGRADED on http://127.0.0.1:%d",
-            port,
-        )
-
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        logger.info("🐤 Shutting down...")
-        server.shutdown()
+        assert _pipeline is not None
+        health = _pipeline.health_check()
+        logger.info("🐤 Little Canary server starting...")
+        logger.info("   Mode: %s", mode)
+        logger.info("   Model: %s", canary_model)
+        logger.info("   Ollama: %s", health.get("endpoint_origin", "invalid"))
+        logger.info("   Available: %s", health.get("canary_available", "unknown"))
+        logger.info("   Port: %s", port)
+        if health.get("ready"):
+            logger.info("🐤 Canary server ready on http://127.0.0.1:%d", port)
+        else:
+            logger.warning(
+                "🐤 Canary server listening — DEGRADED on http://127.0.0.1:%d",
+                port,
+            )
+
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            logger.info("🐤 Shutting down...")
+            server.shutdown()
+    except BaseException as exc:
+        try:
+            server.server_close()
+        except BaseException as close_error:
+            raise exc from close_error
+        raise
+    else:
+        server.server_close()
