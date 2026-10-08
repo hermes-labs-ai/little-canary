@@ -1368,8 +1368,9 @@ def publish(
     manifest on disk implies its export was already there. With ``overwrite``
     the previous files are removed before anything is written. If any step
     fails, every temp file is removed and an export published in this call is
-    unlinked again only while its inode still belongs to this call; concurrent
-    replacements are preserved, leaving no artefact of this call behind (an empty temp file
+    moved into a private quarantine for an ownership check. Owned files are
+    removed; concurrent replacements are restored without clobbering a newer
+    target, or retained at a logged recovery path if restoration fails (an empty temp file
     created in the instant before it is registered can remain). Returns ``{"manifest": sha256,
     "export": sha256}`` (``export`` only when requested). Marks
     ``result.export_requested`` so the manifest records the request.
@@ -1422,12 +1423,48 @@ def publish(
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
         for target, identity in reversed(published):
-            with contextlib.suppress(OSError):
-                current = os.stat(target, follow_symlinks=False)
-                if (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino):
-                    os.unlink(target)
+            _rollback_target(target, identity)
         raise
     return digests
+
+
+def _rollback_target(target: str, identity: os.stat_result) -> None:
+    """Inspect ownership only after moving into a private, directory-pinned quarantine.
+
+    A concurrent replacement is restored without clobbering a newer target. If
+    restoration fails, retain it at the logged recovery path rather than delete it.
+    """
+    parent = os.path.realpath(os.path.dirname(os.path.abspath(target)))
+    name = os.path.basename(target)
+    quarantine = ".ingest-recovery-" + uuid.uuid4().hex
+    recovery = os.path.join(parent, quarantine, "file")
+    parent_fd = private_fd = None
+    created = moved = retained = False
+    try:
+        parent_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        os.mkdir(quarantine, 0o700, dir_fd=parent_fd)
+        created = True
+        private_fd = os.open(quarantine, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0), dir_fd=parent_fd)
+        # Never check ownership at the shared pathname then delete that pathname.
+        os.rename(name, "file", src_dir_fd=parent_fd, dst_dir_fd=private_fd)
+        moved = True
+        current = os.stat("file", dir_fd=private_fd, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
+            os.link("file", name, src_dir_fd=private_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+        os.unlink("file", dir_fd=private_fd)
+        moved = False
+    except OSError:
+        retained = moved
+        if retained:
+            logger.error("Ingest rollback retained a concurrent file at %s", recovery)
+    finally:
+        if private_fd is not None:
+            os.close(private_fd)
+        if parent_fd is not None:
+            if created and not retained:
+                with contextlib.suppress(OSError):
+                    os.rmdir(quarantine, dir_fd=parent_fd)
+            os.close(parent_fd)
 
 
 def _same_file(a: str, b: str) -> bool:

@@ -1706,7 +1706,7 @@ def test_publish_failure_preserves_concurrent_writer(tmp_path, monkeypatch, repl
     manifest = tmp_path / "manifest.json"
     real_link = os.link
 
-    def race(src, dst):
+    def race(src, dst, **kwargs):
         if dst == str(manifest):
             if replace_export:
                 replacement = tmp_path / "replacement"
@@ -1714,7 +1714,7 @@ def test_publish_failure_preserves_concurrent_writer(tmp_path, monkeypatch, repl
                 os.replace(replacement, export)
             manifest.write_bytes(b"CONCURRENT_MANIFEST")
             raise OSError(errno.EOPNOTSUPP, "links unavailable")
-        return real_link(src, dst)
+        return real_link(src, dst, **kwargs)
 
     monkeypatch.setattr(os, "link", race)
     with pytest.raises(OSError):
@@ -1748,3 +1748,64 @@ def test_verified_run_owns_config_when_callback_installed_mid_check(monkeypatch,
     assert callbacks == []
     assert res.pipeline_info["canary_num_ctx"] == 20000
     assert res.pipeline_info["canary_context_verified"] is True
+
+
+@pytest.mark.parametrize("restore_conflict", [False, True])
+def test_rollback_never_deletes_replacement_between_identity_check_and_cleanup(
+    tmp_path, monkeypatch, caplog, restore_conflict,
+):
+    import little_canary.ingest as module
+
+    export = tmp_path / "export.json"
+    manifest = tmp_path / "manifest.json"
+    real_publish = module._publish_temp
+    real_stat, real_rename, real_link = os.stat, os.rename, os.link
+    raced = []
+
+    def replace_export():
+        if not raced:
+            replacement = tmp_path / "replacement"
+            replacement.write_bytes(b"CONCURRENT_EXPORT")
+            os.replace(replacement, export)
+            raced.append(True)
+
+    def stat(path, *args, **kwargs):
+        result = real_stat(path, *args, **kwargs)
+        if path == str(export) and kwargs.get("follow_symlinks") is False:
+            replace_export()  # exercises the previous check-then-unlink implementation
+        return result
+
+    def rename(src, dst, **kwargs):
+        if src == export.name and "src_dir_fd" in kwargs:
+            replace_export()  # replacement immediately before atomic quarantine
+        return real_rename(src, dst, **kwargs)
+
+    def link(src, dst, **kwargs):
+        if restore_conflict and src == "file" and dst == export.name:
+            fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600,
+                         dir_fd=kwargs["dst_dir_fd"])
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(b"NEWER_EXPORT")
+        return real_link(src, dst, **kwargs)
+
+    def publish_temp(src, dst, **kwargs):
+        if dst == str(manifest):
+            raise OSError("manifest publication failed")
+        return real_publish(src, dst, **kwargs)
+
+    monkeypatch.setattr(module, "_publish_temp", publish_temp)
+    monkeypatch.setattr(os, "stat", stat)
+    monkeypatch.setattr(os, "rename", rename)
+    monkeypatch.setattr(os, "link", link)
+    with pytest.raises(OSError):
+        publish(_result(), manifest, export)
+    assert raced == [True]
+    recovery = list(tmp_path.glob(".ingest-recovery-*/file"))
+    if restore_conflict:
+        assert export.read_bytes() == b"NEWER_EXPORT"
+        assert len(recovery) == 1 and recovery[0].read_bytes() == b"CONCURRENT_EXPORT"
+        assert str(recovery[0]) in caplog.text
+    else:
+        assert export.read_bytes() == b"CONCURRENT_EXPORT"
+        assert recovery == []
+    assert not manifest.exists()
