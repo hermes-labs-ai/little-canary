@@ -1077,6 +1077,11 @@ def _check_canary_context(
             "pipeline cannot be verified; pass unverified_pipeline=True to run it anyway "
             "(the manifest then records canary_context_verified false and verify_export refuses it)"
         )
+    if isinstance(pipeline, SecurityPipeline) and any(
+        getattr(pipeline, name, None) is not None
+        for name in ("_on_block", "_on_degraded", "_on_flag", "_on_unexercised", "_on_pass")
+    ):
+        raise ValueError("ingest does not support pipeline callbacks: screening configuration can change")
     if getattr(pipeline, "enable_canary", True) is False:
         return None
     if getattr(pipeline, "use_judge", False) is True or (
@@ -1297,11 +1302,6 @@ def _publish_temp(tmp: str, target: str, *, overwrite: bool) -> None:
                 os.link(tmp, target)
             except FileExistsError:
                 raise FileExistsError(f"refusing to overwrite existing file: {target}") from None
-            except OSError:
-                # Filesystem without hard links: best-effort re-check, then rename.
-                if os.path.lexists(target):
-                    raise FileExistsError(f"refusing to overwrite existing file: {target}") from None
-                os.replace(tmp, target)
     finally:
         # The temp file is a complete copy of the document; remove it, retrying once
         # on a transient error so a hidden duplicate is not left beside the target.

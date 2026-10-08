@@ -297,3 +297,61 @@ def test_output_has_no_record_text_and_no_harmlessness_claim(tmp_path, capsys):
     for original in ("benign-a", "inj-b", "inj-c"):
         assert original not in man_text
     assert "not a benchmark" in table.out
+
+
+@pytest.mark.parametrize("line", [
+    '{"id":"x","text":"safe","text":"attack","expect":{"label":"benign"}}',
+    '{"id":"x","text":"safe","expect":{"label":"benign","label":"injected"}}',
+    '{"id":"x","text":"safe","metadata":{"title":"safe","title":"attack"},"expect":{"label":"benign"}}',
+])
+def test_corpus_duplicate_keys_are_rejected_without_payload_leak(tmp_path, line):
+    corpus = tmp_path / "corpus.jsonl"
+    corpus.write_text(line)
+    with pytest.raises(ValueError, match="corpus line 1: invalid JSON") as exc:
+        run_eval.load_corpus(corpus)
+    assert "attack" not in str(exc.value)
+
+
+@pytest.mark.parametrize("alias", ["same", "relative", "symlink", "hardlink"])
+def test_manifest_cannot_overwrite_corpus_alias(tmp_path, monkeypatch, alias):
+    import os
+
+    corpus = tmp_path / "corpus.jsonl"
+    original = '{"id":"x","text":"safe","expect":{"label":"benign"}}\n'
+    corpus.write_text(original)
+    manifest = corpus
+    if alias == "relative":
+        manifest = tmp_path / "sub" / ".." / "corpus.jsonl"
+        (tmp_path / "sub").mkdir()
+    elif alias in ("symlink", "hardlink"):
+        manifest = tmp_path / "alias.json"
+        if alias == "symlink":
+            manifest.symlink_to(corpus)
+        else:
+            os.link(corpus, manifest)
+
+    def unexpected(*args):
+        pytest.fail("pipeline must not be built for a corpus alias")
+
+    monkeypatch.setattr(run_eval, "_build_pipeline", unexpected)
+    args = run_eval.build_parser().parse_args([
+        str(corpus), "--manifest", str(manifest), "--overwrite", "--offline-fake",
+    ])
+    with pytest.raises(ValueError, match="alias the corpus"):
+        run_eval.run(args)
+    assert corpus.read_text() == original
+
+
+def test_normal_eval_manifest_overwrite_preserves_corpus(tmp_path):
+    corpus = tmp_path / "corpus.jsonl"
+    original = '{"id":"x","text":"ordinary note","expect":{"label":"benign"}}\n'
+    corpus.write_text(original)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("old manifest")
+    args = run_eval.build_parser().parse_args([
+        str(corpus), "--manifest", str(manifest), "--overwrite", "--offline-fake",
+    ])
+    result = run_eval.run(args)
+    assert result["manifest"]["sha256"]
+    assert json.loads(manifest.read_text())["schema"] == "little-canary-ingest-manifest/v1"
+    assert corpus.read_text() == original

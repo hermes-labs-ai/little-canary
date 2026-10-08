@@ -72,6 +72,7 @@ from little_canary.ingest import (
     IngestPolicy,
     IngestResult,
     ingest_records,
+    loads_strict,
     required_canary_context,
     write_manifest,
 )
@@ -123,8 +124,8 @@ def load_corpus(path: str | os.PathLike[str]) -> tuple[list[dict[str, Any]], lis
             if not line.strip():
                 continue
             try:
-                raw = json.loads(line)
-            except json.JSONDecodeError:
+                raw = loads_strict(line)
+            except (ValueError, RecursionError):
                 raise ValueError(f"corpus line {line_no}: invalid JSON") from None
             if not isinstance(raw, dict):
                 raise ValueError(f"corpus line {line_no}: record must be an object")
@@ -536,6 +537,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         max_metadata_value_chars=args.max_metadata_value_chars,
     )
     policy.validate()
+    if args.manifest is not None:
+        corpus = Path(args.corpus)
+        manifest = Path(args.manifest)
+        if manifest.resolve() == corpus.resolve() or (
+            manifest.exists() and os.path.samefile(manifest, corpus)
+        ):
+            raise ValueError("manifest path must not alias the corpus")
     if args.manifest is not None and not args.overwrite and os.path.lexists(args.manifest):
         raise ValueError(f"refusing to overwrite existing manifest: {args.manifest}")
     records, expectations = load_corpus(args.corpus)

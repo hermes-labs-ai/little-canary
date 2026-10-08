@@ -224,7 +224,8 @@ def test_batch_example_output_claims_match_offline_screen_run(tmp_path):
     assert inj["verdict"]["canary_status"] == "skipped_after_block"
     assert inj["verdict"]["blocked_by"] == "structural_filter"
     assert "France" not in run.stdout and "cooking" not in run.stdout
-    assert "Unreleased" in text
+    assert "published `0.5.0` package" in text
+    assert "Unreleased" not in text
 
 
 def test_copilot_example_output_claims_match_matrix():

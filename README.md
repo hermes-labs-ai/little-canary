@@ -177,11 +177,7 @@ The default remains `qwen2.5:1.5b`. Select an installed model with `serve --cana
 
 ## Pre-screen a batch of documents or messages
 
-> **Ships in 0.5.0 — unreleased at the time of writing; source install until published.** The `0.4.0` package on PyPI does **not** include `little-canary screen` or `little_canary.batch`. Until `0.5.0` is published, install from source:
->
-> ```bash
-> pip install "git+https://github.com/hermes-labs-ai/little-canary.git"
-> ```
+> Available in the published `0.5.0` package: `pip install little-canary`.
 
 `little-canary screen` (or `little_canary.batch.screen_batch`) runs the same pipeline once per item — nothing is aggregated into a batch-level "safe" verdict.
 
@@ -196,7 +192,9 @@ Worked examples with input, output and limits, each derived from committed evide
 
 ## Ingest documents (experimental)
 
-> **Experimental. Ships in 0.5.0 — unreleased at the time of writing; source install (as above) until published.**
+> **Experimental. Available in the published `0.5.0` package.**
+
+Ingest refuses pipelines with callbacks, which can mutate screening configuration between segments.
 
 `little-canary ingest` (Python: `from little_canary import ingest_records, publish`) runs every record of a JSONL file through the same `SecurityPipeline.check` and decides, per record, whether it is `admitted` or `held` under the `strict/v1` policy. Every completed run writes an evidence manifest (`little-canary-ingest-manifest/v1`) that carries no record text and no metadata values and, only when you ask for it, an export (`little-canary-ingest-export/v1`) that contains nothing but the admitted records, bound by hash to that manifest.
 

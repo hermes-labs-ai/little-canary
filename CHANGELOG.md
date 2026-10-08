@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Benchmark and latency figures in entries before `0.3.3` are historical release notes, not current support or performance claims.
 
-## [0.5.0] - Unreleased
+## [Unreleased]
+
+- Ingest refuses pipelines with callbacks that can mutate screening configuration between segments.
+- No-clobber publication fails when hard links are unavailable rather than using a racy replace fallback.
+- The Ingest eval runner rejects duplicate JSON keys and manifest paths that alias its corpus, including hard links.
+- Corrected the eval API name and package descriptions; 0.5.0 is published, while Ingest remains experimental.
+
+## [0.5.0] - 2026-10-07
 
 ### Added
 

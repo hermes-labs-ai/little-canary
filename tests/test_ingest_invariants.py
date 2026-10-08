@@ -1643,3 +1643,56 @@ def test_verify_export_never_raises_on_huge_integers(mutate):
     _rehash(export, manifest)
     problems = verify_export(export, manifest)
     assert isinstance(problems, list) and problems
+
+
+@pytest.mark.parametrize("writer", [write_manifest, write_export])
+@pytest.mark.parametrize("race", [False, True])
+def test_no_clobber_link_failure_never_falls_back_to_replace(tmp_path, monkeypatch, writer, race):
+    import errno
+
+    target = tmp_path / "out.json"
+
+    def unavailable_link(*args):
+        if race:
+            target.write_bytes(b"CONCURRENT")
+        raise OSError(errno.EOPNOTSUPP, "hard links unavailable")
+
+    def unexpected_replace(*args):
+        pytest.fail("no-clobber must never call replace")
+
+    monkeypatch.setattr(os, "link", unavailable_link)
+    monkeypatch.setattr(os, "replace", unexpected_replace)
+    with pytest.raises(OSError):
+        writer(_result(), target)
+    assert list(tmp_path.iterdir()) == ([target] if race else [])
+    if race:
+        assert target.read_bytes() == b"CONCURRENT"
+
+
+@pytest.mark.parametrize("name", ["on_pass", "on_block", "on_flag", "on_degraded", "on_unexercised"])
+@pytest.mark.parametrize("mutation", ["replace_probe", "shrink_context"])
+def test_ingest_refuses_mutating_callbacks_before_screening(name, mutation, ollama_ctx):
+    calls = []
+
+    def callback(verdict):
+        calls.append(verdict)
+        if mutation == "replace_probe":
+            pipe.canary_probe = SecurityPipeline().canary_probe
+        else:
+            pipe.canary_probe.num_ctx = 1
+
+    pipe = SecurityPipeline(canary_num_ctx=20000, **{name: callback})
+    with pytest.raises(ValueError, match="does not support pipeline callbacks"):
+        ingest_records(pipe, ["x" * 5000], policy=IngestPolicy(segment_chars=1000, segment_overlap=0))
+    assert calls == []
+
+
+def test_callback_added_while_reading_records_is_refused(ollama_ctx):
+    pipe = SecurityPipeline(canary_num_ctx=20000)
+
+    def records():
+        yield "normal text"
+        pipe._on_pass = lambda verdict: setattr(pipe.canary_probe, "num_ctx", 1)
+
+    with pytest.raises(ValueError, match="does not support pipeline callbacks"):
+        ingest_records(pipe, records())
