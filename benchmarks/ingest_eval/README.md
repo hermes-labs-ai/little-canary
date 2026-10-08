@@ -43,7 +43,7 @@ One JSON object per line:
 
 The ingest reader accepts only the top-level keys `id`, `source`, `text` and
 `metadata`; any other key makes the record malformed, so that nothing unscreened
-can ride through to export. A record passed to `ingest()` with `expect` still
+can ride through to export. A record passed to `ingest_records()` with `expect` still
 attached would be held as `malformed` and never checked. The eval runner removes
 `expect` from each record before ingesting and keeps the labels on the side,
 joined back by record index (the record's position in the ingested list).

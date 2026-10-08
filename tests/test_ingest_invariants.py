@@ -1643,3 +1643,169 @@ def test_verify_export_never_raises_on_huge_integers(mutate):
     _rehash(export, manifest)
     problems = verify_export(export, manifest)
     assert isinstance(problems, list) and problems
+
+
+@pytest.mark.parametrize("writer", [write_manifest, write_export])
+@pytest.mark.parametrize("race", [False, True])
+def test_no_clobber_link_failure_never_falls_back_to_replace(tmp_path, monkeypatch, writer, race):
+    import errno
+
+    target = tmp_path / "out.json"
+
+    def unavailable_link(*args):
+        if race:
+            target.write_bytes(b"CONCURRENT")
+        raise OSError(errno.EOPNOTSUPP, "hard links unavailable")
+
+    def unexpected_replace(*args):
+        pytest.fail("no-clobber must never call replace")
+
+    monkeypatch.setattr(os, "link", unavailable_link)
+    monkeypatch.setattr(os, "replace", unexpected_replace)
+    with pytest.raises(OSError):
+        writer(_result(), target)
+    assert list(tmp_path.iterdir()) == ([target] if race else [])
+    if race:
+        assert target.read_bytes() == b"CONCURRENT"
+
+
+@pytest.mark.parametrize("name", ["on_pass", "on_block", "on_flag", "on_degraded", "on_unexercised"])
+@pytest.mark.parametrize("mutation", ["replace_probe", "shrink_context"])
+def test_ingest_refuses_mutating_callbacks_before_screening(name, mutation, ollama_ctx):
+    calls = []
+
+    def callback(verdict):
+        calls.append(verdict)
+        if mutation == "replace_probe":
+            pipe.canary_probe = SecurityPipeline().canary_probe
+        else:
+            pipe.canary_probe.num_ctx = 1
+
+    pipe = SecurityPipeline(canary_num_ctx=20000, **{name: callback})
+    with pytest.raises(ValueError, match="does not support pipeline callbacks"):
+        ingest_records(pipe, ["x" * 5000], policy=IngestPolicy(segment_chars=1000, segment_overlap=0))
+    assert calls == []
+
+
+def test_callback_added_while_reading_records_is_refused(ollama_ctx):
+    pipe = SecurityPipeline(canary_num_ctx=20000)
+
+    def records():
+        yield "normal text"
+        pipe._on_pass = lambda verdict: setattr(pipe.canary_probe, "num_ctx", 1)
+
+    with pytest.raises(ValueError, match="does not support pipeline callbacks"):
+        ingest_records(pipe, records())
+
+
+@pytest.mark.parametrize("replace_export", [False, True])
+def test_publish_failure_preserves_concurrent_writer(tmp_path, monkeypatch, replace_export):
+    import errno
+
+    export = tmp_path / "export.json"
+    manifest = tmp_path / "manifest.json"
+    real_link = os.link
+
+    def race(src, dst, **kwargs):
+        if dst == str(manifest):
+            if replace_export:
+                replacement = tmp_path / "replacement"
+                replacement.write_bytes(b"CONCURRENT_EXPORT")
+                os.replace(replacement, export)
+            manifest.write_bytes(b"CONCURRENT_MANIFEST")
+            raise OSError(errno.EOPNOTSUPP, "links unavailable")
+        return real_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(os, "link", race)
+    with pytest.raises(OSError):
+        publish(_result(), manifest, export)
+    assert manifest.read_bytes() == b"CONCURRENT_MANIFEST"
+    if replace_export:
+        assert export.read_bytes() == b"CONCURRENT_EXPORT"
+    else:
+        assert not export.exists()
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_verified_run_owns_config_when_callback_installed_mid_check(monkeypatch, ollama_ctx):
+    from little_canary.canary import CanaryProbe
+
+    pipe = SecurityPipeline(canary_num_ctx=20000, enable_structural_filter=False)
+    contexts = []
+    callbacks = []
+
+    def probe_test(self, text):
+        contexts.append(self.num_ctx)
+        pipe._on_pass = lambda verdict: callbacks.append(verdict)
+        pipe.canary_probe.num_ctx = 1
+        return CanaryResult(response="Here is a short summary of the document.", latency=0,
+                            model="m", system_prompt="s", user_input=text, success=True)
+
+    monkeypatch.setattr(CanaryProbe, "test", probe_test)
+    res = ingest_records(pipe, ["x" * 30], policy=IngestPolicy(segment_chars=10, segment_overlap=0))
+    assert res.records[0].admission == ADMISSION_ADMITTED
+    assert contexts == [20000, 20000, 20000]
+    assert callbacks == []
+    assert res.pipeline_info["canary_num_ctx"] == 20000
+    assert res.pipeline_info["canary_context_verified"] is True
+
+
+@pytest.mark.parametrize("restore_conflict", [False, True])
+def test_rollback_never_deletes_replacement_between_identity_check_and_cleanup(
+    tmp_path, monkeypatch, caplog, restore_conflict,
+):
+    import little_canary.ingest as module
+
+    export = tmp_path / "export.json"
+    manifest = tmp_path / "manifest.json"
+    real_publish = module._publish_temp
+    real_stat, real_rename, real_link = os.stat, os.rename, os.link
+    raced = []
+
+    def replace_export():
+        if not raced:
+            replacement = tmp_path / "replacement"
+            replacement.write_bytes(b"CONCURRENT_EXPORT")
+            os.replace(replacement, export)
+            raced.append(True)
+
+    def stat(path, *args, **kwargs):
+        result = real_stat(path, *args, **kwargs)
+        if path == str(export) and kwargs.get("follow_symlinks") is False:
+            replace_export()  # exercises the previous check-then-unlink implementation
+        return result
+
+    def rename(src, dst, **kwargs):
+        if src == export.name and "src_dir_fd" in kwargs:
+            replace_export()  # replacement immediately before atomic quarantine
+        return real_rename(src, dst, **kwargs)
+
+    def link(src, dst, **kwargs):
+        if restore_conflict and src == "file" and dst == export.name:
+            fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600,
+                         dir_fd=kwargs["dst_dir_fd"])
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(b"NEWER_EXPORT")
+        return real_link(src, dst, **kwargs)
+
+    def publish_temp(src, dst, **kwargs):
+        if dst == str(manifest):
+            raise OSError("manifest publication failed")
+        return real_publish(src, dst, **kwargs)
+
+    monkeypatch.setattr(module, "_publish_temp", publish_temp)
+    monkeypatch.setattr(os, "stat", stat)
+    monkeypatch.setattr(os, "rename", rename)
+    monkeypatch.setattr(os, "link", link)
+    with pytest.raises(OSError):
+        publish(_result(), manifest, export)
+    assert raced == [True]
+    recovery = list(tmp_path.glob(".ingest-recovery-*/file"))
+    if restore_conflict:
+        assert export.read_bytes() == b"NEWER_EXPORT"
+        assert len(recovery) == 1 and recovery[0].read_bytes() == b"CONCURRENT_EXPORT"
+        assert str(recovery[0]) in caplog.text
+    else:
+        assert export.read_bytes() == b"CONCURRENT_EXPORT"
+        assert recovery == []
+    assert not manifest.exists()

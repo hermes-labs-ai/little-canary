@@ -72,6 +72,7 @@ from little_canary.ingest import (
     IngestPolicy,
     IngestResult,
     ingest_records,
+    loads_strict,
     required_canary_context,
     write_manifest,
 )
@@ -123,8 +124,8 @@ def load_corpus(path: str | os.PathLike[str]) -> tuple[list[dict[str, Any]], lis
             if not line.strip():
                 continue
             try:
-                raw = json.loads(line)
-            except json.JSONDecodeError:
+                raw = loads_strict(line)
+            except (ValueError, RecursionError):
                 raise ValueError(f"corpus line {line_no}: invalid JSON") from None
             if not isinstance(raw, dict):
                 raise ValueError(f"corpus line {line_no}: record must be an object")
@@ -524,6 +525,29 @@ def _build_pipeline(args: argparse.Namespace, policy: IngestPolicy) -> Any:
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
+    """Pin the output directory before screening, including through directory symlinks."""
+    if args.manifest is None:
+        return _run(args)
+    target = Path(args.manifest)
+    directory_fd = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        corpus_stat = os.stat(args.corpus)
+        try:
+            target_stat = os.stat(target.name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            target_stat = None
+        if target_stat is not None and (
+            target_stat.st_dev, target_stat.st_ino
+        ) == (corpus_stat.st_dev, corpus_stat.st_ino):
+            raise ValueError("manifest path must not alias the corpus")
+        if target_stat is not None and not args.overwrite:
+            raise ValueError(f"refusing to overwrite existing manifest: {args.manifest}")
+        return _run(args, directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _run(args: argparse.Namespace, directory_fd: int | None = None) -> dict[str, Any]:
     """Load, anonymize, ingest, score; return the eval document. Raises ValueError/OSError."""
     policy = IngestPolicy(
         segment_chars=args.segment_chars,
@@ -536,8 +560,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         max_metadata_value_chars=args.max_metadata_value_chars,
     )
     policy.validate()
-    if args.manifest is not None and not args.overwrite and os.path.lexists(args.manifest):
-        raise ValueError(f"refusing to overwrite existing manifest: {args.manifest}")
     records, expectations = load_corpus(args.corpus)
     total = len(records)
     ids = [part.strip() for part in args.ids.split(",") if part.strip()] if args.ids else None
@@ -553,7 +575,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     manifest = None
     if args.manifest is not None:
-        digest = write_manifest(result, args.manifest, overwrite=args.overwrite)
+        digest = write_manifest(
+            result, Path(args.manifest).name, overwrite=args.overwrite, directory_fd=directory_fd
+        )
         manifest = {"path": args.manifest, "sha256": digest}
     return {
         "schema": EVAL_SCHEMA,

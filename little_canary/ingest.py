@@ -27,6 +27,7 @@ metadata values never appear in the manifest.
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import json
 import logging
@@ -34,6 +35,7 @@ import math
 import os
 import tempfile
 import types
+import uuid
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
@@ -1077,6 +1079,11 @@ def _check_canary_context(
             "pipeline cannot be verified; pass unverified_pipeline=True to run it anyway "
             "(the manifest then records canary_context_verified false and verify_export refuses it)"
         )
+    if isinstance(pipeline, SecurityPipeline) and any(
+        getattr(pipeline, name, None) is not None
+        for name in ("_on_block", "_on_degraded", "_on_flag", "_on_unexercised", "_on_pass")
+    ):
+        raise ValueError("ingest does not support pipeline callbacks: screening configuration can change")
     if getattr(pipeline, "enable_canary", True) is False:
         return None
     if getattr(pipeline, "use_judge", False) is True or (
@@ -1137,6 +1144,7 @@ def ingest_records(
     Run-level ``ValueError`` (nothing checked, nothing returned): invalid policy,
     ``segment_chars`` above the pipeline's structural ``max_input_length``, a
     pipeline that is not a ``SecurityPipeline`` (unless ``unverified_pipeline``),
+    configured pipeline callbacks (which can mutate screening configuration),
     an Ollama canary whose ``num_ctx`` is unset or smaller than
     ``required_canary_context`` (the backend would silently truncate a long
     segment and the manifest would still call it exercised), more
@@ -1150,7 +1158,10 @@ def ingest_records(
     Records are still screened and admitted in memory, but the manifest records
     ``pipeline.canary_context_verified: false`` and ``verify_export`` refuses
     every such pair. ``canary_context_verified`` is ``true`` only for a
-    ``SecurityPipeline`` whose Ollama canary passed the context gate.
+    ``SecurityPipeline`` whose Ollama canary passed the context gate. Verified
+    runs own a configuration snapshot with deep-copied probe/filter/analyzer;
+    later callback installation or probe context changes on the caller's pipeline
+    cannot alter screening.
     """
     policy = policy if policy is not None else IngestPolicy()
     if not isinstance(policy, IngestPolicy):
@@ -1184,6 +1195,19 @@ def ingest_records(
     # cannot bypass the gate.
     rechecked = _check_canary_context(policy, pipeline, verified, unverified_pipeline=unverified_pipeline)
     context_verified = rechecked is not None and _is_security_pipeline(pipeline)
+    if _is_security_pipeline(pipeline):
+        # Own the configuration used by screening. Callback installation or probe
+        # mutation on the caller's pipeline cannot alter this run after verification.
+        pipeline = copy.copy(pipeline)
+        for name in ("canary_probe", "structural_filter", "analyzer"):
+            setattr(pipeline, name, copy.deepcopy(getattr(pipeline, name)))
+        for name in ("_on_block", "_on_degraded", "_on_flag", "_on_unexercised", "_on_pass"):
+            setattr(pipeline, name, None)
+        _check_canary_context(
+            policy, pipeline,
+            (pipeline.canary_probe, *rechecked[1:]) if rechecked is not None else None,
+            unverified_pipeline=unverified_pipeline,
+        )
     counter = _Counter()
     results: list[RecordResult] = []
     admitted: list[AdmittedRecord] = []
@@ -1297,11 +1321,6 @@ def _publish_temp(tmp: str, target: str, *, overwrite: bool) -> None:
                 os.link(tmp, target)
             except FileExistsError:
                 raise FileExistsError(f"refusing to overwrite existing file: {target}") from None
-            except OSError:
-                # Filesystem without hard links: best-effort re-check, then rename.
-                if os.path.lexists(target):
-                    raise FileExistsError(f"refusing to overwrite existing file: {target}") from None
-                os.replace(tmp, target)
     finally:
         # The temp file is a complete copy of the document; remove it, retrying once
         # on a transient error so a hidden duplicate is not left beside the target.
@@ -1349,7 +1368,9 @@ def publish(
     manifest on disk implies its export was already there. With ``overwrite``
     the previous files are removed before anything is written. If any step
     fails, every temp file is removed and an export published in this call is
-    unlinked again, leaving no artefact of this call behind (an empty temp file
+    moved into a private quarantine for an ownership check. Owned files are
+    removed; concurrent replacements are restored without clobbering a newer
+    target, or retained at a logged recovery path if restoration fails (an empty temp file
     created in the instant before it is registered can remain). Returns ``{"manifest": sha256,
     "export": sha256}`` (``export`` only when requested). Marks
     ``result.export_requested`` so the manifest records the request.
@@ -1376,23 +1397,23 @@ def publish(
         digests["export"] = hashlib.sha256(export_data).hexdigest()
 
     temps: list[str] = []
-    published: list[str] = []  # targets this call may have created, most recent last
+    published: list[tuple[str, os.stat_result]] = []  # identity of our temp inode
     try:
         manifest_tmp = _write_temp(manifest_target, manifest_data, temps)
         if export_target is not None and export_data is not None:
             export_tmp = _write_temp(export_target, export_data, temps)
-            published.append(export_target)  # counted as ours from the moment publish is attempted
+            published.append((export_target, os.stat(export_tmp)))
             try:
                 _publish_temp(export_tmp, export_target, overwrite=overwrite)
             except FileExistsError:
-                published.remove(export_target)  # a racing writer's file: not ours, never removed
+                published.pop()  # a racing writer's file: not ours, never removed
                 raise
             temps.remove(export_tmp)
-        published.append(manifest_target)
+        published.append((manifest_target, os.stat(manifest_tmp)))
         try:
             _publish_temp(manifest_tmp, manifest_target, overwrite=overwrite)
         except FileExistsError:
-            published.remove(manifest_target)
+            published.pop()
             raise
         temps.remove(manifest_tmp)
     except BaseException:
@@ -1401,11 +1422,49 @@ def publish(
         for tmp in temps:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
-        for target in reversed(published):
-            with contextlib.suppress(OSError):
-                os.unlink(target)
+        for target, identity in reversed(published):
+            _rollback_target(target, identity)
         raise
     return digests
+
+
+def _rollback_target(target: str, identity: os.stat_result) -> None:
+    """Inspect ownership only after moving into a private, directory-pinned quarantine.
+
+    A concurrent replacement is restored without clobbering a newer target. If
+    restoration fails, retain it at the logged recovery path rather than delete it.
+    """
+    parent = os.path.realpath(os.path.dirname(os.path.abspath(target)))
+    name = os.path.basename(target)
+    quarantine = ".ingest-recovery-" + uuid.uuid4().hex
+    recovery = os.path.join(parent, quarantine, "file")
+    parent_fd = private_fd = None
+    created = moved = retained = False
+    try:
+        parent_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        os.mkdir(quarantine, 0o700, dir_fd=parent_fd)
+        created = True
+        private_fd = os.open(quarantine, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0), dir_fd=parent_fd)
+        # Never check ownership at the shared pathname then delete that pathname.
+        os.rename(name, "file", src_dir_fd=parent_fd, dst_dir_fd=private_fd)
+        moved = True
+        current = os.stat("file", dir_fd=private_fd, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
+            os.link("file", name, src_dir_fd=private_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+        os.unlink("file", dir_fd=private_fd)
+        moved = False
+    except OSError:
+        retained = moved
+        if retained:
+            logger.error("Ingest rollback retained a concurrent file at %s", recovery)
+    finally:
+        if private_fd is not None:
+            os.close(private_fd)
+        if parent_fd is not None:
+            if created and not retained:
+                with contextlib.suppress(OSError):
+                    os.rmdir(quarantine, dir_fd=parent_fd)
+            os.close(parent_fd)
 
 
 def _same_file(a: str, b: str) -> bool:
@@ -1418,14 +1477,38 @@ def _same_file(a: str, b: str) -> bool:
 
 
 def write_manifest(
-    result: IngestResult, path: str | os.PathLike[str], *, overwrite: bool = False
+    result: IngestResult, path: str | os.PathLike[str], *, overwrite: bool = False,
+    directory_fd: int | None = None,
 ) -> str:
     """Atomically write ``result.manifest_json()``; return the SHA-256 of the bytes written.
 
     The written bytes are exactly the canonical manifest, so the returned digest
-    equals the export's ``manifest_sha256``.
+    equals the export's ``manifest_sha256``. ``directory_fd`` pins publication
+    to an already-open directory and requires a single filename as ``path``.
     """
-    return _atomic_write(path, result.manifest_json().encode("utf-8"), overwrite=overwrite)
+    data = result.manifest_json().encode("utf-8")
+    if directory_fd is not None:
+        name = os.fspath(path)
+        if os.path.basename(name) != name or name in ("", ".", ".."):
+            raise ValueError("directory_fd requires a single target filename")
+        tmp = "." + name + "." + uuid.uuid4().hex + ".tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory_fd)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if overwrite:
+                os.replace(tmp, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+            else:
+                os.link(tmp, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+            with contextlib.suppress(OSError):
+                os.fsync(directory_fd)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp, dir_fd=directory_fd)
+        return hashlib.sha256(data).hexdigest()
+    return _atomic_write(path, data, overwrite=overwrite)
 
 
 def write_export(
