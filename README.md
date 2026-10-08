@@ -252,17 +252,29 @@ Failed canary coverage can include a `coverage_reason` in the layer result, such
 
 ## Put it in front of your agent
 
-Run the local service above, then wire in the host you use. Not every host lets a plugin refuse a prompt; the [host capability matrix](https://github.com/hermes-labs-ai/little-canary/blob/main/docs/host-capability-matrix.md) records exactly what each one can intercept and block.
+Choose your host below. For integrations that use loopback HTTP, run the local service above. The Hermes Agent native plugin runs inside Hermes and does not need `little-canary serve`. Not every host lets a plugin refuse a prompt; the [host capability matrix](https://github.com/hermes-labs-ai/little-canary/blob/main/docs/host-capability-matrix.md) records exactly what each one can intercept and block.
 
 | Host | Integration | Can it block the turn? |
 | --- | --- | --- |
 | **Claude Code** | [Plugin](https://github.com/hermes-labs-ai/little-canary/blob/main/plugins/claude-code) screens `UserPromptSubmit` | Yes |
 | **OpenCode** | [Plugin](https://github.com/hermes-labs-ai/little-canary/blob/main/plugins/opencode) flags submitted `chat.message` text | No — advisory warning only |
 | **Pi** | [Extension](https://github.com/hermes-labs-ai/little-canary/blob/main/plugins/pi) screens submitted `input` | Yes — when the service returns an unsafe verdict |
-| **Gemini CLI** | Extension screens `BeforeAgent` | Yes — denies the run before the loop starts |
+| **Gemini CLI** | [Extension](#gemini-cli-install) screens `BeforeAgent`; install below | Yes — denies the run before the loop starts |
 | **OpenAI Agents SDK** | [Input guardrail](https://github.com/hermes-labs-ai/little-canary/blob/main/examples/openai_agents_example.py) maps verdicts to the SDK tripwire | Yes — before the first agent starts |
 | **OpenClaw** | [Native plugin](https://github.com/hermes-labs-ai/little-canary/blob/main/plugins/openclaw), install below | Yes — current prompt only, not history or tool results |
 | **Hermes Agent** | [Native plugin](https://github.com/hermes-labs-ai/little-canary/blob/main/integrations/hermes-agent/README.md) screens the user turn | No — a block removes downstream tool authority instead |
+
+### Gemini CLI install
+
+Start the local service above in blocking mode, then install this repository as a Gemini CLI extension:
+
+```bash
+gemini extensions install https://github.com/hermes-labs-ai/little-canary
+gemini extensions list
+```
+
+The extension calls `http://127.0.0.1:18421/check` and screens the current prompt before the agent loop. A rejecting verdict denies the run. Screening failures, including a passing verdict without exercised behavioral coverage, let the run continue with a warning by default; set `LITTLE_CANARY_FAILURE_MODE=deny` in the Gemini process environment to deny those failures instead.
+
 
 <details>
 <summary>OpenClaw install</summary>
