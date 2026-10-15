@@ -22,7 +22,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from ipaddress import ip_address
-from typing import Any, Callable
+from typing import Any, Callable, cast
 from urllib.parse import urlsplit
 
 from .analyzer import BehavioralAnalyzer
@@ -329,6 +329,7 @@ class SecurityPipeline:
         api_key: str = "",
         base_url: str = "",
         on_unexercised: Callable[[PipelineVerdict], None] | None = None,
+        canary_num_ctx: int | None = None,
     ):
         if mode not in self.VALID_MODES:
             raise ValueError(f"mode must be one of {self.VALID_MODES}, got '{mode}'")
@@ -361,6 +362,8 @@ class SecurityPipeline:
         self.structural_filter = StructuralFilter(max_input_length=max_input_length)
 
         # Layer 2: Canary probe
+        self.canary_probe: OpenAICanaryProbe | CanaryProbe
+        canary_kwargs: dict[str, Any]
         if provider == "openai":
             openai_base = base_url or "https://api.openai.com/v1"
             canary_kwargs = {
@@ -386,9 +389,13 @@ class SecurityPipeline:
             }
             if canary_system_prompt:
                 canary_kwargs["system_prompt"] = canary_system_prompt
+            if canary_num_ctx is not None:
+                # Explicit Ollama context window; default None leaves runtime behavior unchanged.
+                canary_kwargs["num_ctx"] = canary_num_ctx
             self.canary_probe = CanaryProbe(**canary_kwargs)
 
         # Analysis: LLM judge (if specified) or regex analyzer (fallback)
+        self.analyzer: OpenAILLMJudge | LLMJudge | BehavioralAnalyzer
         if judge_model:
             if provider == "openai":
                 openai_base = base_url or "https://api.openai.com/v1"
@@ -774,17 +781,22 @@ class SecurityPipeline:
             status["canary_available"] = canary_available
             status["temperature"] = self.canary_probe.temperature
             if self.provider == "openai":
-                origin, endpoint_class = _redacted_origin(self.canary_probe.base_url)
+                origin, endpoint_class = _redacted_origin(
+                    cast(OpenAICanaryProbe, self.canary_probe).base_url
+                )
                 status["base_url"] = origin
             else:
-                origin, endpoint_class = _redacted_origin(self.canary_probe.ollama_url)
+                origin, endpoint_class = _redacted_origin(
+                    cast(CanaryProbe, self.canary_probe).ollama_url
+                )
                 status["ollama_url"] = origin
             status["endpoint_origin"] = origin
             status["endpoint_class"] = endpoint_class
         if self.enable_canary and self.use_judge:
-            status["judge_model"] = self.analyzer.model
+            judge = cast("OpenAILLMJudge | LLMJudge", self.analyzer)
+            status["judge_model"] = judge.model
             try:
-                judge_available = bool(self.analyzer.is_available())
+                judge_available = bool(judge.is_available())
             except Exception as exc:
                 logger.error(
                     "Judge availability check failed (%s)",

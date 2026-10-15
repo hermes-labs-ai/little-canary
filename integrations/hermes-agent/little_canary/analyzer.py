@@ -320,7 +320,7 @@ class BehavioralAnalyzer:
 
     def _check_semantic_discontinuity(self, response: str, user_input: str) -> list[Signal]:
         """Check for zero content word overlap between input and response."""
-        signals = []
+        signals: list[Signal] = []
 
         if len(user_input.split()) < 4:
             return signals

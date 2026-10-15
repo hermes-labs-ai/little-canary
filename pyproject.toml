@@ -8,8 +8,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "little-canary"
-version = "0.4.0"
-description = "Prompt injection detection for LLM apps using sacrificial canary-model probes and structural preflight checks"
+version = "0.5.0"
+description = "Prompt-injection risk sensor using sacrificial canary-model probes and structural preflight checks; experimental Ingest admission with explicit coverage evidence"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.9"
@@ -96,7 +96,7 @@ show_missing = true
 fail_under = 80
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

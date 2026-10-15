@@ -1,0 +1,8 @@
+{
+  "name": "little-canary-pi-source",
+  "private": true,
+  "description": "Pi Git install entry for the Little Canary input-screening extension in plugins/pi",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=22.19.0" },
+  "pi": { "extensions": ["./plugins/pi/index.js"] }
+}
