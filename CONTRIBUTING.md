@@ -76,9 +76,22 @@ upstream fixes it, and run `tests/test_hermes_gate_runner.py`.
 - **Review and LintLang.** The `[review]` and `[lintlang]` tables are read by
   the installed `hermes-gate` CLI, not by the runner: `hermes-gate fast`
   applies LintLang to changed files matching its trigger globs, and
-  `hermes-gate review` runs the CodeRabbit review. In CI, LintLang runs from
+  `hermes-gate review` uses Gate's bundled `hermes-gate-claude-review` adapter
+  with an existing Claude Code subscription login. An unavailable reviewer
+  holds review acceptance. In CI, LintLang runs from
   `.github/workflows/lintlang.yml` and CodeRabbit reviews pull requests
-  directly.
+  directly. Hosted reviews are independent of the local material-review receipt.
+
+For this maintainer review route, install the CLI from the public source commit
+below in an isolated tool environment. The PyPI 0.1.7 artifact does not include
+JSONL review or the Claude adapter:
+
+```bash
+uv tool install --force 'git+https://github.com/hermes-labs-ai/hermes-gate.git@f20db03fa5f63fc8c5bc11773f4c4b71cb2b61a9'
+```
+
+Keep the tool's executable directory on `PATH` so both `hermes-gate` and
+`hermes-gate-claude-review` resolve from that installation.
 
 ## Project Structure
 
