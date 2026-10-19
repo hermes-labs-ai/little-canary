@@ -38,7 +38,7 @@ The machine-readable source of truth for this page is
 
 ### OpenCode
 
-The [OpenCode package](../plugins/opencode) uses the 1.18.32 `chat.message`
+The [OpenCode package](https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/opencode) uses the 1.18.32 `chat.message`
 hook to send the current user message's text parts to the Little Canary
 loopback service. In an isolated run, a synthetic flagged verdict produced a
 loopback request and a warning on stderr before the host reached its model
@@ -66,7 +66,7 @@ separate OpenCode V2 plugin API is not covered by this 1.18.32 result.
 
 ### Pi
 
-The [Pi package](../plugins/pi) registers `input`, which Pi calls after input
+The [Pi package](https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/pi) registers `input`, which Pi calls after input
 arrives and before agent processing. It sends only that input's text to the
 Little Canary loopback service. Pi 0.87.1 loaded the package from a local path
 in an isolated profile. In a print-mode run, a loopback service returning
@@ -131,7 +131,7 @@ relying on it. Until someone records that observation, this row stays
 
 ## OpenClaw — supported embedded and CLI runners
 
-The native plugin at [`plugins/openclaw`](../plugins/openclaw) registers the
+The native plugin at [`plugins/openclaw`](https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/openclaw) registers the
 typed `before_agent_run` gate. [OpenClaw's hook contract](https://docs.openclaw.ai/plugins/hooks/prompt-and-session)
 documents this hook after prompt construction and before model submission on
 embedded and CLI runners;
