@@ -59,7 +59,7 @@ Open a [feature request](https://github.com/hermes-labs-ai/little-canary/issues/
 ### Repository Quality Gate
 
 `.hermes/gate.toml` and `.hermes/hermes_gate_runner.py` configure the
-[Hermes Gate](https://github.com/hermes-labs-ai/hermes-gate) rail. The runner
+[Hermes Gate](https://github.com/roli-lpci/hermes-gate) rail. The runner
 is based on the Hermes Gate 0.1.2 repository runner, with one local preflight:
 Fast checks indexed whitespace for staged files whose working copies are
 missing, then holds until those copies are restored or their deletions are
