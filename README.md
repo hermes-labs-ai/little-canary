@@ -171,7 +171,7 @@ curl -sS http://127.0.0.1:18421/check \
 
 The service binds to loopback only and exposes `GET /health`. Its JSON response exposes `safe`, `degraded`, `canary_status`, `analysis_status`, and optional `advisory` data. Read those fields before forwarding input; the disposition labels below summarize CLI and host behavior rather than a JSON `Result` field.
 
-Python apps can skip HTTP and call `SecurityPipeline.check()` directly — see the [example integrations](https://github.com/hermes-labs-ai/little-canary/blob/main/examples/).
+Python apps can skip HTTP and call `SecurityPipeline.check()` directly — see the [example integrations](https://github.com/hermes-labs-ai/little-canary/tree/main/examples).
 
 The default remains `qwen2.5:1.5b`. Select an installed model with `serve --canary-model`, `demo --model`, or Python's `SecurityPipeline(canary_model=...)`; the Hermes Agent plugin reads `LITTLE_CANARY_MODEL`. Locally exercised alternatives are `qwen3.5:2b-q4_K_M`, `LiquidAI/lfm2.5-1.2b-instruct:q4_k_m`, and `gemma3:1b`. Pull weights with `ollama pull <tag>` and check each model's license. These are selectable models, not performance guarantees; see the [evaluation guidance](https://github.com/hermes-labs-ai/little-canary/blob/main/benchmarks/README.md).
 
@@ -256,12 +256,12 @@ Choose your host below. For integrations that use loopback HTTP, run the local s
 
 | Host | Integration | Can it block the turn? |
 | --- | --- | --- |
-| **Claude Code** | [Plugin](https://github.com/hermes-labs-ai/little-canary/blob/main/plugins/claude-code) screens `UserPromptSubmit` | Yes |
-| **OpenCode** | [Plugin](https://github.com/hermes-labs-ai/little-canary/blob/main/plugins/opencode) flags submitted `chat.message` text | No — advisory warning only |
-| **Pi** | [Extension](https://github.com/hermes-labs-ai/little-canary/blob/main/plugins/pi) screens submitted `input` | Yes — when the service returns an unsafe verdict |
+| **Claude Code** | [Plugin](https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/claude-code) screens `UserPromptSubmit` | Yes |
+| **OpenCode** | [Plugin](https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/opencode) flags submitted `chat.message` text | No — advisory warning only |
+| **Pi** | [Extension](https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/pi) screens submitted `input` | Yes — when the service returns an unsafe verdict |
 | **Gemini CLI** | [Extension](#gemini-cli-install) screens `BeforeAgent`; install below | Yes — denies the run before the loop starts |
 | **OpenAI Agents SDK** | [Input guardrail](https://github.com/hermes-labs-ai/little-canary/blob/main/examples/openai_agents_example.py) maps verdicts to the SDK tripwire | Yes — before the first agent starts |
-| **OpenClaw** | [Native plugin](https://github.com/hermes-labs-ai/little-canary/blob/main/plugins/openclaw), install below | Yes — current prompt only, not history or tool results |
+| **OpenClaw** | [Native plugin](https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/openclaw), install below | Yes — current prompt only, not history or tool results |
 | **Hermes Agent** | [Native plugin](https://github.com/hermes-labs-ai/little-canary/blob/main/integrations/hermes-agent/README.md) screens the user turn | No — a block removes downstream tool authority instead |
 
 ### Gemini CLI install

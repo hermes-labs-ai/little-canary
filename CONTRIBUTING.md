@@ -59,7 +59,7 @@ Open a [feature request](https://github.com/hermes-labs-ai/little-canary/issues/
 ### Repository Quality Gate
 
 `.hermes/gate.toml` and `.hermes/hermes_gate_runner.py` configure the
-[Hermes Gate](https://github.com/hermes-labs-ai/hermes-gate) rail. The runner
+[Hermes Gate](https://github.com/roli-lpci/hermes-gate) rail. The runner
 is based on the Hermes Gate 0.1.2 repository runner, with one local preflight:
 Fast checks indexed whitespace for staged files whose working copies are
 missing, then holds until those copies are restored or their deletions are
@@ -87,7 +87,7 @@ below in an isolated tool environment. The PyPI 0.1.7 artifact does not include
 JSONL review or the Claude adapter:
 
 ```bash
-uv tool install --force 'git+https://github.com/hermes-labs-ai/hermes-gate.git@f20db03fa5f63fc8c5bc11773f4c4b71cb2b61a9'
+uv tool install --force 'git+https://github.com/roli-lpci/hermes-gate.git@f20db03fa5f63fc8c5bc11773f4c4b71cb2b61a9'
 ```
 
 Keep the tool's executable directory on `PATH` so both `hermes-gate` and
