@@ -87,7 +87,7 @@ below in an isolated tool environment. The PyPI 0.1.7 artifact does not include
 JSONL review or the Claude adapter:
 
 ```bash
-uv tool install --force 'git+https://github.com/hermes-labs-ai/hermes-gate.git@f20db03fa5f63fc8c5bc11773f4c4b71cb2b61a9'
+uv tool install --force 'git+https://github.com/roli-lpci/hermes-gate.git@f20db03fa5f63fc8c5bc11773f4c4b71cb2b61a9'
 ```
 
 Keep the tool's executable directory on `PATH` so both `hermes-gate` and
