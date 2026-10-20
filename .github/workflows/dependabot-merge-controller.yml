@@ -1,0 +1,75 @@
+name: Dependabot merge controller
+
+on:
+  workflow_run:
+    workflows: [Dependabot review activity]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  context:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.context.outputs.pr }}
+      head: ${{ steps.context.outputs.head }}
+      update-type: ${{ steps.metadata.outputs.update-type }}
+    steps:
+      # workflow_run selects this workflow and github.sha from the default
+      # branch. Never fetch executable code at the source run/PR SHA.
+      - name: Validate the source run and live Dependabot PR
+        id: context
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          CONTROLLER_SHA: ${{ github.sha }}
+        run: |
+          gh api --method GET -H 'Accept: application/vnd.github.raw+json' "repos/$REPOSITORY/contents/scripts/dependabot_merge_context.py?ref=$CONTROLLER_SHA" > "$RUNNER_TEMP/little-canary-merge-context.py"
+          python3 -I "$RUNNER_TEMP/little-canary-merge-context.py"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.21.0"
+
+      # Pin the existing metadata implementation in the DEFAULT-BRANCH workflow.
+      # Invoke it as a child process: the runner overwrites GITHUB_EVENT_PATH for
+      # uses: steps. The child receives API data and only this job's read token.
+      - name: Fetch verified Dependabot metadata
+        id: metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          METADATA_REF: 25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        run: |
+          gh api --method GET -H 'Accept: application/vnd.github.raw+json' "repos/dependabot/fetch-metadata/contents/dist/index.js?ref=$METADATA_REF" > "$RUNNER_TEMP/little-canary-fetch-metadata.cjs"
+          python3 -I "$RUNNER_TEMP/little-canary-merge-context.py" --metadata
+
+  auto-merge:
+    needs: context
+    if: contains(fromJSON('["version-update:semver-minor", "version-update:semver-patch"]'), needs.context.outputs.update-type)
+    runs-on: ubuntu-latest
+    permissions:
+      checks: read
+      statuses: read
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: dependabot-merge-${{ needs.context.outputs.pr }}
+      cancel-in-progress: true
+    steps:
+      # No checkout, third-party action, cache, artifact, or PR code in this job.
+      - name: Auto-merge only after independent readiness validation
+        env:
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.context.outputs.pr }}
+          HEAD_SHA: ${{ needs.context.outputs.head }}
+          CONTROLLER_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method GET -H 'Accept: application/vnd.github.raw+json' "repos/$REPOSITORY/contents/scripts/check_pr_readiness.py?ref=$CONTROLLER_SHA" > "$RUNNER_TEMP/little-canary-review-guard.py"
+          gh pr checks --required --watch --fail-fast "$PR_NUMBER" --repo "$REPOSITORY"
+          python3 -I "$RUNNER_TEMP/little-canary-review-guard.py" --repo "$REPOSITORY" --pr "$PR_NUMBER" --head "$HEAD_SHA" --merge

@@ -1,28 +1,20 @@
-name: Dependabot auto-merge
+name: Dependabot review activity
 
-on: pull_request
+on:
+  pull_request:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
 
-permissions:
-  contents: write
-  pull-requests: write
+# Review events select this file from the PR merge context. They must not run
+# actions or receive write authority. The default-branch workflow_run controller
+# independently validates GitHub's run/PR records; it consumes no artifacts here.
+permissions: {}
 
 jobs:
-  auto-merge:
+  notify:
     runs-on: ubuntu-latest
-    if: github.actor == 'dependabot[bot]'
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     steps:
-      - name: Fetch Dependabot metadata
-        id: metadata
-        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
-        with:
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
-
-      - name: Auto-merge minor and patch updates
-        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
-        run: |
-          gh pr checks --required --watch --fail-fast "$PR_URL"
-          gh pr merge --squash --match-head-commit "$HEAD_SHA" "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: ':'

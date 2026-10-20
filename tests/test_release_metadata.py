@@ -1,10 +1,26 @@
 """Release-version and repository-identity consistency checks."""
 
 import json
+import os
 import re
+import shlex
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
+import pytest
 import yaml
+from packaging.markers import Marker
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import Version
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 from little_canary import __version__
 
@@ -147,26 +163,249 @@ def test_release_docs_do_not_assert_current_external_registry_state():
         assert "Before publication" not in text, relative_path
 
 
-def test_publish_workflow_keeps_build_privileges_away_from_publishing():
-    workflow = _read(".github/workflows/publish.yml")
+def _observe_build(steps: list[dict], *, tag: str, fail_tool: str = "") -> tuple[int, list[str]]:
+    """Exercise unconditional Bash steps with offline tool shims."""
+    with tempfile.TemporaryDirectory(prefix="canary-build-contract-") as directory:
+        root = Path(directory)
+        (root / "pyproject.toml").write_text('[project]\nversion = "0.0.0+contract"\n')
+        if sys.version_info < (3, 11):
+            (root / "tomllib.py").write_text("from tomli import load\n")
+        log = root / "calls"
+        log.touch()
+        shim = root / "python"
+        shim.write_text('''#!/bin/sh
+case "$1 $2" in
+  "-m pip") exit 0 ;;
+  "-m build")
+    printf 'build\\n' >> "$CALL_LOG"
+    [ "$FAIL_TOOL" != build ] || exit 1
+    [ "$#" = 2 ] || exit 1
+    mkdir -p dist
+    : > dist/package.whl
+    : > dist/package.tar.gz ;;
+  "-m twine")
+    printf 'twine\\n' >> "$CALL_LOG"
+    [ "$FAIL_TOOL" != twine ] || exit 1
+    [ "$3" = check ] && [ "$#" = 5 ] || exit 1
+    [ -f "$4" ] && [ -f "$5" ] || exit 1 ;;
+  *) exec "$REAL_PYTHON" "$@" ;;
+esac
+''')
+        shim.chmod(0o755)
+        env = {"PATH": str(root) + os.pathsep + os.defpath, "REAL_PYTHON": sys.executable,
+               "GITHUB_REF_NAME": tag, "CALL_LOG": str(log), "FAIL_TOOL": fail_tool}
+        for step in steps:
+            # New execution context needs a fixture before this probe can model it.
+            assert not step.get("continue-on-error") and "if" not in step
+            assert not step.get("env") and "working-directory" not in step
+            if step.get("uses", "").partition("@")[0] == "actions/upload-artifact":
+                with log.open("a") as output:
+                    output.write("upload\n")
+            if "run" not in step:
+                continue
+            assert "${{" not in step["run"]
+            assert step.get("shell") in {None, "bash"}
+            shell = ["bash", "--noprofile", "--norc", "-e"]
+            if step.get("shell") == "bash":
+                shell += ["-o", "pipefail"]
+            result = subprocess.run([*shell, "-c", step["run"]], cwd=root, env=env,
+                                    capture_output=True, text=True, timeout=10)
+            if result.returncode:
+                return result.returncode, log.read_text().splitlines()
+        return 0, log.read_text().splitlines()
+
+
+def _assert_publish_privileges(workflow: str) -> None:
     parsed = yaml.safe_load(workflow)
-    build_workflow, publish_workflow = workflow.split("  publish:\n", maxsplit=1)
-    build_job = build_workflow.split("  build:\n", maxsplit=1)[1]
-
-    assert "  release:\n    types: [published]" in workflow
-    assert "  build:\n" in workflow
-    assert "    permissions:\n      contents: read\n" in build_job
-    assert "id-token: write" not in build_job
-    assert 'test "${GITHUB_REF_NAME}" = "v${package_version}"' in build_job
-    assert "python -m build" in build_job
-    assert "python -m twine check dist/*" in build_job
-    assert "    needs: build\n" in publish_workflow
-    assert "      contents: read\n      id-token: write" in publish_workflow
-
-    build_actions = _pinned_actions(parsed["jobs"]["build"]["steps"])
-    publish_actions = _pinned_actions(parsed["jobs"]["publish"]["steps"])
+    triggers = parsed.get("on", parsed.get(True))
+    build = parsed["jobs"]["build"]
+    publish = parsed["jobs"]["publish"]
+    assert triggers["release"]["types"] == ["published"]
+    assert build["permissions"] == {"contents": "read"}
+    assert publish["permissions"] == {"contents": "read", "id-token": "write"}
+    assert publish["needs"] == "build"
+    assert build.get("runs-on") in ("ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04"), "unsupported build runner"
+    assert "container" not in build, "unsupported build container"
+    assert not build.get("continue-on-error") and "if" not in build
+    assert not parsed.get("defaults") and not build.get("defaults")
+    assert not parsed.get("env") and not build.get("env")
+    status, calls = _observe_build(build["steps"], tag="v0.0.0+contract")
+    assert status == 0 and calls == ["build", "twine", "upload"]
+    status, calls = _observe_build(build["steps"], tag="v0.0.0+wrong")
+    assert status != 0 and calls == []
+    for tool in ("build", "twine"):
+        status, calls = _observe_build(build["steps"], tag="v0.0.0+contract", fail_tool=tool)
+        assert status != 0 and calls == (["build"] if tool == "build" else ["build", "twine"])
+    build_actions = _pinned_actions(build["steps"])
+    publish_actions = _pinned_actions(publish["steps"])
     assert "actions/upload-artifact" in build_actions
     assert {"actions/download-artifact", "pypa/gh-action-pypi-publish"} <= publish_actions.keys()
+
+
+def test_publish_workflow_keeps_build_privileges_away_from_publishing():
+    _assert_publish_privileges(_read(".github/workflows/publish.yml"))
+
+
+def test_equivalent_executable_publish_commands_are_accepted():
+    workflow = _read(".github/workflows/publish.yml").replace(
+        "python -m build", 'python -m "build"').replace(
+        "python -m twine check dist/*", 'python -m "twine" check ./dist/*').replace(
+        'test "${GITHUB_REF_NAME}" = "v${package_version}"',
+        '[[ "${GITHUB_REF_NAME}" == "v${package_version}" ]]')
+    _assert_publish_privileges(workflow)
+
+
+@pytest.mark.parametrize("runner", ["ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04"])
+def test_supported_ubuntu_build_context_passes_the_probe(runner):
+    workflow = yaml.safe_load(_read(".github/workflows/publish.yml"))
+    workflow["jobs"]["build"]["runs-on"] = runner
+    _assert_publish_privileges(yaml.safe_dump(workflow))
+
+
+@pytest.mark.parametrize("context,reason", [
+    ({"runs-on": "windows-latest"}, "runner"),
+    ({"runs-on": ["self-hosted", "Linux"]}, "runner"),
+    ({"runs-on": "${{ matrix.os }}"}, "runner"),
+    ({"container": {"image": "alpine:3.20"}}, "container"),
+    ({"container": "alpine:3.20"}, "container"),
+])
+def test_unsupported_build_runner_or_container_fails_closed(context, reason):
+    workflow = yaml.safe_load(_read(".github/workflows/publish.yml"))
+    workflow["jobs"]["build"].update(context)
+    with pytest.raises(AssertionError, match="unsupported build " + reason):
+        _assert_publish_privileges(yaml.safe_dump(workflow))
+
+
+@pytest.mark.parametrize("permission", ['id-token: write', '"id-token": "write"', "'id-token': 'write'"])
+def test_build_oidc_permission_is_a_failing_control(permission):
+    workflow = _read(".github/workflows/publish.yml").replace(
+        "    permissions:\n      contents: read", f"    permissions:\n      {permission}\n      contents: read", 1
+    )
+    with pytest.raises(AssertionError):
+        _assert_publish_privileges(workflow)
+
+
+@pytest.mark.parametrize("command", ["python -m build", "python -m twine check dist/*"])
+@pytest.mark.parametrize("mutation", ["echo", "comment", "conditional", "ignore-failure"])
+def test_inert_or_ignored_build_commands_fail_the_contract(command, mutation):
+    workflow = yaml.safe_load(_read(".github/workflows/publish.yml"))
+    replacements = {"echo": "echo " + shlex.quote(command), "comment": "# " + command,
+                    "conditional": "if false; then\n  " + command + "\nfi",
+                    "ignore-failure": command + " || true"}
+    for step in workflow["jobs"]["build"]["steps"]:
+        if "run" in step:
+            step["run"] = step["run"].replace(command, replacements[mutation])
+    with pytest.raises(AssertionError):
+        _assert_publish_privileges(yaml.safe_dump(workflow))
+
+
+def test_inert_release_tag_guard_fails_the_contract():
+    workflow = _read(".github/workflows/publish.yml").replace(
+        'test "${GITHUB_REF_NAME}" = "v${package_version}"',
+        'echo \'test "${GITHUB_REF_NAME}" = "v${package_version}"\'')
+    with pytest.raises(AssertionError):
+        _assert_publish_privileges(workflow)
+
+
+@pytest.mark.parametrize("context", ["workflow-env", "job-env", "step-env", "directory", "expression",
+                                     "job-if", "step-if"])
+def test_unmodeled_build_context_cannot_pass_the_probe(context):
+    workflow = yaml.safe_load(_read(".github/workflows/publish.yml"))
+    build = workflow["jobs"]["build"]
+    step = next(step for step in build["steps"] if "python -m build" in step.get("run", ""))
+    if context.endswith("-env"):
+        target = {"workflow-env": workflow, "job-env": build, "step-env": step}[context]
+        target["env"] = {"PYTHONHOME": "/missing-python-home"}
+    elif context == "directory":
+        step["working-directory"] = "missing-directory"
+    elif context == "expression":
+        step["run"] += '\necho "${{ github.ref_name }}"\n'
+    else:
+        (build if context == "job-if" else step)["if"] = False
+    with pytest.raises(AssertionError):
+        _assert_publish_privileges(yaml.safe_dump(workflow))
+
+
+def _assert_requests_contract(project_text: str, requirements_text: str) -> None:
+    project = tomllib.loads(project_text)["project"]
+    project_requests = [
+        req for value in project["dependencies"]
+        if canonicalize_name((req := Requirement(value)).name) == "requests"
+    ]
+    requirements = [
+        Requirement(line) for line in requirements_text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    requirements_requests = [req for req in requirements if canonicalize_name(req.name) == "requests"]
+    assert len(project_requests) == len(requirements_requests) == 2
+    expected = {
+        Marker('python_version < "3.10"'): "2.33",
+        Marker('python_version >= "3.10"'): "3",
+    }
+    assert {req.marker for req in project_requests} == set(expected)
+    # Requirement equality handles whitespace, case, specifier order and quote style.
+    assert set(project_requests) == set(requirements_requests)
+    for req in project_requests:
+        assert not req.extras and req.url is None
+        specifiers = list(req.specifier)
+        upper = [spec.version for spec in specifiers if spec.operator == "<"]
+        lower = [spec.version for spec in specifiers if spec.operator == ">="]
+        assert upper == [expected[req.marker]]
+        assert len(specifiers) == 2 and len(lower) == 1
+        assert Version("2") <= Version(lower[0]) < Version(upper[0])
+
+
+def test_requests_contract_agrees_between_parsed_manifests():
+    _assert_requests_contract(_read("pyproject.toml"), _read("requirements.txt"))
+
+
+@pytest.mark.parametrize("mutation", ["unconditional", "marker", "cap", "floor", "disagreement", "duplicate"])
+def test_broken_requests_contract_is_a_failing_control(mutation):
+    project = _read("pyproject.toml")
+    requirements = _read("requirements.txt")
+    if mutation in {"unconditional", "duplicate"}:
+        extra = 'requests>=2.34.2,<3' if mutation == "unconditional" else str(
+            Requirement(tomllib.loads(project)["project"]["dependencies"][0])
+        )
+        project = project.replace("dependencies = [", f"dependencies = [\n    '{extra}',", 1)
+    elif mutation == "marker":
+        project = project.replace("python_version < '3.10'", "python_version < '3.9'")
+    elif mutation == "cap":
+        project = project.replace("<2.33", "<3")
+        requirements = requirements.replace("<2.33", "<3")
+    elif mutation == "floor":
+        project = re.sub(r"requests>=[^,<;]+", "requests>=1.99", project)
+        requirements = re.sub(r"requests>=[^,<;]+", "requests>=1.99", requirements)
+    else:
+        requirements = requirements.replace("<2.33", "<2.34")
+    with pytest.raises(AssertionError):
+        _assert_requests_contract(project, requirements)
+
+
+@pytest.mark.parametrize("unrelated", [None, "idna", "idna==3.9", "idna>=2.32.5"])
+def test_compatible_requests_floor_updates_do_not_require_test_edits(unrelated):
+    project = [Requirement(value) for value in tomllib.loads(_read("pyproject.toml"))["project"]["dependencies"]]
+    requirements = [Requirement(line) for line in _read("requirements.txt").splitlines()
+                    if line.strip() and not line.lstrip().startswith("#")]
+    if unrelated:
+        project.append(Requirement(unrelated))
+        requirements.append(Requirement(unrelated))
+    all_requirements = project + requirements
+    others = [str(req) for req in all_requirements if canonicalize_name(req.name) != "requests"]
+    changed = 0
+    for req in all_requirements:
+        if canonicalize_name(req.name) != "requests":
+            continue
+        lower = next(spec.version for spec in req.specifier if spec.operator == ">=")
+        raised = str(Version(lower)) + ".1"
+        assert Version(raised) > Version(lower)
+        req.specifier = SpecifierSet(",".join(
+            ">=" + raised if spec.operator == ">=" else str(spec) for spec in req.specifier))
+        changed += 1
+    assert changed == 4
+    assert [str(req) for req in all_requirements if canonicalize_name(req.name) != "requests"] == others
+    _assert_requests_contract('[project]\ndependencies = ' + json.dumps([str(req) for req in project]),
+                              "\n".join(str(req) for req in requirements))
 
 
 def test_dependency_automation_respects_supported_python_and_held_action_contracts():
@@ -176,25 +415,20 @@ def test_dependency_automation_respects_supported_python_and_held_action_contrac
     action_ignores = {entry["dependency-name"] for entry in updates["github-actions"]["ignore"]}
 
     assert "hermes-labs-ai/lintlang" in action_ignores
-    assert '"requests>=2.32.5,<2.33; python_version < \'3.10\'"' in _read("pyproject.toml")
-    assert '"requests>=2.34.2,<3; python_version >= \'3.10\'"' in _read("pyproject.toml")
-    assert _read("requirements.txt").splitlines() == [
-        'requests>=2.32.5,<2.33; python_version < "3.10"',
-        'requests>=2.34.2,<3; python_version >= "3.10"',
-    ]
     assert "intentional compatibility probe" in _read(".github/workflows/lintlang.yml")
 
 
 def test_dependabot_merge_waits_for_required_checks_without_repository_auto_merge():
-    workflow = _read(".github/workflows/dependabot-auto-merge.yml")
+    workflow = _read(".github/workflows/dependabot-merge-controller.yml")
 
-    wait = 'gh pr checks --required --watch --fail-fast "$PR_URL"'
-    merge = 'gh pr merge --squash --match-head-commit "$HEAD_SHA" "$PR_URL"'
+    wait = 'gh pr checks --required --watch --fail-fast "$PR_NUMBER" --repo "$REPOSITORY"'
+    merge = 'python3 -I "$RUNNER_TEMP/little-canary-review-guard.py"'
     assert wait in workflow
     assert merge in workflow
     assert workflow.index(wait) < workflow.index(merge)
+    assert '--head "$HEAD_SHA" --merge' in workflow
     assert "gh pr merge --auto" not in workflow
-    assert "HEAD_SHA: ${{ github.event.pull_request.head.sha }}" in workflow
+    assert "HEAD_SHA: ${{ needs.context.outputs.head }}" in workflow
 
 
 def test_scorecard_workflow_pins_actions_and_narrows_permissions():
