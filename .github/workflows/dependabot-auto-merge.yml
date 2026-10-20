@@ -1,15 +1,22 @@
 name: Dependabot auto-merge
 
-on: pull_request
+on:
+  pull_request:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
 
 permissions:
+  checks: read
+  statuses: read
   contents: write
   pull-requests: write
 
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
-    if: github.actor == 'dependabot[bot]'
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     steps:
       # This job is the merge controller, separate from the Dependabot author.
       # Execute the guard from the trusted base, never from an unreviewed PR.
@@ -28,11 +35,12 @@ jobs:
         if: steps.metadata.outputs.update-type != 'version-update:semver-major'
         run: |
           gh pr checks --required --watch --fail-fast "$PR_URL"
-          python3 scripts/check_pr_readiness.py --repo "$REPOSITORY" --pr "$PR_NUMBER" --head "$HEAD_SHA"
-          gh pr merge --squash --match-head-commit "$HEAD_SHA" "$PR_URL"
+          git show "$BASE_SHA:scripts/check_pr_readiness.py" > "$RUNNER_TEMP/little-canary-review-guard.py"
+          python3 -I "$RUNNER_TEMP/little-canary-review-guard.py" --repo "$REPOSITORY" --pr "$PR_NUMBER" --head "$HEAD_SHA" --merge
         env:
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_URL: ${{ github.event.pull_request.html_url }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

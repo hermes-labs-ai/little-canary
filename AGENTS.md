@@ -84,13 +84,22 @@ python -m build
 The authoring session may push, open, and update a PR, but must not decide or
 execute its merge. Hand the final diff and exact head SHA to a separate reviewer
 and merge controller. That controller reads full review bodies and threads, then
-runs `python3 scripts/check_pr_readiness.py --repo hermes-labs-ai/little-canary
---pr <NUMBER> --head <SHA>` immediately before a head-matched merge. The guard
+runs `python3 -I scripts/check_pr_readiness.py --repo hermes-labs-ai/little-canary
+--pr <NUMBER> --head <SHA> --merge` only after accepting that exact head. The guard
 requires passing required checks, both head-specific Copilot and Sourcery review
-submissions, no pending requests/reviews or changes requested, zero unresolved
-threads (including outdated ones), and 120 seconds of observed stable head and
-review activity. Its timeout fails closed; a successful bot check is insufficient.
-Repeat this guard before a release handback, and verify fresh main CI. See
+submissions, no pending requests/API-visible pending reviews or changes requested,
+zero unresolved threads (including outdated ones), explicit controller disposition
+of every nonempty review body, and 120 seconds of observed stable head and review
+activity. GitHub hides other users' private draft reviews; this guard cannot prove
+they do not exist. Ask requested reviewers to submit before handing back readiness.
+The controller posts dispositions in native PR comments bound to the exact head,
+review ID and digest, with evidence. The authoring session must not post controller
+dispositions. Read the format and trust limits in the maintainer guide. The guard
+rechecks complete review activity immediately before its head-matched merge; the
+GitHub API does not offer an atomic condition on review state for that merge.
+Its deadline bounds CLI requests and fails closed; a successful bot check is
+insufficient. Repeat the read-only guard (omit `--merge`) before a release handback,
+and verify fresh main CI. See
 `docs/maintainer-dependency-updates.md` for the procedure. Do not release from an
 authoring lane or bypass a hold to sustain forward momentum.
 

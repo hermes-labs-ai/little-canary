@@ -1,7 +1,7 @@
-"""Read-only merge/release guard; run by the independent merge controller.
+"""Merge/release guard for the independent controller; read-only unless --merge.
 
-Requires gh authentication. Missing reviews fail closed. A successful bot check
-never substitutes for an actual submitted review or a resolved thread.
+Missing reviews fail closed. Every nonempty review body needs an explicit
+controller disposition. API visibility does not include other users' private drafts.
 """
 
 import argparse
@@ -12,6 +12,8 @@ import sys
 import time
 
 EXPECTED_REVIEWERS = {"sourcery-ai", "copilot-pull-request-reviewer"}
+DISPOSITION_MARKER = "<!-- little-canary-review-disposition/v1 -->"
+TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 QUERY = """
 query($owner:String!, $name:String!, $number:Int!, $cursor:String) {
   repository(owner:$owner,name:$name) {
@@ -31,8 +33,8 @@ CONNECTIONS = {
     "reviews": "id state submittedAt updatedAt author { login } commit { oid } body",
     "reviewThreads": "id isResolved isOutdated",
     "reviewRequests": "requestedReviewer { __typename }",
+    "comments": "id author { login } authorAssociation body createdAt updatedAt",
 }
-
 CHECKS_QUERY = """
 query($owner:String!, $name:String!, $number:Int!, $head:String!, $cursor:String) {
   repository(owner:$owner,name:$name) {
@@ -44,7 +46,8 @@ query($owner:String!, $name:String!, $number:Int!, $head:String!, $cursor:String
             nodes {
               __typename
               ... on CheckRun {
-                id name status conclusion startedAt completedAt
+                id databaseId name status conclusion startedAt completedAt
+                checkSuite { app { id } }
                 isRequired(pullRequestNumber:$number)
               }
               ... on StatusContext {
@@ -61,7 +64,24 @@ query($owner:String!, $name:String!, $number:Int!, $head:String!, $cursor:String
 """
 
 
-def commit_checks(repo, number, head):
+def remaining(deadline, *, now=None):
+    clock = now or time.monotonic
+    seconds = 30 if deadline is None else min(30, deadline - clock())
+    if seconds <= 0:
+        raise ValueError("Readiness timeout elapsed")
+    return seconds
+
+
+def gh_run(*args, deadline=None):
+    return subprocess.run(["gh", *args], capture_output=True, text=True, check=True,
+                          timeout=remaining(deadline))
+
+
+def gh_json(*args, deadline=None):
+    return json.loads(gh_run(*args, deadline=deadline).stdout)
+
+
+def commit_checks(repo, number, head, *, deadline=None):
     owner, name = repo.split("/", 1)
     checks = []
     cursor = None
@@ -71,7 +91,7 @@ def commit_checks(repo, number, head):
                 "-f", "name=" + name, "-F", f"number={number}", "-f", "head=" + head]
         if cursor:
             args += ["-f", "cursor=" + cursor]
-        response = gh_json(*args)
+        response = gh_json(*args, deadline=deadline)
         if response.get("errors"):
             raise ValueError("GitHub check query returned errors")
         commit = response["data"]["repository"]["object"]
@@ -88,14 +108,7 @@ def commit_checks(repo, number, head):
         seen.add(cursor)
 
 
-def gh_json(*args, acceptable_codes=(0,)):
-    result = subprocess.run(["gh", *args], capture_output=True, text=True, check=False)
-    if result.returncode not in acceptable_codes:
-        raise ValueError(f"GitHub query failed ({result.returncode}): {result.stderr.strip()}")
-    return json.loads(result.stdout)
-
-
-def snapshot(repo, number, head):
+def _snapshot(repo, number, head, *, deadline=None):
     owner, name = repo.split("/", 1)
     result = {"head": head}
     for connection, fields in CONNECTIONS.items():
@@ -109,7 +122,7 @@ def snapshot(repo, number, head):
                 "-F", f"number={number}"]
             if cursor:
                 args += ["-f", "cursor=" + cursor]
-            response = gh_json(*args)
+            response = gh_json(*args, deadline=deadline)
             if response.get("errors"):
                 raise ValueError("GitHub GraphQL returned errors")
             pr = response["data"]["repository"]["pullRequest"]
@@ -129,35 +142,82 @@ def snapshot(repo, number, head):
                 raise ValueError("Incomplete review pagination")
             seen.add(cursor)
         result[connection] = nodes
-    # Include edits/replies on every inline comment, including old threads.
-    pages = gh_json("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{number}/comments?per_page=100")
+    pages = gh_json("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{number}/comments?per_page=100",
+                    deadline=deadline)
     result["comment_activity"] = [
         {key: comment[key] for key in ("id", "created_at", "updated_at", "body")}
         for page in pages for comment in page
     ]
-    result["checks"] = commit_checks(repo, number, head)
-    # Bind the checks request and paginated review reads to the same head.
-    current = gh_json("pr", "view", str(number), "--repo", repo, "--json", "headRefOid,reviewDecision")
+    result["checks"] = commit_checks(repo, number, head, deadline=deadline)
+    current = gh_json("pr", "view", str(number), "--repo", repo, "--json", "headRefOid,reviewDecision",
+                      deadline=deadline)
     if current["headRefOid"] != head:
         raise ValueError("PR head changed during readiness query")
     result["reviewDecision"] = current["reviewDecision"]
     return result
 
 
+def fingerprint(state):
+    return hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
+
+
+def snapshot(repo, number, head, *, deadline=None):
+    # These are repeated observations, not an atomic GitHub transaction. Include
+    # all review/body/thread/comment/check activity, rather than only the head.
+    first = _snapshot(repo, number, head, deadline=deadline)
+    confirmed = _snapshot(repo, number, head, deadline=deadline)
+    if fingerprint(first) != fingerprint(confirmed):
+        raise ValueError("Review or check activity changed during readiness query; restart the quiet window")
+    return confirmed
+
+
+def latest_required_checks(state):
+    latest = {}
+    for check in state["checks"]:
+        # isRequired includes GitHub's app binding; a same-name untrusted app
+        # cannot stand in for a missing configured check.
+        if not check["isRequired"]:
+            continue
+        name = check.get("name", check.get("context"))
+        app = (check.get("checkSuite") or {}).get("app") or {}
+        identity = (check["__typename"], name, app.get("id"))
+        order = (check.get("databaseId") or 0, check.get("startedAt") or check.get("createdAt") or "")
+        if identity not in latest or order > latest[identity][0]:
+            latest[identity] = (order, check)
+    return [check for _, check in latest.values()]
+
+
+def dispositions(state):
+    accepted = set()
+    for comment in state["comments"]:
+        if comment["authorAssociation"] not in TRUSTED_ASSOCIATIONS:
+            continue
+        body = comment["body"]
+        if not body.startswith(DISPOSITION_MARKER + "\n"):
+            continue
+        try:
+            record = json.loads(body.split("\n", 1)[1])
+            if record["head"] != state["head"]:
+                continue
+            for item in record["reviews"]:
+                if item["disposition"] in {"addressed", "no-action"} and item["evidence"].strip():
+                    accepted.add((item["id"], item["digest"]))
+        except (ValueError, KeyError, TypeError, AttributeError):
+            continue
+    return accepted
+
+
 def holds(state):
     reasons = []
     required = set(state["required_contexts"])
-    found = set()
-    for check in state["checks"]:
+    checks = latest_required_checks(state)
+    found = {check.get("name", check.get("context")) for check in checks}
+    for check in checks:
         name = check.get("name", check.get("context"))
-        # GitHub evaluates required context AND app identity. A same-name
-        # success from another app must not satisfy a missing trusted check.
-        if check["isRequired"]:
-            found.add(name)
-            passed = (check.get("status") == "COMPLETED" and check.get("conclusion") == "SUCCESS"
-                      if check["__typename"] == "CheckRun" else check["state"] == "SUCCESS")
-            if not passed:
-                reasons.append("required check not passing: " + name)
+        passed = (check.get("status") == "COMPLETED" and check.get("conclusion") == "SUCCESS"
+                  if check["__typename"] == "CheckRun" else check["state"] == "SUCCESS")
+        if not passed:
+            reasons.append("required check not passing: " + name)
     if not required or not required <= found:
         reasons.append("required checks are missing")
     if state["reviewDecision"] == "CHANGES_REQUESTED":
@@ -169,19 +229,27 @@ def holds(state):
         reasons.append("unresolved review threads: " + ", ".join(unresolved))
     latest = {}
     submitted = set()
+    disposed = dispositions(state)
     for review in state["reviews"]:
         author = (review.get("author") or {}).get("login", "").removesuffix("[bot]")
         if review["state"] == "PENDING":
-            reasons.append("pending review: " + author)
+            reasons.append("visible pending review: " + author)
             continue
-        # COMMENTED never retracts an opinionated change request. A dismissed
-        # review has no standing; GitHub reports its state as DISMISSED in place.
+        # A general comment never retracts an opinionated change request.
+        # Dismissed reviews have no standing. Do not depend on API traversal order.
         if review["state"] in {"APPROVED", "CHANGES_REQUESTED"}:
-            latest[author] = review["state"]
+            order = review["submittedAt"] or ""
+            if not order:
+                reasons.append("review submission time is unavailable: " + review["id"])
+            elif (author not in latest or order > latest[author][0]
+                  or (order == latest[author][0] and review["state"] == "CHANGES_REQUESTED")):
+                latest[author] = (order, review["state"])
+        if review.get("body", "").strip() and (review["id"], fingerprint(review)) not in disposed:
+            reasons.append(f"undisposed review body: {review['id']} digest={fingerprint(review)}")
         if (review["state"] in {"COMMENTED", "APPROVED"}
                 and (review.get("commit") or {}).get("oid") == state["head"]):
             submitted.add(author)
-    for author, status in latest.items():
+    for author, (_, status) in latest.items():
         if status == "CHANGES_REQUESTED":
             reasons.append("changes requested: " + author)
     missing = EXPECTED_REVIEWERS - submitted
@@ -190,29 +258,41 @@ def holds(state):
     return reasons
 
 
-def fingerprint(state):
-    return hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
-
-
 def wait_until_ready(fetch, quiet_seconds, timeout_seconds, *, now=time.monotonic, sleep=time.sleep):
     deadline = now() + timeout_seconds
     previous = None
     quiet_since = now()
-    last_reasons = []
     while True:
         state = fetch()
         observed = now()
+        # Check the deadline before considering a late result ready.
+        if observed >= deadline:
+            raise ValueError("Readiness timeout elapsed: " + "; ".join(holds(state)))
         current = fingerprint(state)
         if current != previous:
             quiet_since = observed
             previous = current
-        last_reasons = holds(state)
-        if not last_reasons and observed - quiet_since >= quiet_seconds:
-            return state
-        if observed >= deadline:
-            detail = "; ".join(last_reasons) or "final quiet window has not elapsed"
-            raise ValueError("Readiness held: " + detail)
-        sleep(min(15, deadline - observed))
+        if not holds(state) and observed - quiet_since >= quiet_seconds:
+            # A fresh complete read must still agree at the end of the window.
+            confirmed = fetch()
+            if now() >= deadline:
+                raise ValueError("Readiness timeout elapsed during final confirmation")
+            if fingerprint(confirmed) == current and not holds(confirmed):
+                return confirmed
+            quiet_since = now()
+            previous = fingerprint(confirmed)
+        sleep(min(15, deadline - now()))
+
+
+def merge_ready_pr(repo, number, head, state, *, deadline):
+    # Kept inside the controller process so there is no separate CLI handoff
+    # between the final complete review recheck and the head-matched merge.
+    confirmed = snapshot(repo, number, head, deadline=deadline)
+    remaining(deadline)
+    if fingerprint(confirmed) != fingerprint(state) or holds(confirmed):
+        raise ValueError("Readiness changed before merge; restart controller verification")
+    gh_run("pr", "merge", str(number), "--repo", repo, "--squash", "--match-head-commit", head,
+           deadline=deadline)
 
 
 def main():
@@ -222,20 +302,28 @@ def main():
     parser.add_argument("--head", required=True)
     parser.add_argument("--quiet-seconds", type=int, default=120)
     parser.add_argument("--timeout-seconds", type=int, default=900)
+    parser.add_argument("--merge", action="store_true", help="Independent controller only: recheck and merge exact head")
     args = parser.parse_args()
-    if args.quiet_seconds < 120 or args.timeout_seconds < args.quiet_seconds:
-        parser.error("quiet window must be at least 120 seconds and fit within the timeout")
+    if args.quiet_seconds < 120 or args.timeout_seconds <= args.quiet_seconds:
+        parser.error("quiet window must be at least 120 seconds and less than the timeout")
+    deadline = time.monotonic() + args.timeout_seconds
     try:
         state = wait_until_ready(
-            lambda: snapshot(args.repo, args.pr, args.head), args.quiet_seconds, args.timeout_seconds
+            lambda: snapshot(args.repo, args.pr, args.head, deadline=deadline),
+            args.quiet_seconds, args.timeout_seconds
         )
-    except (ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
+        if args.merge:
+            merge_ready_pr(args.repo, args.pr, args.head, state, deadline=deadline)
+    except (ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
         return 1
-    print(json.dumps({"head": args.head, "unresolved_threads": sum(not thread["isResolved"] for thread in state["reviewThreads"]),
+    print(json.dumps({"head": args.head, "merged": args.merge,
+                      "unresolved_threads": sum(not thread["isResolved"] for thread in state["reviewThreads"]),
                       "quiet_seconds": args.quiet_seconds,
-                      "reviews": [{key: review.get(key) for key in ("id", "state", "submittedAt", "author")}
-                                  for review in state["reviews"]], "required_checks": [check for check in state["checks"] if check["isRequired"]]}, indent=2))
+                      "reviews": [{"id": review["id"], "digest": fingerprint(review),
+                                   "state": review["state"], "submittedAt": review["submittedAt"],
+                                   "author": review["author"]} for review in state["reviews"]],
+                      "required_checks": latest_required_checks(state)}, indent=2))
     return 0
 
 

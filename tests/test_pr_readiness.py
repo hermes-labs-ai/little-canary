@@ -1,6 +1,12 @@
 """Offline proof that successful bot checks cannot hide late review findings."""
 
+import json
+import subprocess
+from copy import deepcopy
+from pathlib import Path
+
 import pytest
+import yaml
 
 from scripts import check_pr_readiness as guard
 
@@ -9,7 +15,7 @@ HEAD = "ab0e8583e0afcc0417227d25c67aa151bf1597df"
 
 def review(author, submitted, state="COMMENTED", head=HEAD):
     return {"id": author, "author": {"login": author}, "submittedAt": submitted,
-            "state": state, "commit": {"oid": head}}
+            "state": state, "commit": {"oid": head}, "body": ""}
 
 
 def ready_state():
@@ -18,7 +24,10 @@ def ready_state():
         review("copilot-pull-request-reviewer", "2026-10-20T19:01:20Z"),
     ], "reviewRequests": [], "reviewThreads": [],
         "required_contexts": ["test"],
+        "comments": [],
         "checks": [{"__typename": "CheckRun", "name": "test", "isRequired": True,
+                    "databaseId": 1, "startedAt": "2026-10-20T19:00:00Z",
+                    "checkSuite": {"app": {"id": "trusted-app"}},
                     "status": "COMPLETED", "conclusion": "SUCCESS"}], "comment_activity": []}
 
 
@@ -153,17 +162,57 @@ def test_snapshot_reads_every_thread_page_and_rejects_head_race(monkeypatch):
         guard.snapshot("owner/repo", 155, HEAD)
 
 
-def test_dependabot_controller_runs_guard_from_base_before_head_matched_merge():
-    from pathlib import Path
+def controller_workflow():
+    return yaml.safe_load((Path(__file__).parents[1] / ".github/workflows/dependabot-auto-merge.yml").read_text())
 
-    import yaml
 
-    workflow = yaml.safe_load((Path(__file__).parents[1] / ".github/workflows/dependabot-auto-merge.yml").read_text())
+def assert_controller_workflow(workflow):
+    assert workflow["permissions"]["checks"] == "read"
+    assert workflow["permissions"]["statuses"] == "read"
+    triggers = workflow.get("on", workflow.get(True))
+    assert triggers["pull_request_review"]["types"] == ["submitted", "edited", "dismissed"]
+    assert triggers["pull_request_review_comment"]["types"] == ["created", "edited", "deleted"]
+    job = workflow["jobs"]["auto-merge"]
+    assert job["if"] == "github.event.pull_request.user.login == 'dependabot[bot]'"
+    guarded = False
+    checkouts = 0
+    for step in job["steps"]:
+        if step.get("uses", "").partition("@")[0] == "actions/checkout":
+            assert step["with"]["ref"] == "${{ github.event.pull_request.base.sha }}"
+            assert step["with"]["persist-credentials"] is False
+            checkouts += 1
+        command = step.get("run", "")
+        if "little-canary-review-guard.py" in command:
+            assert 'git show "$BASE_SHA:scripts/check_pr_readiness.py"' in command
+            assert 'python3 -I "$RUNNER_TEMP/little-canary-review-guard.py"' in command
+            assert '--head "$HEAD_SHA" --merge' in command
+            assert step["env"]["BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+            assert step["env"]["HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
+            guarded = True
+            break
+    assert guarded and checkouts
+
+
+def test_dependabot_controller_runs_trusted_guard_with_check_read_permissions():
+    assert_controller_workflow(controller_workflow())
+
+
+def test_second_head_checkout_is_a_failing_controller_control():
+    workflow = controller_workflow()
     steps = workflow["jobs"]["auto-merge"]["steps"]
-    assert steps[0]["with"]["ref"] == "${{ github.event.pull_request.base.sha }}"
-    command = steps[-1]["run"]
-    assert command.index("gh pr checks") < command.index("scripts/check_pr_readiness.py") < command.index("gh pr merge")
-    assert '--match-head-commit "$HEAD_SHA"' in command
+    head_checkout = deepcopy(steps[0])
+    head_checkout["with"]["ref"] = "${{ github.event.pull_request.head.sha }}"
+    steps.insert(1, head_checkout)
+    with pytest.raises(AssertionError):
+        assert_controller_workflow(workflow)
+
+
+@pytest.mark.parametrize("permission", ["checks", "statuses"])
+def test_missing_check_read_permission_is_a_failing_control(permission):
+    workflow = controller_workflow()
+    del workflow["permissions"][permission]
+    with pytest.raises((AssertionError, KeyError)):
+        assert_controller_workflow(workflow)
 
 
 @pytest.mark.parametrize("state", ["DISMISSED", "APPROVED"])
@@ -182,7 +231,7 @@ def test_missing_required_context_is_not_hidden_by_other_green_checks():
 def test_checks_are_queried_by_commit_and_incomplete_pagination_fails_closed(monkeypatch):
     calls = []
 
-    def gh(*args):
+    def gh(*args, **kwargs):
         calls.append(args)
         assert "head=" + HEAD in args
         return {"data": {"repository": {"object": {"oid": HEAD, "statusCheckRollup": {
@@ -247,9 +296,10 @@ def test_required_coverage_check_must_exercise_success(conclusion):
     assert any("required check not passing" in reason for reason in guard.holds(state))
 
 
-def test_cli_cannot_shorten_documented_quiet_window(monkeypatch):
+@pytest.mark.parametrize("seconds", [60, 119])
+def test_cli_cannot_shorten_documented_quiet_window(monkeypatch, seconds):
     monkeypatch.setattr("sys.argv", ["guard", "--repo", "owner/repo", "--pr", "156",
-                                     "--head", HEAD, "--quiet-seconds", "60"])
+                                     "--head", HEAD, "--quiet-seconds", str(seconds)])
     with pytest.raises(SystemExit) as error:
         guard.main()
     assert error.value.code == 2
@@ -264,3 +314,163 @@ def test_missing_classic_policy_is_explicit_hold(monkeypatch):
     monkeypatch.setattr(guard, "gh_json", gh)
     with pytest.raises(ValueError, match="No classic required-context policy"):
         guard.snapshot("owner/repo", 156, HEAD)
+
+
+
+def disposition(state, review_body, *, association="COLLABORATOR", head=HEAD):
+    return {"authorAssociation": association, "body": guard.DISPOSITION_MARKER + "\n" + json.dumps({
+        "head": head, "reviews": [{"id": review_body["id"], "digest": guard.fingerprint(review_body),
+            "disposition": "addressed", "evidence": "Verified correction and adversarial regression test."}]
+    })}
+
+
+def test_body_only_findings_require_explicit_controller_disposition():
+    state = ready_state()
+    finding = state["reviews"][0]
+    finding["body"] = "Material bug: bypasses dependency security. No inline thread was created."
+    assert any("undisposed review body" in reason for reason in guard.holds(state))
+    state["comments"].append(disposition(state, finding))
+    assert guard.holds(state) == []
+
+
+@pytest.mark.parametrize("mutation", ["head", "body", "outsider", "evidence", "digest", "malformed"])
+def test_stale_forged_or_incomplete_disposition_cannot_clear_body_findings(mutation):
+    state = ready_state()
+    finding = state["reviews"][0]
+    finding["body"] = "Finding without an inline thread"
+    ack = disposition(state, finding)
+    if mutation == "head":
+        ack = disposition(state, finding, head="stale-head")
+    elif mutation == "body":
+        finding["body"] += " edited after disposition"
+    elif mutation == "outsider":
+        ack["authorAssociation"] = "CONTRIBUTOR"
+    elif mutation == "malformed":
+        ack["body"] = guard.DISPOSITION_MARKER + "\nnot JSON"
+    else:
+        record = json.loads(ack["body"].split("\n", 1)[1])
+        record["reviews"][0][mutation] = ""
+        ack["body"] = guard.DISPOSITION_MARKER + "\n" + json.dumps(record)
+    state["comments"] = [ack]
+    assert any("undisposed review body" in reason for reason in guard.holds(state))
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_newest_opinionated_review_wins_independent_of_api_order(reverse):
+    state = ready_state()
+    opinions = [review("reviewer", "2026-10-20T18:00:00Z", "APPROVED"),
+                review("reviewer", "2026-10-20T19:00:00Z", "CHANGES_REQUESTED"),
+                review("reviewer", "2026-10-20T19:01:00Z", "COMMENTED")]
+    state["reviews"].extend(reversed(opinions) if reverse else opinions)
+    assert "changes requested: reviewer" in guard.holds(state)
+
+
+def test_successful_rerun_replaces_failed_run_for_same_required_identity():
+    state = ready_state()
+    older = deepcopy(state["checks"][0])
+    older["conclusion"] = "FAILURE"
+    state["checks"][0]["databaseId"] = 2
+    state["checks"].append(older)
+    assert guard.holds(state) == []
+
+
+def test_queued_new_rerun_cannot_reuse_prior_success():
+    state = ready_state()
+    newer = deepcopy(state["checks"][0])
+    newer.update(databaseId=2, startedAt=None, status="QUEUED", conclusion=None)
+    state["checks"].append(newer)
+    assert any("required check not passing" in reason for reason in guard.holds(state))
+
+
+def test_late_ready_fetch_cannot_pass_after_timeout():
+    clock = Clock()
+
+    def fetch():
+        if clock.time >= 60:
+            clock.time = 151
+        return ready_state()
+
+    with pytest.raises(ValueError, match="timeout elapsed"):
+        guard.wait_until_ready(fetch, 60, 150, now=clock.now, sleep=clock.sleep)
+
+
+def test_slow_final_confirmation_cannot_bypass_timeout():
+    clock = Clock()
+    confirmations = 0
+
+    def fetch():
+        nonlocal confirmations
+        if clock.time == 60:
+            confirmations += 1
+            if confirmations == 2:
+                clock.time = 151
+        return ready_state()
+
+    with pytest.raises(ValueError, match="timeout elapsed during final confirmation"):
+        guard.wait_until_ready(fetch, 60, 150, now=clock.now, sleep=clock.sleep)
+
+
+def test_github_subprocess_uses_remaining_deadline_and_bounds_unscoped_calls(monkeypatch):
+    timeouts = []
+    monkeypatch.setattr(guard.time, "monotonic", lambda: 100)
+
+    def run(*args, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        return subprocess.CompletedProcess(args, 0, stdout="{}")
+
+    monkeypatch.setattr(guard.subprocess, "run", run)
+    guard.gh_json("api", "test", deadline=105)
+    assert 0 < timeouts[0] <= 5
+    guard.gh_json("api", "test")
+    assert timeouts[1] == 30
+    with pytest.raises(ValueError, match="timeout elapsed"):
+        guard.remaining(100, now=lambda: 101)
+
+
+@pytest.mark.parametrize("activity", ["reviews", "reviewThreads", "comments", "comment_activity"])
+def test_snapshot_rechecks_all_review_activity_before_returning(monkeypatch, activity):
+    calls = 0
+
+    def fetch(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        state = ready_state()
+        if calls == 2:
+            state[activity].append({"id": "new activity"})
+        return state
+
+    monkeypatch.setattr(guard, "_snapshot", fetch)
+    with pytest.raises(ValueError, match="activity changed during readiness query"):
+        guard.snapshot("owner/repo", 156, HEAD)
+
+
+def test_late_thread_immediately_before_merge_prevents_merge(monkeypatch):
+    initial = ready_state()
+    changed = ready_state()
+    changed["reviewThreads"] = [{"id": "late", "isResolved": False}]
+    monkeypatch.setattr(guard, "snapshot", lambda *args, **kwargs: changed)
+    monkeypatch.setattr(guard, "gh_run", lambda *args, **kwargs: pytest.fail("merge was attempted"))
+    with pytest.raises(ValueError, match="Readiness changed before merge"):
+        guard.merge_ready_pr("owner/repo", 156, HEAD, initial, deadline=float("inf"))
+
+
+def test_controller_merge_rechecks_then_matches_exact_head(monkeypatch):
+    state = ready_state()
+    calls = []
+    monkeypatch.setattr(guard, "snapshot", lambda *args, **kwargs: calls.append("recheck") or state)
+    monkeypatch.setattr(guard, "gh_run", lambda *args, **kwargs: calls.append(args))
+    guard.merge_ready_pr("owner/repo", 156, HEAD, state, deadline=float("inf"))
+    assert calls[0] == "recheck"
+    assert calls[1] == ("pr", "merge", "156", "--repo", "owner/repo", "--squash", "--match-head-commit", HEAD)
+
+
+
+def test_cli_subprocess_timeout_fails_closed_before_merge(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["guard", "--repo", "owner/repo", "--pr", "156", "--head", HEAD, "--merge"])
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(["gh", "api"], 30)
+
+    monkeypatch.setattr(guard, "snapshot", timeout)
+    monkeypatch.setattr(guard, "merge_ready_pr", lambda *args, **kwargs: pytest.fail("merge attempted after timeout"))
+    assert guard.main() == 1
