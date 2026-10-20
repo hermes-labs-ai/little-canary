@@ -34,8 +34,10 @@ source; publication is a separate controller action.
    fast/full/review on that exact head. Resolve findings in a new commit and
    repeat affected checks; freeze the head only when the committed tree is clean.
 4. From that exact clean head, install the packaging tools and prepare
-   distributions in a fresh directory outside the repository:
+   distributions in a fresh directory outside the repository. Run this as a
+   standalone script, not in the maintainer's interactive shell:
    ```sh
+   #!/bin/sh
    set -eu
    release_head=$(git rev-parse HEAD)
    test -z "$(git status --porcelain)"
@@ -52,7 +54,8 @@ source; publication is a separate controller action.
    `release_head` with the artifact hashes as pre-merge evidence; if the source
    head changes, discard and rebuild them and repeat the affected checks.
 5. Hand the frozen PR head, its artifact record and proposed public copy to the
-   separate controller. The controller follows
+   separate controller. The controller verifies the recorded `release_head`
+   equals the exact PR head and rejects a stale record, then follows
    [the existing readiness guard](maintainer-dependency-updates.md), including
    head-specific reviews, dispositions, quiet windows and fresh merged-main CI.
    The author must not merge or publish.
@@ -71,9 +74,13 @@ merged commit before approving the curated title/body and publishing the release
 A matching tag name or package version alone is insufficient. Do not publish
 another version merely to complete website synchronization.
 
-After the publish run succeeds, verify public wheel and source downloads, hashes,
-PyPI provenance, fresh no-cache installs, and README metadata. Offline replay
-proves the packaged fixture path, not current live-model detection quality.
+The local hashes are pre-publication build evidence, not a claim that separately
+built archives are byte-for-byte reproducible. After the publish run succeeds,
+verify that its checkout and uploaded artifact run are bound to the exact tag
+commit. Download the public wheel and source archive, match each SHA-256 to PyPI's
+published digest, verify PyPI provenance, perform fresh no-cache installs, and
+check README metadata. Offline replay proves the packaged fixture path, not
+current live-model detection quality.
 In a follow-up metadata PR, date the changelog entry and add
 `codemeta.json`'s now-live versioned PyPI `downloadUrl`; do not move the immutable
 release tag or publish again for that metadata-only change.
