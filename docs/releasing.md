@@ -18,17 +18,20 @@ source; publication is a separate controller action.
    compatibility metadata checked by this repository; this Python release does
    not publish the intentionally unpublished OpenCode/Pi npm packages or update
    a ClawHub package. Treat any registry publication as a separate release.
-   Update current install pins in `llms.txt` and both the service-version text
-   and install pin in the OpenClaw README. Keep the new changelog heading
-   `Unreleased` and omit `codemeta.json`'s future `downloadUrl` while preparing;
-   curate the proposed release title/body from the actual diff. Preserve
-   historical evidence, unrelated tool pins and host certification fields. Do
-   not rewrite the root README for a version bump.
+   Keep public install pins in `llms.txt` and the OpenClaw README on the currently
+   available release until the new PyPI artifacts pass post-publication checks.
+   Keep the new changelog heading `Unreleased` and omit `codemeta.json`'s future
+   `downloadUrl` while preparing; curate the proposed release title/body from the
+   actual diff. Preserve historical evidence, unrelated tool pins and host
+   certification fields. Do not rewrite the root README for a version bump.
 3. Dry-run the native validation without changing release state:
    ```sh
    python -m pytest -q tests/test_release_metadata.py
-   little-canary --version
-   little-canary demo --replay --json
+   candidate_env=$(mktemp -d)
+   python -m venv "$candidate_env"
+   "$candidate_env/bin/python" -m pip install .
+   "$candidate_env/bin/little-canary" --version
+   "$candidate_env/bin/little-canary" demo --replay --json
    ```
    Run the remaining required native checks, commit the candidate, and run Gate
    fast/full/review on that exact head. Resolve findings in a new commit and
@@ -42,8 +45,10 @@ source; publication is a separate controller action.
    release_head=$(git rev-parse HEAD)
    test -z "$(git status --porcelain)"
    python -m pip install --upgrade build twine
+   release_source=$(mktemp -d)
    release_dist=$(mktemp -d)
-   python -m build --outdir "$release_dist"
+   git archive "$release_head" | tar -x -C "$release_source"
+   (cd "$release_source" && python -m build --outdir "$release_dist")
    python -m twine check --strict "$release_dist"/*
    python -m pip hash "$release_dist"/*
    test "$(git rev-parse HEAD)" = "$release_head"
@@ -70,9 +75,12 @@ Twine, separate wheel/sdist installation, version, replay and hash checks above.
 Pre-merge artifacts do not substitute for this rebuild because squash merge
 changes the commit identity. The controller then creates or verifies the
 `v<package version>` tag and proves the dereferenced tag targets the rebuilt
-merged commit before approving the curated title/body and publishing the release.
-A matching tag name or package version alone is insufficient. Do not publish
-another version merely to complete website synchronization.
+merged commit before approving the curated title/body. The controller includes
+exactly one `Release-Commit: <40-character merged commit>` trailer in the release
+body. The workflow checks that trailer against the event's immutable commit and
+explicitly checks out that SHA before building; a matching tag name or package
+version alone is insufficient. Do not publish another version merely to complete
+website synchronization.
 
 The local hashes are pre-publication build evidence, not a claim that separately
 built archives are byte-for-byte reproducible. After the publish run succeeds,
@@ -150,9 +158,10 @@ is a hold. Perform this for both archives, then do fresh no-cache installs and
 check README metadata.
 Offline replay proves the packaged fixture path, not current live-model detection
 quality.
-In a follow-up metadata PR, date the changelog entry and add
-`codemeta.json`'s now-live versioned PyPI `downloadUrl`; do not move the immutable
-release tag or publish again for that metadata-only change.
+In a follow-up metadata PR, date the changelog entry, add `codemeta.json`'s now-live
+versioned PyPI `downloadUrl`, update the public install pins in `llms.txt`, and
+update both the service-version text and install pin in the OpenClaw README. Do not
+move the immutable release tag or publish again for that metadata-only change.
 
 Only after that public-install gate passes, synchronize current references.
 The existing company-site entrypoint in `roli-lpci/hermes-labs-v2` is:

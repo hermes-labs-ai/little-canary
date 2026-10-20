@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 import pytest
 import yaml
@@ -57,6 +58,7 @@ def test_release_version_surfaces_are_aligned():
         _match("CITATION.cff", r'^version: "([^"]+)"$'),
         json.loads(_read(".zenodo.json"))["version"],
         json.loads(_read("codemeta.json"))["version"],
+        json.loads(_read("gemini-extension.json"))["version"],
     }
 
     assert versions == {__version__}
@@ -163,13 +165,20 @@ def test_release_docs_do_not_assert_current_external_registry_state():
         assert "Before publication" not in text, relative_path
 
 
-def _observe_build(steps: list[dict], *, tag: str, fail_tool: str = "") -> tuple[int, list[str]]:
+def _observe_build(
+    steps: list[dict], *, tag: str, fail_tool: str = "", release_body: Optional[str] = None
+) -> tuple[int, list[str]]:
     """Exercise unconditional Bash steps with offline tool shims."""
     with tempfile.TemporaryDirectory(prefix="canary-build-contract-") as directory:
         root = Path(directory)
         (root / "pyproject.toml").write_text('[project]\nversion = "0.0.0+contract"\n')
         if sys.version_info < (3, 11):
             (root / "tomllib.py").write_text("from tomli import load\n")
+        head_sha = "a" * 40
+        if release_body is None:
+            release_body = f"Release-Commit: {head_sha}"
+        event_path = root / "event.json"
+        event_path.write_text(json.dumps({"release": {"body": release_body}}))
         log = root / "calls"
         log.touch()
         shim = root / "python"
@@ -193,7 +202,8 @@ esac
 ''')
         shim.chmod(0o755)
         env = {"PATH": str(root) + os.pathsep + os.defpath, "REAL_PYTHON": sys.executable,
-               "GITHUB_REF_NAME": tag, "CALL_LOG": str(log), "FAIL_TOOL": fail_tool}
+               "GITHUB_EVENT_PATH": str(event_path), "GITHUB_REF_NAME": tag,
+               "GITHUB_SHA": head_sha, "CALL_LOG": str(log), "FAIL_TOOL": fail_tool}
         for step in steps:
             # New execution context needs a fixture before this probe can model it.
             assert not step.get("continue-on-error") and "if" not in step
@@ -229,8 +239,22 @@ def _assert_publish_privileges(workflow: str) -> None:
     assert not build.get("continue-on-error") and "if" not in build
     assert not parsed.get("defaults") and not build.get("defaults")
     assert not parsed.get("env") and not build.get("env")
+    checkout = next(
+        step for step in build["steps"]
+        if step.get("uses", "").partition("@")[0] == "actions/checkout"
+    )
+    assert checkout.get("with", {}).get("ref") == "${{ github.sha }}"
     status, calls = _observe_build(build["steps"], tag="v0.0.0+contract")
     assert status == 0 and calls == ["build", "twine", "upload"]
+    for invalid_body in (
+        "",
+        "Release-Commit: " + "b" * 40,
+        "Release-Commit: " + "a" * 40 + "\nRelease-Commit: " + "a" * 40,
+    ):
+        status, calls = _observe_build(
+            build["steps"], tag="v0.0.0+contract", release_body=invalid_body
+        )
+        assert status != 0 and calls == []
     status, calls = _observe_build(build["steps"], tag="v0.0.0+wrong")
     assert status != 0 and calls == []
     for tool in ("build", "twine"):

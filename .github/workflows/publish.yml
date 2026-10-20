@@ -21,14 +21,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
-      - name: Verify release tag matches package version
+      - name: Verify approved release commit and package version
         run: |
+          release_commit="$(python -c 'import json, os, re; body = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))["release"].get("body") or ""; matches = re.findall(r"(?m)^Release-Commit: ([0-9a-f]{40})$", body); assert len(matches) == 1, "release body must contain exactly one Release-Commit trailer"; print(matches[0])')"
+          test "${release_commit}" = "${GITHUB_SHA}"
           package_version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           test "${GITHUB_REF_NAME}" = "v${package_version}"
 
