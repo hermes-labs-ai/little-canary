@@ -69,3 +69,14 @@ protection: the current branch policy requires no approvals and permits owner/ad
 bypass. Do not claim those GitHub bypass paths have been removed. Required checks
 are read from the existing branch protection and matched to the expected commit's
 status rollup using GitHub's required-check identity, including its app binding.
+
+
+The guard supports this repository's classic required-context branch policy. If
+that policy is removed or replaced by rulesets, it holds explicitly until the
+controller's completeness query is updated; it never infers a complete set from
+only the checks that happen to be present. Required coverage jobs must report
+`SUCCESS`; `SKIPPED` and `NEUTRAL` also hold. For Dependabot PRs whose event base
+predates this guard, rebase onto corrected main and rerun automation. The job
+executes the trusted event base's script. If either bot does not submit on a
+Dependabot head, obtain the missing review and rerun; a timeout never grants merge
+permission.

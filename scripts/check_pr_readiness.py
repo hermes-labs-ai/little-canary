@@ -116,7 +116,10 @@ def snapshot(repo, number, head):
             if pr["headRefOid"] != head:
                 raise ValueError("PR head changed; obtain a new independent review")
             result["reviewDecision"] = pr["reviewDecision"]
-            result["required_contexts"] = pr["baseRef"]["branchProtectionRule"]["requiredStatusCheckContexts"]
+            rule = pr["baseRef"]["branchProtectionRule"]
+            if rule is None:
+                raise ValueError("No classic required-context policy; refusing to infer completeness from reported checks")
+            result["required_contexts"] = rule["requiredStatusCheckContexts"]
             page = pr[connection]
             nodes.extend(page["nodes"])
             if not page["pageInfo"]["hasNextPage"]:
@@ -176,7 +179,7 @@ def holds(state):
         if review["state"] in {"APPROVED", "CHANGES_REQUESTED"}:
             latest[author] = review["state"]
         if (review["state"] in {"COMMENTED", "APPROVED"}
-                and review.get("commit", {}).get("oid") == state["head"]):
+                and (review.get("commit") or {}).get("oid") == state["head"]):
             submitted.add(author)
     for author, status in latest.items():
         if status == "CHANGES_REQUESTED":
@@ -220,8 +223,8 @@ def main():
     parser.add_argument("--quiet-seconds", type=int, default=120)
     parser.add_argument("--timeout-seconds", type=int, default=900)
     args = parser.parse_args()
-    if args.quiet_seconds < 60 or args.timeout_seconds < args.quiet_seconds:
-        parser.error("quiet window must be at least 60 seconds and fit within the timeout")
+    if args.quiet_seconds < 120 or args.timeout_seconds < args.quiet_seconds:
+        parser.error("quiet window must be at least 120 seconds and fit within the timeout")
     try:
         state = wait_until_ready(
             lambda: snapshot(args.repo, args.pr, args.head), args.quiet_seconds, args.timeout_seconds
@@ -229,10 +232,10 @@ def main():
     except (ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
         print(str(error), file=sys.stderr)
         return 1
-    print(json.dumps({"head": args.head, "unresolved_threads": 0,
+    print(json.dumps({"head": args.head, "unresolved_threads": sum(not thread["isResolved"] for thread in state["reviewThreads"]),
                       "quiet_seconds": args.quiet_seconds,
                       "reviews": [{key: review.get(key) for key in ("id", "state", "submittedAt", "author")}
-                                  for review in state["reviews"]], "required_checks": state["checks"]}, indent=2))
+                                  for review in state["reviews"]], "required_checks": [check for check in state["checks"] if check["isRequired"]]}, indent=2))
     return 0
 
 

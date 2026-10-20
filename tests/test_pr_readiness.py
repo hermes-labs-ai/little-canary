@@ -232,3 +232,35 @@ def test_incomplete_review_data_fails_closed(monkeypatch, connection, failure):
     monkeypatch.setattr(guard, "gh_json", gh)
     with pytest.raises(ValueError, match="GraphQL returned errors|Incomplete review pagination"):
         guard.snapshot("owner/repo", 155, HEAD)
+
+
+def test_unavailable_review_commit_is_a_clean_missing_review_hold():
+    state = ready_state()
+    state["reviews"][0]["commit"] = None
+    assert any("missing head-specific" in reason for reason in guard.holds(state))
+
+
+@pytest.mark.parametrize("conclusion", ["SKIPPED", "NEUTRAL"])
+def test_required_coverage_check_must_exercise_success(conclusion):
+    state = ready_state()
+    state["checks"][0]["conclusion"] = conclusion
+    assert any("required check not passing" in reason for reason in guard.holds(state))
+
+
+def test_cli_cannot_shorten_documented_quiet_window(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["guard", "--repo", "owner/repo", "--pr", "156",
+                                     "--head", HEAD, "--quiet-seconds", "60"])
+    with pytest.raises(SystemExit) as error:
+        guard.main()
+    assert error.value.code == 2
+
+
+def test_missing_classic_policy_is_explicit_hold(monkeypatch):
+    def gh(*args, **kwargs):
+        return {"data": {"repository": {"pullRequest": {
+            "headRefOid": HEAD, "reviewDecision": None, "baseRef": {"branchProtectionRule": None}
+        }}}}
+
+    monkeypatch.setattr(guard, "gh_json", gh)
+    with pytest.raises(ValueError, match="No classic required-context policy"):
+        guard.snapshot("owner/repo", 156, HEAD)
