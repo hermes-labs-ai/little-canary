@@ -101,11 +101,52 @@ def commit_checks(repo, number, head, *, deadline=None):
         checks.extend(page["nodes"])
         info = page["pageInfo"]
         if not info["hasNextPage"]:
-            return checks
+            return with_full_check_ids(repo, head, checks, deadline=deadline)
         cursor = info["endCursor"]
         if not cursor or cursor in seen:
             raise ValueError("Incomplete check pagination")
         seen.add(cursor)
+
+
+def with_full_check_ids(repo, head, checks, *, deadline=None):
+    # This GitHub GraphQL schema lacks CheckRun.fullDatabaseId, and its legacy
+    # Int databaseId may be null. REST check-run.id is the full numeric ID.
+    # Bind by node_id, never by a same-name check or by list position.
+    missing = [check for check in checks if check["__typename"] == "CheckRun" and check["isRequired"]
+               and check.get("fullDatabaseId") is None and check.get("databaseId") is None]
+    if not missing:
+        return checks
+    needed = {check["id"] for check in missing}
+    pages = gh_json("api", "--paginate", "--slurp",
+                    f"repos/{repo}/commits/{head}/check-runs?filter=all&per_page=100", deadline=deadline)
+    full_ids = {}
+    for page in pages:
+        for run in page["check_runs"]:
+            node = run["node_id"]
+            if node not in needed:
+                continue
+            if run["head_sha"] != head:
+                raise ValueError("Full check ID does not belong to expected head")
+            if node in full_ids and full_ids[node] != run["id"]:
+                raise ValueError("Conflicting full check ordering IDs")
+            full_ids[node] = run["id"]
+    for check in missing:
+        if check["id"] in full_ids:
+            check["fullDatabaseId"] = full_ids[check["id"]]
+    return checks
+
+
+def check_run_order(check):
+    value = check.get("fullDatabaseId")
+    if value is None:
+        value = check.get("databaseId")
+    if (isinstance(value, bool) or not isinstance(value, (int, str))
+            or (isinstance(value, str) and not (value.isascii() and value.isdecimal()))):
+        raise ValueError("Required check ordering ID is unavailable: " + check["name"])
+    order = int(value)
+    if order <= 0:
+        raise ValueError("Required check ordering ID is invalid: " + check["name"])
+    return order
 
 
 def _snapshot(repo, number, head, *, deadline=None):
@@ -181,7 +222,9 @@ def latest_required_checks(state):
         name = check.get("name", check.get("context"))
         app = (check.get("checkSuite") or {}).get("app") or {}
         identity = (check["__typename"], name, app.get("id"))
-        order = (check.get("databaseId") or 0, check.get("startedAt") or check.get("createdAt") or "")
+        order = check_run_order(check) if check["__typename"] == "CheckRun" else check.get("createdAt") or ""
+        if identity in latest and order == latest[identity][0] and check != latest[identity][1]:
+            raise ValueError("Ambiguous required check ordering: " + name)
         if identity not in latest or order > latest[identity][0]:
             latest[identity] = (order, check)
     return [check for _, check in latest.values()]
@@ -210,7 +253,11 @@ def dispositions(state):
 def holds(state):
     reasons = []
     required = set(state["required_contexts"])
-    checks = latest_required_checks(state)
+    try:
+        checks = latest_required_checks(state)
+    except ValueError as error:
+        reasons.append(str(error))
+        checks = []
     found = {check.get("name", check.get("context")) for check in checks}
     for check in checks:
         name = check.get("name", check.get("context"))

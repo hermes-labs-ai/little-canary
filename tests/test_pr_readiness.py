@@ -504,3 +504,139 @@ def test_cli_github_failure_reports_diagnostic_and_never_merges(monkeypatch, cap
     assert "non-zero exit status 1" in message
     if diagnostic:
         assert diagnostic in message
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_null_legacy_ids_without_full_ids_cannot_reuse_success(reverse):
+    state = ready_state()
+    prior = deepcopy(state["checks"][0])
+    prior.update(id="prior-success", databaseId=None)
+    queued = deepcopy(prior)
+    queued.update(id="queued-rerun", status="QUEUED", conclusion=None, startedAt=None)
+    state["checks"] = [queued, prior] if reverse else [prior, queued]
+    assert any("ordering" in reason for reason in guard.holds(state))
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("full_ids", [(9, 10), ("9", "10"), ("9007199254740992", "9007199254740993")])
+def test_full_ids_hold_new_queued_rerun_with_null_legacy_ids(reverse, full_ids):
+    state = ready_state()
+    prior = deepcopy(state["checks"][0])
+    prior.update(id="prior-success", databaseId=None, fullDatabaseId=full_ids[0])
+    queued = deepcopy(prior)
+    queued.update(id="queued-rerun", fullDatabaseId=full_ids[1], status="QUEUED", conclusion=None, startedAt=None)
+    state["checks"] = [queued, prior] if reverse else [prior, queued]
+    assert any("required check not passing" in reason for reason in guard.holds(state))
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("older_status", ["FAILURE", "QUEUED", "SUCCESS"])
+def test_full_ids_choose_latest_success_over_stale_attempt(reverse, older_status):
+    state = ready_state()
+    current = deepcopy(state["checks"][0])
+    current.update(id="current-success", databaseId=None, fullDatabaseId="10")
+    older = deepcopy(current)
+    older.update(id="stale-attempt", fullDatabaseId="9", startedAt="2099-01-01T00:00:00Z")
+    if older_status == "QUEUED":
+        older.update(status="QUEUED", conclusion=None, startedAt=None)
+    else:
+        older["conclusion"] = older_status
+    state["checks"] = [current, older] if reverse else [older, current]
+    assert guard.holds(state) == []
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("unreliable_id", [None, 0, -1, True, 1.5, "not-an-id"])
+def test_one_unorderable_required_attempt_holds_all_orders(reverse, unreliable_id):
+    state = ready_state()
+    prior = deepcopy(state["checks"][0])
+    prior.update(id="prior-success", databaseId=None, fullDatabaseId="9")
+    queued = deepcopy(prior)
+    queued.update(id="queued-rerun", fullDatabaseId=unreliable_id, status="QUEUED", conclusion=None, startedAt=None)
+    state["checks"] = [queued, prior] if reverse else [prior, queued]
+    assert any("ordering" in reason for reason in guard.holds(state))
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_duplicate_full_id_cannot_order_conflicting_attempts(reverse):
+    state = ready_state()
+    prior = deepcopy(state["checks"][0])
+    prior.update(id="prior-success", databaseId=None, fullDatabaseId="9")
+    queued = deepcopy(prior)
+    queued.update(id="queued-rerun", status="QUEUED", conclusion=None, startedAt=None)
+    state["checks"] = [queued, prior] if reverse else [prior, queued]
+    assert any("Ambiguous required check ordering" in reason for reason in guard.holds(state))
+
+
+def test_rest_full_ids_are_paginated_and_bound_to_node_and_head(monkeypatch):
+    state = ready_state()
+    check = state["checks"][0]
+    check.update(id="required-node", databaseId=None)
+    calls = []
+
+    def gh(*args, **kwargs):
+        calls.append((args, kwargs))
+        return [{"check_runs": [{"node_id": "same-name-untrusted", "name": "test", "id": 999, "head_sha": HEAD}]},
+                {"check_runs": [{"node_id": "required-node", "id": 9007199254740993, "head_sha": HEAD}]}]
+
+    monkeypatch.setattr(guard, "gh_json", gh)
+    guard.with_full_check_ids("owner/repo", HEAD, state["checks"], deadline=123)
+    assert check["fullDatabaseId"] == 9007199254740993
+    assert calls == [(("api", "--paginate", "--slurp",
+                      f"repos/owner/repo/commits/{HEAD}/check-runs?filter=all&per_page=100"), {"deadline": 123})]
+    assert guard.holds(state) == []
+
+
+@pytest.mark.parametrize("failure", ["unmatched-node", "wrong-head", "conflicting-node"])
+def test_rest_full_id_failure_cannot_authorize_readiness(monkeypatch, failure):
+    state = ready_state()
+    check = state["checks"][0]
+    check.update(id="required-node", databaseId=None)
+    run = {"node_id": "required-node", "id": 10, "head_sha": HEAD}
+    if failure == "unmatched-node":
+        run["node_id"] = "same-name-untrusted-node"
+    elif failure == "wrong-head":
+        run["head_sha"] = "stale-head"
+    runs = [run]
+    if failure == "conflicting-node":
+        runs.append({**run, "id": 11})
+    monkeypatch.setattr(guard, "gh_json", lambda *args, **kwargs: [{"check_runs": runs}])
+    if failure == "unmatched-node":
+        guard.with_full_check_ids("owner/repo", HEAD, state["checks"])
+        assert any("ordering" in reason for reason in guard.holds(state))
+    else:
+        with pytest.raises(ValueError, match="expected head|Conflicting full check ordering"):
+            guard.with_full_check_ids("owner/repo", HEAD, state["checks"])
+
+
+def test_full_id_collection_keeps_required_app_binding(monkeypatch):
+    state = ready_state()
+    untrusted = deepcopy(state["checks"][0])
+    untrusted.update(id="untrusted-node", isRequired=False, databaseId=None, fullDatabaseId="999")
+    state["checks"] = [untrusted]
+    monkeypatch.setattr(guard, "gh_json", lambda *args, **kwargs: pytest.fail("non-required app triggered ID lookup"))
+    guard.with_full_check_ids("owner/repo", HEAD, state["checks"])
+    assert "required checks are missing" in guard.holds(state)
+
+
+def test_commit_check_pages_hydrate_null_ids_before_selecting_latest(monkeypatch):
+    state = ready_state()
+    prior = deepcopy(state["checks"][0])
+    prior.update(id="prior-node", databaseId=None)
+    queued = deepcopy(prior)
+    queued.update(id="queued-node", status="QUEUED", conclusion=None, startedAt=None)
+
+    def gh(*args, **kwargs):
+        if args[:2] == ("api", "graphql"):
+            second = "cursor=next" in args
+            return {"data": {"repository": {"object": {"oid": HEAD, "statusCheckRollup": {"contexts": {
+                "nodes": [queued if second else prior],
+                "pageInfo": {"hasNextPage": not second, "endCursor": None if second else "next"}
+            }}}}}}
+        return [{"check_runs": [{"node_id": "prior-node", "id": 9, "head_sha": HEAD}]},
+                {"check_runs": [{"node_id": "queued-node", "id": 10, "head_sha": HEAD}]}]
+
+    monkeypatch.setattr(guard, "gh_json", gh)
+    state["checks"] = guard.commit_checks("owner/repo", 156, HEAD)
+    assert [check["fullDatabaseId"] for check in state["checks"]] == [9, 10]
+    assert any("required check not passing" in reason for reason in guard.holds(state))
