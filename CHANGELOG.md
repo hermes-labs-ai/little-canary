@@ -9,11 +9,21 @@ Benchmark and latency figures in entries before `0.3.3` are historical release n
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-20
+
+### Fixed
+
 - Ingest refuses configured callbacks and screens verified runs with an owned configuration snapshot so callbacks installed later cannot mutate the screened probe.
 - No-clobber publication fails when hard links are unavailable rather than using a racy replace fallback.
 - The Ingest eval runner rejects duplicate JSON keys and manifest paths that alias its corpus, including hard links; publication uses a pinned directory handle so a parent symlink redirect cannot overwrite the corpus.
 - Publication rollback moves targets into a private quarantine before checking inode ownership; concurrent replacements are restored without clobbering a newer target, or retained at a logged recovery path if restoration fails.
-- Corrected the eval API name and package descriptions; 0.5.0 is published, while Ingest remains experimental.
+- Close HTTP server sockets when `run_server` returns or startup/serving raises, including startup health-check failures (#140).
+- Preserve Python 3.9 installation with Requests 2.32.x while Python 3.10+ uses Requests 2.34.2 or newer within major version 2; keep build and optional tooling compatible with the declared Python floor (#149, #155).
+- Correct the eval API name, package descriptions and plugin installation links (#147, #148, #153, #154).
+
+### Compatibility
+
+- Ingest remains experimental. Verified Ingest runs reject callbacks and publication requires hard-link support for no-clobber writes. Runtime fail-open routing and coverage semantics are unchanged.
 
 ## [0.5.0] - 2026-10-07
 
