@@ -76,12 +76,16 @@ another version merely to complete website synchronization.
 
 The local hashes are pre-publication build evidence, not a claim that separately
 built archives are byte-for-byte reproducible. After the publish run succeeds,
-download the public wheel and source archive and match each SHA-256 to both PyPI's
-published digest and its provenance subject digest. Require the provenance source
-repository and revision to equal the dereferenced release-tag commit, and its
-workflow identity to equal this repository's publish workflow. Then perform fresh
-no-cache installs and check README metadata. Offline replay proves the packaged
-fixture path, not current live-model detection quality.
+download the public wheel and source archive and match each SHA-256 to PyPI's
+published digest. Install `pypi-attestations` and cryptographically verify each
+distribution and its provenance with `pypi-attestations verify pypi --repository
+https://github.com/hermes-labs-ai/little-canary <distribution-url>`; do not trust
+unverified provenance JSON. Require the verified subject digest to match the
+download, and the verified GitHub publisher identity to name
+`.github/workflows/publish.yml`, the release event and `refs/tags/<tag>` workflow
+ref. Require its attested source revision to equal `git rev-parse '<tag>^{commit}'`.
+Then perform fresh no-cache installs and check README metadata. Offline replay
+proves the packaged fixture path, not current live-model detection quality.
 In a follow-up metadata PR, date the changelog entry and add
 `codemeta.json`'s now-live versioned PyPI `downloadUrl`; do not move the immutable
 release tag or publish again for that metadata-only change.
