@@ -4,7 +4,17 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 import yaml
+from packaging.markers import Marker
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+from packaging.version import Version
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 from little_canary import __version__
 
@@ -147,26 +157,101 @@ def test_release_docs_do_not_assert_current_external_registry_state():
         assert "Before publication" not in text, relative_path
 
 
-def test_publish_workflow_keeps_build_privileges_away_from_publishing():
-    workflow = _read(".github/workflows/publish.yml")
+def _assert_publish_privileges(workflow: str) -> None:
     parsed = yaml.safe_load(workflow)
-    build_workflow, publish_workflow = workflow.split("  publish:\n", maxsplit=1)
-    build_job = build_workflow.split("  build:\n", maxsplit=1)[1]
-
-    assert "  release:\n    types: [published]" in workflow
-    assert "  build:\n" in workflow
-    assert "    permissions:\n      contents: read\n" in build_job
-    assert "id-token: write" not in build_job
-    assert 'test "${GITHUB_REF_NAME}" = "v${package_version}"' in build_job
-    assert "python -m build" in build_job
-    assert "python -m twine check dist/*" in build_job
-    assert "    needs: build\n" in publish_workflow
-    assert "      contents: read\n      id-token: write" in publish_workflow
-
-    build_actions = _pinned_actions(parsed["jobs"]["build"]["steps"])
-    publish_actions = _pinned_actions(parsed["jobs"]["publish"]["steps"])
+    triggers = parsed.get("on", parsed.get(True))
+    build = parsed["jobs"]["build"]
+    publish = parsed["jobs"]["publish"]
+    assert triggers["release"]["types"] == ["published"]
+    assert build["permissions"] == {"contents": "read"}
+    assert publish["permissions"] == {"contents": "read", "id-token": "write"}
+    assert publish["needs"] == "build"
+    commands = "\n".join(step.get("run", "") for step in build["steps"])
+    assert 'test "${GITHUB_REF_NAME}" = "v${package_version}"' in commands
+    assert "python -m build" in commands
+    assert "python -m twine check dist/*" in commands
+    build_actions = _pinned_actions(build["steps"])
+    publish_actions = _pinned_actions(publish["steps"])
     assert "actions/upload-artifact" in build_actions
     assert {"actions/download-artifact", "pypa/gh-action-pypi-publish"} <= publish_actions.keys()
+
+
+def test_publish_workflow_keeps_build_privileges_away_from_publishing():
+    _assert_publish_privileges(_read(".github/workflows/publish.yml"))
+
+
+@pytest.mark.parametrize("permission", ['id-token: write', '"id-token": "write"', "'id-token': 'write'"])
+def test_build_oidc_permission_is_a_failing_control(permission):
+    workflow = _read(".github/workflows/publish.yml").replace(
+        "    permissions:\n      contents: read", f"    permissions:\n      {permission}\n      contents: read", 1
+    )
+    with pytest.raises(AssertionError):
+        _assert_publish_privileges(workflow)
+
+
+def _assert_requests_contract(project_text: str, requirements_text: str) -> None:
+    project = tomllib.loads(project_text)["project"]
+    project_requests = [
+        req for value in project["dependencies"]
+        if canonicalize_name((req := Requirement(value)).name) == "requests"
+    ]
+    requirements = [
+        Requirement(line) for line in requirements_text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    requirements_requests = [req for req in requirements if canonicalize_name(req.name) == "requests"]
+    assert len(project_requests) == len(requirements_requests) == 2
+    expected = {
+        Marker('python_version < "3.10"'): "2.33",
+        Marker('python_version >= "3.10"'): "3",
+    }
+    assert {req.marker for req in project_requests} == set(expected)
+    # Requirement equality handles whitespace, case, specifier order and quote style.
+    assert set(project_requests) == set(requirements_requests)
+    for req in project_requests:
+        assert not req.extras and req.url is None
+        specifiers = list(req.specifier)
+        upper = [spec.version for spec in specifiers if spec.operator == "<"]
+        lower = [spec.version for spec in specifiers if spec.operator == ">="]
+        assert upper == [expected[req.marker]]
+        assert len(specifiers) == 2 and len(lower) == 1
+        assert Version("2") <= Version(lower[0]) < Version(upper[0])
+
+
+def test_requests_contract_agrees_between_parsed_manifests():
+    _assert_requests_contract(_read("pyproject.toml"), _read("requirements.txt"))
+
+
+@pytest.mark.parametrize("mutation", ["unconditional", "marker", "cap", "disagreement", "duplicate"])
+def test_broken_requests_contract_is_a_failing_control(mutation):
+    project = _read("pyproject.toml")
+    requirements = _read("requirements.txt")
+    if mutation in {"unconditional", "duplicate"}:
+        extra = 'requests>=2.34.2,<3' if mutation == "unconditional" else str(
+            Requirement(tomllib.loads(project)["project"]["dependencies"][0])
+        )
+        project = project.replace("dependencies = [", f"dependencies = [\n    '{extra}',", 1)
+    elif mutation == "marker":
+        project = project.replace("python_version < '3.10'", "python_version < '3.9'")
+    elif mutation == "cap":
+        project = project.replace("<2.33", "<3")
+        requirements = requirements.replace("<2.33", "<3")
+    else:
+        requirements = requirements.replace("<2.33", "<2.34")
+    with pytest.raises(AssertionError):
+        _assert_requests_contract(project, requirements)
+
+
+def test_compatible_requests_floor_updates_do_not_require_test_edits():
+    project = _read("pyproject.toml")
+    requirements = _read("requirements.txt")
+    for value in tomllib.loads(project)["project"]["dependencies"]:
+        req = Requirement(value)
+        lower = next(spec.version for spec in req.specifier if spec.operator == ">=")
+        raised = str(Version(lower)) + ".1"
+        project = project.replace(">=" + lower, ">=" + raised)
+        requirements = requirements.replace(">=" + lower, ">=" + raised)
+    _assert_requests_contract(project, requirements)
 
 
 def test_dependency_automation_respects_supported_python_and_held_action_contracts():
@@ -176,12 +261,6 @@ def test_dependency_automation_respects_supported_python_and_held_action_contrac
     action_ignores = {entry["dependency-name"] for entry in updates["github-actions"]["ignore"]}
 
     assert "hermes-labs-ai/lintlang" in action_ignores
-    assert '"requests>=2.32.5,<2.33; python_version < \'3.10\'"' in _read("pyproject.toml")
-    assert '"requests>=2.34.2,<3; python_version >= \'3.10\'"' in _read("pyproject.toml")
-    assert _read("requirements.txt").splitlines() == [
-        'requests>=2.32.5,<2.33; python_version < "3.10"',
-        'requests>=2.34.2,<3; python_version >= "3.10"',
-    ]
     assert "intentional compatibility probe" in _read(".github/workflows/lintlang.yml")
 
 

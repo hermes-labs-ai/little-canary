@@ -79,6 +79,21 @@ python -m build
 - keep benchmark caveats aligned with README claims
 - keep tests offline and mock network calls
 
+## Merge and release ownership
+
+The authoring session may push, open, and update a PR, but must not decide or
+execute its merge. Hand the final diff and exact head SHA to a separate reviewer
+and merge controller. That controller reads full review bodies and threads, then
+runs `python3 scripts/check_pr_readiness.py --repo hermes-labs-ai/little-canary
+--pr <NUMBER> --head <SHA>` immediately before a head-matched merge. The guard
+requires passing required checks, both head-specific Copilot and Sourcery review
+submissions, no pending requests/reviews or changes requested, zero unresolved
+threads (including outdated ones), and 120 seconds of observed stable head and
+review activity. Its timeout fails closed; a successful bot check is insufficient.
+Repeat this guard before a release handback, and verify fresh main CI. See
+`docs/maintainer-dependency-updates.md` for the procedure. Do not release from an
+authoring lane or bypass a hold to sustain forward momentum.
+
 ## Definition of done
 
 - `pytest -q` and `ruff check little_canary tests` pass; `mypy little_canary` is diagnostic
