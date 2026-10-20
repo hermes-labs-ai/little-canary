@@ -162,38 +162,87 @@ def test_snapshot_reads_every_thread_page_and_rejects_head_race(monkeypatch):
         guard.snapshot("owner/repo", 155, HEAD)
 
 
-def controller_workflow():
+def activity_workflow():
     return yaml.safe_load((Path(__file__).parents[1] / ".github/workflows/dependabot-auto-merge.yml").read_text())
 
 
-def assert_controller_workflow(workflow):
-    assert workflow["permissions"]["checks"] == "read"
-    assert workflow["permissions"]["statuses"] == "read"
-    assert workflow["concurrency"] == {
-        "group": "dependabot-merge-${{ github.event.pull_request.number }}", "cancel-in-progress": True
-    }
+def controller_workflow():
+    return yaml.safe_load((Path(__file__).parents[1] / ".github/workflows/dependabot-merge-controller.yml").read_text())
+
+
+def assert_activity_workflow(workflow):
+    assert workflow["permissions"] == {}
     triggers = workflow.get("on", workflow.get(True))
+    assert set(triggers) == {"pull_request", "pull_request_review", "pull_request_review_comment"}
     assert triggers["pull_request_review"]["types"] == ["submitted", "edited", "dismissed"]
     assert triggers["pull_request_review_comment"]["types"] == ["created", "edited", "deleted"]
+    for job in workflow["jobs"].values():
+        assert job.get("permissions", {}) == {}
+        assert job["steps"] == [{"run": ":"}]
+
+
+@pytest.mark.parametrize("event", ["pull_request", "pull_request_review", "pull_request_review_comment"])
+def test_pr_context_events_have_no_write_authority(event):
+    workflow = activity_workflow()
+    assert event in workflow.get("on", workflow.get(True))
+    for job in workflow["jobs"].values():
+        permissions = job.get("permissions", workflow["permissions"])
+        assert isinstance(permissions, dict)
+        assert "write" not in permissions.values()
+        assert all("uses" not in step for step in job["steps"])
+    assert_activity_workflow(workflow)
+
+
+def assert_controller_workflow(workflow):
+    assert workflow["permissions"] == {}
+    triggers = workflow.get("on", workflow.get(True))
+    assert triggers == {"workflow_run": {"workflows": ["Dependabot review activity"], "types": ["completed"]}}
+    assert set(workflow["jobs"]) == {"context", "auto-merge"}
+    context = workflow["jobs"]["context"]
+    assert context["permissions"] == {"actions": "read", "contents": "read", "pull-requests": "read"}
+    assert context["outputs"] == {
+        "pr": "${{ steps.context.outputs.pr }}", "head": "${{ steps.context.outputs.head }}",
+        "update-type": "${{ steps.metadata.outputs.update-type }}",
+    }
+    assert len(context["steps"]) == 3
+    validate, node, metadata = context["steps"]
+    assert validate["id"] == "context" and "uses" not in validate
+    assert validate["env"]["CONTROLLER_SHA"] == "${{ github.sha }}"
+    assert validate["run"].strip().splitlines() == [
+        'gh api --method GET -H \'Accept: application/vnd.github.raw+json\' "repos/$REPOSITORY/contents/scripts/dependabot_merge_context.py?ref=$CONTROLLER_SHA" > "$RUNNER_TEMP/little-canary-merge-context.py"',
+        'python3 -I "$RUNNER_TEMP/little-canary-merge-context.py"',
+    ]
+    assert metadata["id"] == "metadata"
+    action, pin = node["uses"].split("@")
+    assert action == "actions/setup-node" and len(pin) == 40 and set(pin) <= set("0123456789abcdef")
+    assert node["with"] == {"node-version": "24.21.0"}
+    assert "uses" not in metadata
+    pin = metadata["env"]["METADATA_REF"]
+    assert len(pin) == 40 and set(pin) <= set("0123456789abcdef")
+    assert metadata["run"].strip().splitlines() == [
+        'gh api --method GET -H \'Accept: application/vnd.github.raw+json\' "repos/dependabot/fetch-metadata/contents/dist/index.js?ref=$METADATA_REF" > "$RUNNER_TEMP/little-canary-fetch-metadata.cjs"',
+        'python3 -I "$RUNNER_TEMP/little-canary-merge-context.py" --metadata',
+    ]
     job = workflow["jobs"]["auto-merge"]
-    assert job["if"] == "github.event.pull_request.user.login == 'dependabot[bot]'"
-    guarded = False
-    checkouts = 0
-    for step in job["steps"]:
-        if step.get("uses", "").partition("@")[0] == "actions/checkout":
-            assert step["with"]["ref"] == "${{ github.event.pull_request.base.sha }}"
-            assert step["with"]["persist-credentials"] is False
-            checkouts += 1
-        command = step.get("run", "")
-        if "little-canary-review-guard.py" in command:
-            assert 'git show "$BASE_SHA:scripts/check_pr_readiness.py"' in command
-            assert 'python3 -I "$RUNNER_TEMP/little-canary-review-guard.py"' in command
-            assert '--head "$HEAD_SHA" --merge' in command
-            assert step["env"]["BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
-            assert step["env"]["HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
-            guarded = True
-            break
-    assert guarded and checkouts
+    assert job["needs"] == "context"
+    assert job["if"] == 'contains(fromJSON(\'["version-update:semver-minor", "version-update:semver-patch"]\'), needs.context.outputs.update-type)'
+    assert job["permissions"] == {"checks": "read", "statuses": "read", "contents": "write", "pull-requests": "write"}
+    assert job["concurrency"] == {
+        "group": "dependabot-merge-${{ needs.context.outputs.pr }}", "cancel-in-progress": True
+    }
+    assert len(job["steps"]) == 1
+    step, = job["steps"]
+    assert "uses" not in step
+    assert step["env"] == {
+        "REPOSITORY": "${{ github.repository }}", "PR_NUMBER": "${{ needs.context.outputs.pr }}",
+        "HEAD_SHA": "${{ needs.context.outputs.head }}", "CONTROLLER_SHA": "${{ github.sha }}",
+        "GH_TOKEN": "${{ secrets.GITHUB_TOKEN }}",
+    }
+    assert step["run"].strip().splitlines() == [
+        'gh api --method GET -H \'Accept: application/vnd.github.raw+json\' "repos/$REPOSITORY/contents/scripts/check_pr_readiness.py?ref=$CONTROLLER_SHA" > "$RUNNER_TEMP/little-canary-review-guard.py"',
+        'gh pr checks --required --watch --fail-fast "$PR_NUMBER" --repo "$REPOSITORY"',
+        'python3 -I "$RUNNER_TEMP/little-canary-review-guard.py" --repo "$REPOSITORY" --pr "$PR_NUMBER" --head "$HEAD_SHA" --merge',
+    ]
 
 
 def test_dependabot_controller_runs_trusted_guard_with_check_read_permissions():
@@ -203,9 +252,8 @@ def test_dependabot_controller_runs_trusted_guard_with_check_read_permissions():
 def test_second_head_checkout_is_a_failing_controller_control():
     workflow = controller_workflow()
     steps = workflow["jobs"]["auto-merge"]["steps"]
-    head_checkout = deepcopy(steps[0])
-    head_checkout["with"]["ref"] = "${{ github.event.pull_request.head.sha }}"
-    steps.insert(1, head_checkout)
+    steps.insert(0, {"uses": "actions/checkout@" + "a" * 40,
+                     "with": {"ref": "${{ github.event.workflow_run.head_sha }}"}})
     with pytest.raises(AssertionError):
         assert_controller_workflow(workflow)
 
@@ -213,8 +261,62 @@ def test_second_head_checkout_is_a_failing_controller_control():
 @pytest.mark.parametrize("permission", ["checks", "statuses"])
 def test_missing_check_read_permission_is_a_failing_control(permission):
     workflow = controller_workflow()
-    del workflow["permissions"][permission]
+    del workflow["jobs"]["auto-merge"]["permissions"][permission]
     with pytest.raises((AssertionError, KeyError)):
+        assert_controller_workflow(workflow)
+
+
+@pytest.mark.parametrize("action", ["actions/checkout", "dependabot/fetch-metadata"])
+def test_pr_selected_action_cannot_run_with_write_authority(action):
+    workflow = activity_workflow()
+    workflow["permissions"] = {"contents": "write", "pull-requests": "write"}
+    workflow["jobs"]["notify"]["steps"].insert(0, {"uses": action + "@" + "b" * 40})
+    with pytest.raises(AssertionError):
+        assert_activity_workflow(workflow)
+
+
+@pytest.mark.parametrize("event", ["pull_request", "pull_request_review", "pull_request_review_comment"])
+def test_write_controller_cannot_be_selected_by_pr_context(event):
+    workflow = controller_workflow()
+    workflow["on" if "on" in workflow else True] = {event: None}
+    with pytest.raises(AssertionError):
+        assert_controller_workflow(workflow)
+
+
+@pytest.mark.parametrize("job", ["context", "auto-merge"])
+def test_controller_cannot_load_executables_from_source_run_sha(job):
+    workflow = controller_workflow()
+    workflow["jobs"][job]["steps"][0]["env"]["CONTROLLER_SHA"] = "${{ github.event.workflow_run.head_sha }}"
+    with pytest.raises(AssertionError):
+        assert_controller_workflow(workflow)
+
+
+def test_metadata_action_cannot_receive_merge_authority():
+    workflow = controller_workflow()
+    workflow["jobs"]["context"]["permissions"]["contents"] = "write"
+    with pytest.raises(AssertionError):
+        assert_controller_workflow(workflow)
+
+
+def test_unvalidated_source_output_cannot_select_merge_head():
+    workflow = controller_workflow()
+    workflow["jobs"]["context"]["outputs"]["head"] = "${{ github.event.workflow_run.head_sha }}"
+    with pytest.raises(AssertionError):
+        assert_controller_workflow(workflow)
+
+
+@pytest.mark.parametrize("action", ["actions/download-artifact", "actions/cache"])
+def test_privileged_job_cannot_consume_untrusted_executable_state(action):
+    workflow = controller_workflow()
+    workflow["jobs"]["auto-merge"]["steps"].insert(0, {"uses": action + "@" + "a" * 40})
+    with pytest.raises(AssertionError):
+        assert_controller_workflow(workflow)
+
+
+def test_missing_metadata_must_not_default_to_merge_eligibility():
+    workflow = controller_workflow()
+    workflow["jobs"]["auto-merge"]["if"] = "needs.context.outputs.update-type != 'version-update:semver-major'"
+    with pytest.raises(AssertionError):
         assert_controller_workflow(workflow)
 
 

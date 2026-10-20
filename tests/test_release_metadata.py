@@ -265,16 +265,16 @@ def test_dependency_automation_respects_supported_python_and_held_action_contrac
 
 
 def test_dependabot_merge_waits_for_required_checks_without_repository_auto_merge():
-    workflow = _read(".github/workflows/dependabot-auto-merge.yml")
+    workflow = _read(".github/workflows/dependabot-merge-controller.yml")
 
-    wait = 'gh pr checks --required --watch --fail-fast "$PR_URL"'
+    wait = 'gh pr checks --required --watch --fail-fast "$PR_NUMBER" --repo "$REPOSITORY"'
     merge = 'python3 -I "$RUNNER_TEMP/little-canary-review-guard.py"'
     assert wait in workflow
     assert merge in workflow
     assert workflow.index(wait) < workflow.index(merge)
     assert '--head "$HEAD_SHA" --merge' in workflow
     assert "gh pr merge --auto" not in workflow
-    assert "HEAD_SHA: ${{ github.event.pull_request.head.sha }}" in workflow
+    assert "HEAD_SHA: ${{ needs.context.outputs.head }}" in workflow
 
 
 def test_scorecard_workflow_pins_actions_and_narrows_permissions():

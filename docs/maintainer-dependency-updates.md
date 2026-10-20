@@ -89,22 +89,50 @@ checks happen to be present. A ruleset migration must update this query first.
 
 ## Automation retries and limits
 
-The Dependabot job is a separate controller. It reads check runs and statuses,
-extracts its guard from the trusted event base commit, and executes that extracted
-file in Python isolated mode. Every checkout before the guard must use that
-base. A per-PR concurrency group cancels superseded controller runs. Supported review submission/edit/dismissal and inline-comment events
-restart the job for Dependabot-authored PRs, regardless of the review event actor.
+Review submission/edit/dismissal and inline-comment events select their workflow
+and action implementations from the PR merge context. Checking out base contents
+does not make those implementations trusted. `dependabot-auto-merge.yml` therefore
+retains these retry events as an unprivileged notification: no token permissions,
+actions, checkout, artifacts, or merge command.
+
+The separate `dependabot-merge-controller.yml` uses
+[`workflow_run`](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run),
+which selects its workflow and commit from the default branch. Its read-only job
+checks the source run through the GitHub API, including path, event, attempt,
+successful completion, repository identity, exactly one associated PR, and the
+current same-repository Dependabot head targeting the default branch. Missing,
+ambiguous, forked, stale, or mismatched context holds; PR artifacts and outputs
+cannot choose the target. The existing pinned metadata bundle runs only in this
+read-only job under Node 24, using an API-verified PR payload and its existing
+commit verification. A child process supplies the payload path because the
+Actions runner overwrites `GITHUB_EVENT_PATH` for JavaScript `uses:` steps.
+All five bundle inputs are explicit: the two verification-skip booleans are
+false; optional alert/compatibility lookups are empty strings. The pinned bundle
+reads those optional switches as strings, so the nonempty string `false` would
+enable extra API lookups. The exact bundle's loopback API check classifies patch
+and major updates and rejects an unsigned commit; it is offline adapter evidence.
+Only explicit minor/patch metadata admits the write job.
+
+The write job executes no checkout, third-party action, cache, artifact, or PR
+code. It downloads the guard from the controller's own default-branch commit
+(`github.sha`), runs it in Python isolated mode, and binds its merge to the
+validated head. All existing review, check, disposition, and quiet-window holds
+still apply. A per-PR concurrency group cancels superseded write jobs.
 GitHub Actions has no review-thread-resolution trigger. The running guard observes
 resolutions while polling; after a timeout, thread resolution, disposition comment,
-or transient API failure, rerun the existing run:
+or transient API failure, rerun the existing notification run:
 
 ```bash
 gh run rerun <RUN_ID> --repo hermes-labs-ai/little-canary
 ```
 
-The event's head must still match. Rebase PRs whose event base predates this guard
-onto corrected main, then use their new run. Missing bot submissions keep the
-lane held; obtain those reviews and rerun. There is no timeout waiver.
+The source run's head must still match the live PR. This two-workflow path becomes
+active only after the controller and its scripts exist on the default branch;
+offline tests do not certify a deployed privileged run. Initial adoption requires
+the independent controller's main verification before release handback. Missing
+bot submissions keep the lane held; obtain those reviews and rerun. There is no
+timeout waiver. A rerun retains the source actor and is not a token-permission
+upgrade. A deployed 403 remains a hold for the independent controller to inspect.
 
 This is an executable guard in Dependabot and an instruction for Hermes sessions.
 The current branch policy requires no approvals and permits owner/admin bypass;
