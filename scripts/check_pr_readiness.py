@@ -316,6 +316,8 @@ def main():
             merge_ready_pr(args.repo, args.pr, args.head, state, deadline=deadline)
     except (ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
+        if isinstance(error, subprocess.CalledProcessError) and error.stderr:
+            print(error.stderr.rstrip(), file=sys.stderr)
         return 1
     print(json.dumps({"head": args.head, "merged": args.merge,
                       "unresolved_threads": sum(not thread["isResolved"] for thread in state["reviewThreads"]),

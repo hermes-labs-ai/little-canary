@@ -487,3 +487,20 @@ def test_browser_crlf_disposition_is_accepted():
     ack["body"] = ack["body"].replace("\n", "\r\n")
     state["comments"] = [ack]
     assert guard.holds(state) == []
+
+
+
+@pytest.mark.parametrize("diagnostic", [None, "GraphQL: Resource not accessible by integration"])
+def test_cli_github_failure_reports_diagnostic_and_never_merges(monkeypatch, capsys, diagnostic):
+    monkeypatch.setattr("sys.argv", ["guard", "--repo", "owner/repo", "--pr", "156", "--head", HEAD, "--merge"])
+
+    def failure(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, ["gh", "api"], stderr=diagnostic)
+
+    monkeypatch.setattr(guard, "snapshot", failure)
+    monkeypatch.setattr(guard, "merge_ready_pr", lambda *args, **kwargs: pytest.fail("merge attempted after GitHub failure"))
+    assert guard.main() == 1
+    message = capsys.readouterr().err
+    assert "non-zero exit status 1" in message
+    if diagnostic:
+        assert diagnostic in message
