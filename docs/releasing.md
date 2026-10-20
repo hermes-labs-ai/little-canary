@@ -36,6 +36,7 @@ source; publication is a separate controller action.
 4. From that exact clean head, install the packaging tools and prepare
    distributions in a fresh directory outside the repository:
    ```sh
+   set -eu
    release_head=$(git rev-parse HEAD)
    test -z "$(git status --porcelain)"
    python -m pip install --upgrade build twine
@@ -43,14 +44,15 @@ source; publication is a separate controller action.
    python -m build --outdir "$release_dist"
    python -m twine check --strict "$release_dist"/*
    python -m pip hash "$release_dist"/*
+   test "$(git rev-parse HEAD)" = "$release_head"
+   test -z "$(git status --porcelain)"
    ```
    Install the wheel and source distribution into separate fresh environments
    outside the source checkout. Verify version and offline replay in each. Record
-   `release_head` with the artifact hashes; if the source head changes, discard
-   and rebuild the artifacts and repeat the affected checks.
-5. Hand the frozen PR head, matching artifact record and proposed public copy to
-   the separate controller. The controller rejects artifacts recorded for any
-   other commit and follows
+   `release_head` with the artifact hashes as pre-merge evidence; if the source
+   head changes, discard and rebuild them and repeat the affected checks.
+5. Hand the frozen PR head, its artifact record and proposed public copy to the
+   separate controller. The controller follows
    [the existing readiness guard](maintainer-dependency-updates.md), including
    head-specific reviews, dispositions, quiet windows and fresh merged-main CI.
    The author must not merge or publish.
@@ -60,11 +62,14 @@ source; publication is a separate controller action.
 The existing [.github/workflows/publish.yml](../.github/workflows/publish.yml)
 triggers only when a GitHub release is **published**. A tag push alone does not
 publish to PyPI. After the reviewed PR is merged and fresh `main` CI passes, the
-controller records that exact merged release commit, creates or verifies the
-`v<package version>` tag, and proves the dereferenced tag targets that commit
-before approving the curated title/body and publishing the release. A matching
-tag name or package version alone is insufficient. Do not publish another version
-merely to complete website synchronization.
+controller checks out that exact merged release commit and repeats the build,
+Twine, separate wheel/sdist installation, version, replay and hash checks above.
+Pre-merge artifacts do not substitute for this rebuild because squash merge
+changes the commit identity. The controller then creates or verifies the
+`v<package version>` tag and proves the dereferenced tag targets the rebuilt
+merged commit before approving the curated title/body and publishing the release.
+A matching tag name or package version alone is insufficient. Do not publish
+another version merely to complete website synchronization.
 
 After the publish run succeeds, verify public wheel and source downloads, hashes,
 PyPI provenance, fresh no-cache installs, and README metadata. Offline replay
