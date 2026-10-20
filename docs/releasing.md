@@ -79,20 +79,77 @@ built archives are byte-for-byte reproducible. After the publish run succeeds,
 download the public wheel, source archive and each file's Integrity API provenance
 to local files, then match each archive's SHA-256 to PyPI's published digest. Use a
 reviewed, recorded exact verifier version (currently `pypi-attestations==0.0.30`),
-not a floating install. For each local archive, first run `pypi-attestations verify
-pypi --repository https://github.com/hermes-labs-ai/little-canary
---provenance-file <provenance.json> <archive>`. Extract its PyPI publish attestation
-from that same verified provenance object to `<archive>.publish.attestation`, then
-run `pypi-attestations verify attestation --identity
-https://github.com/hermes-labs-ai/little-canary/.github/workflows/publish.yml@refs/tags/<tag>
-<archive>`. Both commands must pass on the same bytes that were hashed.
+not a floating install. Query the candidate publish run through `gh api
+repos/hermes-labs-ai/little-canary/actions/runs/<run-id>` and require `status` to be
+`completed`, `conclusion` to be `success`, `event` to be `release`, `path` to be
+`.github/workflows/publish.yml`, `head_branch` to equal the release tag, and
+`head_sha` to equal `git rev-parse '<tag>^{commit}'`. Record its `id` and
+`run_attempt`; an earlier attempt is not interchangeable.
 
-Separately query the successful publish run with `gh api
-repos/hermes-labs-ai/little-canary/actions/runs/<run-id>` and require `event` to be
-`release`, `path` to be `.github/workflows/publish.yml`, `head_branch` to equal the
-release tag, and `head_sha` to equal `git rev-parse '<tag>^{commit}'`. Then perform
-fresh no-cache installs and check README metadata. Offline replay proves the
-packaged fixture path, not current live-model detection quality.
+For each local archive and provenance file, run the repository check and extract
+exactly one matching publish attestation:
+
+```sh
+pypi-attestations verify pypi \
+  --repository https://github.com/hermes-labs-ai/little-canary \
+  --provenance-file "$provenance" "$archive"
+jq -e '
+  [.attestation_bundles[]
+   | select(.publisher.kind == "GitHub"
+            and .publisher.repository == "hermes-labs-ai/little-canary"
+            and .publisher.workflow == "publish.yml")
+   | .attestations[]] as $matches
+  | if ($matches | length) == 1 then $matches[0]
+    else error("expected exactly one matching publish attestation") end
+' "$provenance" > "$archive.publish.attestation"
+```
+
+Then use the verifier's public Python API to cryptographically bind those same
+archive bytes to the tag commit, release trigger and recorded run attempt:
+
+```python
+import os
+from pathlib import Path
+
+from pypi_attestations import Attestation, Distribution
+from sigstore.verify import policy
+
+tag = os.environ["TAG"]
+release_commit = os.environ["RELEASE_COMMIT"]
+run_id = os.environ["RUN_ID"]
+run_attempt = os.environ["RUN_ATTEMPT"]
+archive = os.environ["ARCHIVE"]
+repo = "https://github.com/hermes-labs-ai/little-canary"
+ref = f"refs/tags/{tag}"
+workflow = f"{repo}/.github/workflows/publish.yml@{ref}"
+checks = policy.AllOf(
+    [
+        policy.Identity(
+            identity=workflow,
+            issuer="https://token.actions.githubusercontent.com",
+        ),
+        policy.OIDCSourceRepositoryURI(repo),
+        policy.OIDCSourceRepositoryDigest(release_commit),
+        policy.OIDCSourceRepositoryRef(ref),
+        policy.OIDCBuildConfigURI(workflow),
+        policy.OIDCBuildTrigger("release"),
+        policy.OIDCRunInvocationURI(
+            f"{repo}/actions/runs/{run_id}/attempts/{run_attempt}"
+        ),
+    ]
+)
+attestation = Attestation.model_validate_json(
+    Path(f"{archive}.publish.attestation").read_bytes()
+)
+attestation.verify(identity=checks, dist=Distribution.from_file(Path(archive)))
+```
+
+Export `TAG`, `RELEASE_COMMIT`, `RUN_ID`, `RUN_ATTEMPT` and `ARCHIVE` from the
+verified values above before running the snippet; any missing extension or mismatch
+is a hold. Perform this for both archives, then do fresh no-cache installs and
+check README metadata.
+Offline replay proves the packaged fixture path, not current live-model detection
+quality.
 In a follow-up metadata PR, date the changelog entry and add
 `codemeta.json`'s now-live versioned PyPI `downloadUrl`; do not move the immutable
 release tag or publish again for that metadata-only change.
