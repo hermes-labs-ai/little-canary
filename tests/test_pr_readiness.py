@@ -169,6 +169,9 @@ def controller_workflow():
 def assert_controller_workflow(workflow):
     assert workflow["permissions"]["checks"] == "read"
     assert workflow["permissions"]["statuses"] == "read"
+    assert workflow["concurrency"] == {
+        "group": "dependabot-merge-${{ github.event.pull_request.number }}", "cancel-in-progress": True
+    }
     triggers = workflow.get("on", workflow.get(True))
     assert triggers["pull_request_review"]["types"] == ["submitted", "edited", "dismissed"]
     assert triggers["pull_request_review_comment"]["types"] == ["created", "edited", "deleted"]
@@ -474,3 +477,13 @@ def test_cli_subprocess_timeout_fails_closed_before_merge(monkeypatch):
     monkeypatch.setattr(guard, "snapshot", timeout)
     monkeypatch.setattr(guard, "merge_ready_pr", lambda *args, **kwargs: pytest.fail("merge attempted after timeout"))
     assert guard.main() == 1
+
+
+
+def test_browser_crlf_disposition_is_accepted():
+    state = ready_state()
+    state["reviews"][0]["body"] = "Finding without inline thread"
+    ack = disposition(state, state["reviews"][0])
+    ack["body"] = ack["body"].replace("\n", "\r\n")
+    state["comments"] = [ack]
+    assert guard.holds(state) == []

@@ -1,6 +1,7 @@
 """Keep the LintLang consumer pin outside routine dependency automation."""
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -52,12 +53,24 @@ def _assert_approved_held_pin(workflow: str) -> None:
 
 
 def _action_documents(root: Path) -> str:
-    workflows = set((root / ".github/workflows").glob("*.y*ml"))
-    manifests = {
-        path for path in root.rglob("action.y*ml")
-        if not {".git"}.intersection(path.relative_to(root).parts)
+    # Git's index includes forced-tracked manifests even under .venv/node_modules,
+    # while excluding unrelated ignored install output. Standalone fixtures have
+    # no repository, so discover their documents directly.
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard",
+         "-z", "--", "*.yml", "*.yaml"], capture_output=True, check=False,
+    )
+    if result.returncode == 0:
+        paths = {root / path.decode() for path in result.stdout.split(b"\0") if path}
+    else:
+        paths = {path for path in root.rglob("*.y*ml") if ".git" not in path.relative_to(root).parts}
+    documents = {
+        path for path in paths
+        if path.name in {"action.yml", "action.yaml"}
+        or path.parent == root / ".github/workflows"
     }
-    return "\n---\n".join(path.read_text() for path in sorted(workflows | manifests))
+    return "\n---\n".join(path.read_text(encoding="utf-8") for path in sorted(documents))
+
 
 def test_lintlang_pin_is_immutable_and_deliberately_held() -> None:
     _assert_approved_held_pin(_action_documents(ROOT))
@@ -143,3 +156,32 @@ def test_local_composite_cannot_hide_an_additional_lintlang_reference(tmp_path, 
     )
     with pytest.raises(AssertionError, match="Exactly one"):
         _assert_approved_held_pin(_action_documents(tmp_path))
+
+
+
+@pytest.mark.parametrize("directory", [".venv/probe", "node_modules/probe", "build/probe", "dist/probe"])
+def test_tracked_composite_is_scanned_even_inside_ignored_directory(tmp_path, directory):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text(directory.split("/")[0] + "/\n")
+    workflows = tmp_path / ".github/workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "probe.yml").write_text(WORKFLOW.read_text() + f"      - uses: ./{directory}\n")
+    action = tmp_path / directory / "action.yml"
+    action.parent.mkdir(parents=True)
+    action.write_text("runs:\n  using: composite\n  steps:\n"
+                      f"    - uses: hermes-labs-ai/lintlang@{UNAPPROVED_LINTLANG_REF[0]} # v0.8.0\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-f", str(action)], check=True)
+    with pytest.raises(AssertionError, match="Exactly one"):
+        _assert_approved_held_pin(_action_documents(tmp_path))
+
+
+def test_unrelated_ignored_environment_manifest_does_not_break_repository_contract(tmp_path):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text(".venv/\n")
+    workflows = tmp_path / ".github/workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "probe.yml").write_text(WORKFLOW.read_text())
+    ignored = tmp_path / ".venv/third-party/action.yml"
+    ignored.parent.mkdir(parents=True)
+    ignored.write_bytes(b"\xffunrelated install template, not executable repository content")
+    _assert_approved_held_pin(_action_documents(tmp_path))

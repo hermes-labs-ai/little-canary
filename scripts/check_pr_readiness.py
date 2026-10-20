@@ -192,7 +192,7 @@ def dispositions(state):
     for comment in state["comments"]:
         if comment["authorAssociation"] not in TRUSTED_ASSOCIATIONS:
             continue
-        body = comment["body"]
+        body = comment["body"].replace("\r\n", "\n")
         if not body.startswith(DISPOSITION_MARKER + "\n"):
             continue
         try:

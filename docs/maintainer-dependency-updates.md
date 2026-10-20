@@ -17,7 +17,9 @@ version comment, `PINNED_LINTLANG_REF` in
 is not an automatically advancing latest-release pointer. A newer release alone
 does not authorize changing the held pair. Tests require exactly one approved
 LintLang invocation across workflows and local action manifests, including
-composites under build, dist, node_modules or .venv directories.
+tracked composites under build, dist, node_modules or .venv directories. Git's
+index, rather than directory names, separates repository manifests from unrelated
+ignored environment output. Nonignored new manifests are checked before commit.
 
 ## Requests compatibility
 
@@ -90,7 +92,7 @@ checks happen to be present. A ruleset migration must update this query first.
 The Dependabot job is a separate controller. It reads check runs and statuses,
 extracts its guard from the trusted event base commit, and executes that extracted
 file in Python isolated mode. Every checkout before the guard must use that
-base. Supported review submission/edit/dismissal and inline-comment events
+base. A per-PR concurrency group cancels superseded controller runs. Supported review submission/edit/dismissal and inline-comment events
 restart the job for Dependabot-authored PRs, regardless of the review event actor.
 GitHub Actions has no review-thread-resolution trigger. The running guard observes
 resolutions while polling; after a timeout, thread resolution, disposition comment,
