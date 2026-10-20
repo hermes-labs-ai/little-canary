@@ -76,16 +76,23 @@ another version merely to complete website synchronization.
 
 The local hashes are pre-publication build evidence, not a claim that separately
 built archives are byte-for-byte reproducible. After the publish run succeeds,
-download the public wheel and source archive and match each SHA-256 to PyPI's
-published digest. Install `pypi-attestations` and cryptographically verify each
-distribution and its provenance with `pypi-attestations verify pypi --repository
-https://github.com/hermes-labs-ai/little-canary <distribution-url>`; do not trust
-unverified provenance JSON. Require the verified subject digest to match the
-download, and the verified GitHub publisher identity to name
-`.github/workflows/publish.yml`, the release event and `refs/tags/<tag>` workflow
-ref. Require its attested source revision to equal `git rev-parse '<tag>^{commit}'`.
-Then perform fresh no-cache installs and check README metadata. Offline replay
-proves the packaged fixture path, not current live-model detection quality.
+download the public wheel, source archive and each file's Integrity API provenance
+to local files, then match each archive's SHA-256 to PyPI's published digest. Use a
+reviewed, recorded exact verifier version (currently `pypi-attestations==0.0.30`),
+not a floating install. For each local archive, first run `pypi-attestations verify
+pypi --repository https://github.com/hermes-labs-ai/little-canary
+--provenance-file <provenance.json> <archive>`. Extract its PyPI publish attestation
+from that same verified provenance object to `<archive>.publish.attestation`, then
+run `pypi-attestations verify attestation --identity
+https://github.com/hermes-labs-ai/little-canary/.github/workflows/publish.yml@refs/tags/<tag>
+<archive>`. Both commands must pass on the same bytes that were hashed.
+
+Separately query the successful publish run with `gh api
+repos/hermes-labs-ai/little-canary/actions/runs/<run-id>` and require `event` to be
+`release`, `path` to be `.github/workflows/publish.yml`, `head_branch` to equal the
+release tag, and `head_sha` to equal `git rev-parse '<tag>^{commit}'`. Then perform
+fresh no-cache installs and check README metadata. Offline replay proves the
+packaged fixture path, not current live-model detection quality.
 In a follow-up metadata PR, date the changelog entry and add
 `codemeta.json`'s now-live versioned PyPI `downloadUrl`; do not move the immutable
 release tag or publish again for that metadata-only change.
