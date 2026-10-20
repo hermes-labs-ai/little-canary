@@ -79,8 +79,11 @@ merged commit before approving the curated title/body. The controller includes
 exactly one `Release-Commit: <40-character merged commit>` trailer in the release
 body. The workflow checks that trailer against the event's immutable commit and
 explicitly checks out that SHA before building; a matching tag name or package
-version alone is insufficient. Do not publish another version merely to complete
-website synchronization.
+version alone is insufficient. The publish job also re-reads the remote tag
+immediately before upload and rejects a different commit. GitHub and PyPI provide
+no atomic cross-service tag condition, so the post-publication tag, run and
+provenance checks below remain mandatory. Do not publish another version merely
+to complete website synchronization.
 
 The local hashes are pre-publication build evidence, not a claim that separately
 built archives are byte-for-byte reproducible. After the publish run succeeds,

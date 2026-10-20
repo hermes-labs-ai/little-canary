@@ -59,6 +59,9 @@ def test_release_version_surfaces_are_aligned():
         json.loads(_read(".zenodo.json"))["version"],
         json.loads(_read("codemeta.json"))["version"],
         json.loads(_read("gemini-extension.json"))["version"],
+        json.loads(_read("plugins/openclaw/package.json"))["version"],
+        json.loads(_read("plugins/opencode/package.json"))["version"],
+        json.loads(_read("plugins/pi/package.json"))["version"],
     }
 
     assert versions == {__version__}
@@ -166,7 +169,12 @@ def test_release_docs_do_not_assert_current_external_registry_state():
 
 
 def _observe_build(
-    steps: list[dict], *, tag: str, fail_tool: str = "", release_body: Optional[str] = None
+    steps: list[dict],
+    *,
+    tag: str,
+    fail_tool: str = "",
+    release_body: Optional[str] = None,
+    head_sha: str = "a" * 40,
 ) -> tuple[int, list[str]]:
     """Exercise unconditional Bash steps with offline tool shims."""
     with tempfile.TemporaryDirectory(prefix="canary-build-contract-") as directory:
@@ -174,7 +182,6 @@ def _observe_build(
         (root / "pyproject.toml").write_text('[project]\nversion = "0.0.0+contract"\n')
         if sys.version_info < (3, 11):
             (root / "tomllib.py").write_text("from tomli import load\n")
-        head_sha = "a" * 40
         if release_body is None:
             release_body = f"Release-Commit: {head_sha} \r\n"
         event_path = root / "event.json"
@@ -239,17 +246,23 @@ def _assert_publish_privileges(workflow: str) -> None:
     assert not build.get("continue-on-error") and "if" not in build
     assert not parsed.get("defaults") and not build.get("defaults")
     assert not parsed.get("env") and not build.get("env")
-    checkout = next(
+    checkouts = [
         step for step in build["steps"]
         if step.get("uses", "").partition("@")[0] == "actions/checkout"
-    )
-    assert checkout.get("with", {}).get("ref") == "${{ github.sha }}"
+    ]
+    assert len(checkouts) == 1
+    assert checkouts[0].get("with", {}).get("ref") == "${{ github.sha }}"
     status, calls = _observe_build(build["steps"], tag="v0.0.0+contract")
+    assert status == 0 and calls == ["build", "twine", "upload"]
+    status, calls = _observe_build(
+        build["steps"], tag="v0.0.0+contract", head_sha="c" * 40
+    )
     assert status == 0 and calls == ["build", "twine", "upload"]
     for invalid_body in (
         "",
         "Release-Commit: " + "b" * 40,
         "Release-Commit: " + "a" * 40 + "\nRelease-Commit: " + "a" * 40,
+        "Release-Commit: " + "a" * 40 + "\nRelease-Commit: malformed",
     ):
         status, calls = _observe_build(
             build["steps"], tag="v0.0.0+contract", release_body=invalid_body
@@ -264,6 +277,17 @@ def _assert_publish_privileges(workflow: str) -> None:
     publish_actions = _pinned_actions(publish["steps"])
     assert "actions/upload-artifact" in build_actions
     assert {"actions/download-artifact", "pypa/gh-action-pypi-publish"} <= publish_actions.keys()
+    publish_guard_indexes = [
+        index for index, step in enumerate(publish["steps"])
+        if "git ls-remote --exit-code" in step.get("run", "")
+    ]
+    publish_action_index = next(
+        index for index, step in enumerate(publish["steps"])
+        if step.get("uses", "").partition("@")[0] == "pypa/gh-action-pypi-publish"
+    )
+    assert publish_guard_indexes == [publish_action_index - 1]
+    guard_lines = {line.strip() for line in publish["steps"][publish_guard_indexes[0]]["run"].splitlines()}
+    assert 'test "${remote_tag_commit}" = "${GITHUB_SHA}"' in guard_lines
 
 
 def test_publish_workflow_keeps_build_privileges_away_from_publishing():
@@ -327,6 +351,15 @@ def test_inert_release_tag_guard_fails_the_contract():
     workflow = _read(".github/workflows/publish.yml").replace(
         'test "${GITHUB_REF_NAME}" = "v${package_version}"',
         'echo \'test "${GITHUB_REF_NAME}" = "v${package_version}"\'')
+    with pytest.raises(AssertionError):
+        _assert_publish_privileges(workflow)
+
+
+def test_inert_remote_release_tag_guard_fails_the_contract():
+    workflow = _read(".github/workflows/publish.yml").replace(
+        'test "${remote_tag_commit}" = "${GITHUB_SHA}"',
+        'echo "${remote_tag_commit}" = "${GITHUB_SHA}"',
+    )
     with pytest.raises(AssertionError):
         _assert_publish_privileges(workflow)
 

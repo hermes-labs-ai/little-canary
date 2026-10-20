@@ -30,7 +30,7 @@ jobs:
 
       - name: Verify approved release commit and package version
         run: |
-          release_commit="$(python -c 'import json, os, re; body = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))["release"].get("body") or ""; matches = re.findall(r"(?m)^Release-Commit: ([0-9a-f]{40})[ \t]*\r?$", body); assert len(matches) == 1, "release body must contain exactly one Release-Commit trailer"; print(matches[0])')"
+          release_commit="$(python -c 'import json, os, re; body = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))["release"].get("body") or ""; lines = [line for line in body.splitlines() if line.startswith("Release-Commit:")]; assert len(lines) == 1, "release body must contain exactly one Release-Commit trailer"; match = re.fullmatch(r"Release-Commit: ([0-9a-f]{40})[ \t]*", lines[0]); assert match, "Release-Commit trailer is malformed"; print(match.group(1))')"
           test "${release_commit}" = "${GITHUB_SHA}"
           package_version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           test "${GITHUB_REF_NAME}" = "v${package_version}"
@@ -63,6 +63,15 @@ jobs:
         with:
           name: dist
           path: dist/
+
+      - name: Verify release tag remains bound
+        shell: bash
+        run: |
+          tag_ref="refs/tags/${GITHUB_REF_NAME}"
+          remote_lines="$(git ls-remote --exit-code "https://github.com/${GITHUB_REPOSITORY}.git" "${tag_ref}" "${tag_ref}^{}")"
+          remote_tag_commit="$(awk -v direct="${tag_ref}" -v peeled="${tag_ref}^{}" '$2 == direct {d=$1} $2 == peeled {p=$1} END {print p ? p : d}' <<<"${remote_lines}")"
+          test -n "${remote_tag_commit}"
+          test "${remote_tag_commit}" = "${GITHUB_SHA}"
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
