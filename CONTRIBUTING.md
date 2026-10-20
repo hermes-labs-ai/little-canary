@@ -93,6 +93,11 @@ uv tool install --force 'git+https://github.com/roli-lpci/hermes-gate.git@f20db0
 Keep the tool's executable directory on `PATH` so both `hermes-gate` and
 `hermes-gate-claude-review` resolve from that installation.
 
+## Releases
+
+Maintainers start with [the release entrypoint](docs/releasing.md), which reuses
+the native checks, existing publish workflow and controller readiness guard.
+
 ## Project Structure
 
 - `little_canary/` — Core library. Changes here affect all users.
