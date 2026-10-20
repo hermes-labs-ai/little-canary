@@ -145,15 +145,20 @@ def test_context_query_is_read_only_and_bounded(monkeypatch):
     assert context.gh_json("repos/owner/repo") == {"id": 1}
 
 
-@pytest.mark.parametrize("failure", ["api", "timeout", "json"])
-def test_context_query_failure_cannot_select_a_pr(monkeypatch, failure):
+@pytest.mark.parametrize("failure,error,match", [
+    ("api", ValueError, "^GitHub context query failed: unavailable$"),
+    ("timeout", subprocess.TimeoutExpired, "timed out"),
+    ("json", json.JSONDecodeError, "Expecting value"),
+])
+def test_context_query_failure_cannot_select_a_pr(monkeypatch, failure, error, match):
     def run(*args, **kwargs):
         if failure == "timeout":
             raise subprocess.TimeoutExpired("gh", 30)
-        return SimpleNamespace(returncode=1 if failure == "api" else 0, stdout="invalid", stderr="unavailable")
+        return SimpleNamespace(returncode=1 if failure == "api" else 0,
+                               stdout='{"id": 1}' if failure == "api" else "invalid", stderr="unavailable")
 
     monkeypatch.setattr(context.subprocess, "run", run)
-    with pytest.raises((ValueError, subprocess.TimeoutExpired)):
+    with pytest.raises(error, match=match):
         context.gh_json("repos/owner/repo")
 
 
