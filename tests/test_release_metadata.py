@@ -224,6 +224,8 @@ def _assert_publish_privileges(workflow: str) -> None:
     assert build["permissions"] == {"contents": "read"}
     assert publish["permissions"] == {"contents": "read", "id-token": "write"}
     assert publish["needs"] == "build"
+    assert build.get("runs-on") in ("ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04"), "unsupported build runner"
+    assert "container" not in build, "unsupported build container"
     assert not build.get("continue-on-error") and "if" not in build
     assert not parsed.get("defaults") and not build.get("defaults")
     assert not parsed.get("env") and not build.get("env")
@@ -251,6 +253,27 @@ def test_equivalent_executable_publish_commands_are_accepted():
         'test "${GITHUB_REF_NAME}" = "v${package_version}"',
         '[[ "${GITHUB_REF_NAME}" == "v${package_version}" ]]')
     _assert_publish_privileges(workflow)
+
+
+@pytest.mark.parametrize("runner", ["ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04"])
+def test_supported_ubuntu_build_context_passes_the_probe(runner):
+    workflow = yaml.safe_load(_read(".github/workflows/publish.yml"))
+    workflow["jobs"]["build"]["runs-on"] = runner
+    _assert_publish_privileges(yaml.safe_dump(workflow))
+
+
+@pytest.mark.parametrize("context,reason", [
+    ({"runs-on": "windows-latest"}, "runner"),
+    ({"runs-on": ["self-hosted", "Linux"]}, "runner"),
+    ({"runs-on": "${{ matrix.os }}"}, "runner"),
+    ({"container": {"image": "alpine:3.20"}}, "container"),
+    ({"container": "alpine:3.20"}, "container"),
+])
+def test_unsupported_build_runner_or_container_fails_closed(context, reason):
+    workflow = yaml.safe_load(_read(".github/workflows/publish.yml"))
+    workflow["jobs"]["build"].update(context)
+    with pytest.raises(AssertionError, match="unsupported build " + reason):
+        _assert_publish_privileges(yaml.safe_dump(workflow))
 
 
 @pytest.mark.parametrize("permission", ['id-token: write', '"id-token": "write"', "'id-token': 'write'"])
