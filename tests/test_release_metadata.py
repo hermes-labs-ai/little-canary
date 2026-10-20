@@ -176,7 +176,7 @@ def _observe_build(
             (root / "tomllib.py").write_text("from tomli import load\n")
         head_sha = "a" * 40
         if release_body is None:
-            release_body = f"Release-Commit: {head_sha}"
+            release_body = f"Release-Commit: {head_sha} \r\n"
         event_path = root / "event.json"
         event_path.write_text(json.dumps({"release": {"body": release_body}}))
         log = root / "calls"

@@ -30,7 +30,7 @@ jobs:
 
       - name: Verify approved release commit and package version
         run: |
-          release_commit="$(python -c 'import json, os, re; body = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))["release"].get("body") or ""; matches = re.findall(r"(?m)^Release-Commit: ([0-9a-f]{40})$", body); assert len(matches) == 1, "release body must contain exactly one Release-Commit trailer"; print(matches[0])')"
+          release_commit="$(python -c 'import json, os, re; body = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))["release"].get("body") or ""; matches = re.findall(r"(?m)^Release-Commit: ([0-9a-f]{40})[ \t]*\r?$", body); assert len(matches) == 1, "release body must contain exactly one Release-Commit trailer"; print(matches[0])')"
           test "${release_commit}" = "${GITHUB_SHA}"
           package_version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           test "${GITHUB_REF_NAME}" = "v${package_version}"
