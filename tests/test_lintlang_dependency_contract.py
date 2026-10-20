@@ -55,7 +55,7 @@ def _action_documents(root: Path) -> str:
     workflows = set((root / ".github/workflows").glob("*.y*ml"))
     manifests = {
         path for path in root.rglob("action.y*ml")
-        if not {".git", ".venv", "node_modules"}.intersection(path.relative_to(root).parts)
+        if not {".git"}.intersection(path.relative_to(root).parts)
     }
     return "\n---\n".join(path.read_text() for path in sorted(workflows | manifests))
 
@@ -129,7 +129,7 @@ def test_additional_lintlang_invocation_is_a_failing_control(reference, another_
 
 
 @pytest.mark.parametrize("manifest", ["action.yml", "action.yaml"])
-@pytest.mark.parametrize("directory", ["actions/probe", "build/probe", "dist/probe"])
+@pytest.mark.parametrize("directory", ["actions/probe", "build/probe", "dist/probe", "node_modules/probe", ".venv/probe"])
 def test_local_composite_cannot_hide_an_additional_lintlang_reference(tmp_path, manifest, directory):
     workflows = tmp_path / ".github/workflows"
     workflows.mkdir(parents=True)
