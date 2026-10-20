@@ -21,6 +21,18 @@ def _match(relative_path: str, pattern: str) -> str:
     return match.group(1)
 
 
+def _pinned_actions(steps: list[dict]) -> dict[str, str]:
+    pinned = {}
+    for step in steps:
+        if "uses" not in step:
+            continue
+        action, separator, ref = step["uses"].partition("@")
+        assert separator, f"{action} has no pinned ref"
+        assert re.fullmatch(r"[0-9a-f]{40}", ref), f"{action} is not pinned to a full commit SHA"
+        pinned[action] = ref
+    return pinned
+
+
 def test_release_version_surfaces_are_aligned():
     versions = {
         __version__,
@@ -137,6 +149,7 @@ def test_release_docs_do_not_assert_current_external_registry_state():
 
 def test_publish_workflow_keeps_build_privileges_away_from_publishing():
     workflow = _read(".github/workflows/publish.yml")
+    parsed = yaml.safe_load(workflow)
     build_workflow, publish_workflow = workflow.split("  publish:\n", maxsplit=1)
     build_job = build_workflow.split("  build:\n", maxsplit=1)[1]
 
@@ -147,11 +160,29 @@ def test_publish_workflow_keeps_build_privileges_away_from_publishing():
     assert 'test "${GITHUB_REF_NAME}" = "v${package_version}"' in build_job
     assert "python -m build" in build_job
     assert "python -m twine check dist/*" in build_job
-    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in build_job
     assert "    needs: build\n" in publish_workflow
     assert "      contents: read\n      id-token: write" in publish_workflow
-    assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in publish_workflow
-    assert "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33" in publish_workflow
+
+    build_actions = _pinned_actions(parsed["jobs"]["build"]["steps"])
+    publish_actions = _pinned_actions(parsed["jobs"]["publish"]["steps"])
+    assert "actions/upload-artifact" in build_actions
+    assert {"actions/download-artifact", "pypa/gh-action-pypi-publish"} <= publish_actions.keys()
+
+
+def test_dependency_automation_respects_supported_python_and_held_action_contracts():
+    config = yaml.safe_load(_read(".github/dependabot.yml"))
+    updates = {entry["package-ecosystem"]: entry for entry in config["updates"]}
+
+    action_ignores = {entry["dependency-name"] for entry in updates["github-actions"]["ignore"]}
+
+    assert "hermes-labs-ai/lintlang" in action_ignores
+    assert '"requests>=2.32.5,<2.33; python_version < \'3.10\'"' in _read("pyproject.toml")
+    assert '"requests>=2.34.2,<3; python_version >= \'3.10\'"' in _read("pyproject.toml")
+    assert _read("requirements.txt").splitlines() == [
+        'requests>=2.32.5,<2.33; python_version < "3.10"',
+        'requests>=2.34.2,<3; python_version >= "3.10"',
+    ]
+    assert "intentional compatibility probe" in _read(".github/workflows/lintlang.yml")
 
 
 def test_dependabot_merge_waits_for_required_checks_without_repository_auto_merge():
@@ -183,9 +214,5 @@ def test_scorecard_workflow_pins_actions_and_narrows_permissions():
     assert workflow["permissions"] == "read-all"
     assert analysis["permissions"] == {"security-events": "write", "id-token": "write"}
 
-    pinned = {}
-    for step in analysis["steps"]:
-        action, _, ref = step["uses"].partition("@")
-        assert re.fullmatch(r"[0-9a-f]{40}", ref), f"{action} is not pinned to a full commit SHA"
-        pinned[action] = ref
+    pinned = _pinned_actions(analysis["steps"])
     assert {"ossf/scorecard-action", "github/codeql-action/upload-sarif"} <= pinned.keys()

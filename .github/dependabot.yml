@@ -9,7 +9,6 @@ updates:
       pip:
         patterns:
           - "*"
-
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -19,3 +18,7 @@ updates:
       github-actions:
         patterns:
           - "*"
+    ignore:
+      # This action is a deliberately held compatibility probe. Updating it is
+      # a semantic change, not routine dependency maintenance.
+      - dependency-name: "hermes-labs-ai/lintlang"
