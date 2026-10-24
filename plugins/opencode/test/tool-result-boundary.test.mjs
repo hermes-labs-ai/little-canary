@@ -117,12 +117,11 @@ test("incomplete and unavailable coverage preserves text with an explicit warnin
 test("an oversized UTF-8 result is not truncated or represented as inspected clean", async () => {
   const output = { output: "💡".repeat(20_000) };
   const before = structuredClone(output);
-  const { requests, warnings } = await screen(output, (options) => {
-    assert.ok(Buffer.byteLength(options.body, "utf8") > 65_536);
-    assert.equal(JSON.parse(options.body).text, before.output);
-    return { ok: false, status: 413 };
-  });
+  const { requests, warnings } = await screen(output, () => ({ ok: false, status: 413 }));
   assert.equal(requests.length, 1);
+  // Assertions here must reach the runner: checkText catches fetch errors.
+  assert.ok(Buffer.byteLength(requests[0].body, "utf8") > 65_536);
+  assert.equal(JSON.parse(requests[0].body).text, before.output);
   assert.deepEqual(output, before);
   assert.match(warnings.join("\n"), /unavailable; OpenCode continued/);
 });
