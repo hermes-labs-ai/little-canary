@@ -257,7 +257,7 @@ Choose your host below. For integrations that use loopback HTTP, run the local s
 | Host | Integration | Can it block the turn? |
 | --- | --- | --- |
 | **Claude Code** | [Plugin](https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/claude-code) screens `UserPromptSubmit` | Yes |
-| **OpenCode** | [Plugin](https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/opencode) flags submitted `chat.message` text | No — advisory warning only |
+| **OpenCode** | [Plugin](https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/opencode) flags submitted `chat.message` text and screens returned text at `tool.execute.after` | No — prompt screening warns; unsafe tool-result text can be withheld after execution |
 | **Pi** | [Extension](https://github.com/hermes-labs-ai/little-canary/tree/main/plugins/pi) screens submitted `input` | Yes — when the service returns an unsafe verdict |
 | **Gemini CLI** | [Extension](#gemini-cli-install) screens `BeforeAgent`; install below | Yes — denies the run before the loop starts |
 | **OpenAI Agents SDK** | [Input guardrail](https://github.com/hermes-labs-ai/little-canary/blob/main/examples/openai_agents_example.py) maps verdicts to the SDK tripwire | Yes — before the first agent starts |
