@@ -17,6 +17,30 @@ pip install -e ".[dev]"
 # Model pulls and live prompts cause network or loopback egress.
 ```
 
+## Optional framework example checks
+
+CI's `framework-examples` job checks one dependency set on Python 3.12:
+FastAPI 0.162.0, Starlette 1.9.0, Pydantic 2.14.1, HTTPX 0.28.1 and
+LangChain Core 1.7.0. To reproduce it in a separate Python 3.12 environment:
+
+```bash
+python -m pip install . -r requirements-framework-examples.txt
+python -m pip check
+python -m pytest -q tests/test_framework_examples.py tests/test_framework_examples_real.py
+```
+
+The real-framework tests use FastAPI's in-process `TestClient` and LangChain's
+`RunnableLambda`/`RunnableSequence`, with injected local checker and model fakes.
+They check request validation, HTTP 200/403/503 responses, advisory propagation,
+and blocked/degraded inputs stopping before the downstream call. Network socket
+connections are rejected during these tests; no model or provider is called.
+The lightweight stub tests still run without these optional packages; the
+real-framework module skips when its dependencies are absent. This job is a
+bounded example contract, not a claim about every framework version, Python 3.9
+framework compatibility, live detection quality, async/streaming behavior, or
+production containment. The core package's dependencies and Python support are
+unchanged.
+
 ## How to Contribute
 
 ### Reporting Bugs
