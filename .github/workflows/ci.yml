@@ -92,6 +92,30 @@ jobs:
           name: coverage-report
           path: coverage.xml
 
+  framework-examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded framework test dependencies
+        run: |
+          python -m pip install . -r requirements-framework-examples.txt
+          python -m pip check
+          python -c "import fastapi, httpx, langchain_core"
+
+      - name: Exercise real FastAPI and LangChain examples offline
+        env:
+          LANGSMITH_TRACING: "false"
+          LANGCHAIN_TRACING_V2: "false"
+        run: python -m pytest -q tests/test_framework_examples.py tests/test_framework_examples_real.py
+
   package-smoke:
     runs-on: ubuntu-latest
 
