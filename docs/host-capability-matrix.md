@@ -6,12 +6,14 @@ hosts differ more than their marketing copy suggests. This page records what
 each host version can do, with the evidence, so a claim here can be checked
 rather than believed.
 
-Two capabilities are tracked separately and must not be conflated:
+Keep these three capabilities separate:
 
 - **Inbound prompt screening** — can the host hand a plugin the submitted
   prompt, and can the plugin refuse it?
 - **Outbound tool-execution blocking** — can the host let a plugin veto a
   tool call the model has already decided to make?
+- **Returned-text screening** — can the host withhold a tool's text after
+  execution, before the next model request?
 
 A host can have one without the other. The matrix tracks nine host surfaces;
 Little Canary ships an outbound tool gate for exactly one.
@@ -63,6 +65,41 @@ adapter tests backed by OpenCode 1.18.32 source inspection; they were not
 exercised in an installed-host run. Service failures and results over
 the server's 64 KiB request limit warn and continue with the original text. The
 separate OpenCode V2 plugin API is not covered by this 1.18.32 result.
+
+The returned text is sent as supplied: HTML comments and hidden-element text,
+Markdown, and plain text are not stripped or normalized before screening.
+Offline regressions exercise those representations, accepted MCP text and
+embedded resources, a combined unsafe result, missing coverage, malformed
+verdicts, transport errors, and an oversized UTF-8 request rejected with HTTP
+413. Accepted text is unchanged; an unsafe verdict replaces every covered
+text field while preserving non-text content and resource URIs. URI-only and
+binary/image content remain uninspected; the plugin never retrieves a URI.
+The quoted security example uses a synthetic clean verdict to test exact
+forwarding, not to claim the detector can distinguish benign quotation from
+an attack. Known false-block limitations still apply.
+
+### Document admission and former draft #103
+
+[Draft #103](https://github.com/hermes-labs-ai/little-canary/pull/103) was
+closed unmerged on October 24, 2026. Its inspected head was
+`bfd6368ca9dcfc15a6da701fa7f510b71c39d66f`; it is not a pending installation
+or acceptance task. The released 0.5.1 Ingest path at
+`5587b5565e90057785c3f30a03f58337cfeadee6` already supplies bounded overlapping
+segments, holds on incomplete or over-budget inspection, and exact source
+snapshot admission. Use the [existing Ingest workflow](../README.md#ingest-documents-experimental)
+when that stricter forwarding contract is required. It is distinct from the
+OpenCode adapter's warning-and-continue policy on unavailable screening.
+
+The older draft's separate contextual classifier was its distinct feature;
+it was not behavioral canary evidence. Its request did not size or verify the
+classifier's model context, and its pipeline branch lacked Ingest's current
+input/verdict identity checks. Those gaps prevent a recommendation to restore
+the parallel API. A future contextual-classification proposal would need
+explicit scope, verified whole-segment context and discriminating coverage
+and identity controls against current Ingest. No such proposal or live-model
+efficacy result is supplied here. The smallest continuation is to retain the
+closure, use the shipped admission API, and verify the existing OpenCode
+boundary without adding a second guard.
 
 ### Pi
 
@@ -218,8 +255,12 @@ acceptance tests exercise a model.
 - A live result is bound to one backend, model digest, runtime, and
   configuration. Evidence gathered on one endpoint does not transfer to
   another.
-- Screening covers the submitted prompt only. Tool results, retrieved
-  documents, file contents, and model output are outside every adapter here.
+- Most adapters screen the submitted prompt only. OpenCode additionally
+  screens string tool output and supported MCP text/resource text after
+  execution, as described above. This does not screen tool arguments, undo
+  side effects, retrieve linked resources, or cover binary/image content and
+  model output. The separate Ingest API is explicit document admission, not
+  automatic tool-result interception for other hosts.
 
 ## Re-certifying
 
